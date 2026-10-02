@@ -94,7 +94,7 @@ cd backend
 python scripts/make_fixtures.py
 ```
 
-输出到 `backend/data/`，与随仓库提供的文本类样例同级。需要后端依赖已安装（脚本用到 python-docx / python-pptx / openpyxl / pymupdf / pillow）。
+输出到 `backend/data/`，与随仓库提供的文本类样例同级：`plain.txt`、`table.csv`、`sample.json`、`feed.xml`、`page.html`、`sample.rtf`、`notes.md` 这 7 个是**仓库自带的手写样例**，脚本既不生成也不覆盖它们（`notes.md` 还是 `/extract` 验收用例的必需样例）。需要后端依赖已安装（脚本用到 python-docx / python-pptx / openpyxl / pymupdf / pillow）。
 
 生成的东西：带表格与内嵌图的 docx、含空单元格的 xlsx、六页 pptx、十页有文字层的 PDF、**三页无文字层的扫描件**、odt、odp、压缩包、APK 结构样本、老版 `.doc` 头样本、16kHz 单声道 wav、由它封装的 mp4。
 
