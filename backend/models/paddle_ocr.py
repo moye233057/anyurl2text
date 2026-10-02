@@ -96,8 +96,6 @@ def _iter_slices(image: Image.Image) -> List[Tuple[int, int, int, Image.Image]]:
 def _recognize_long_image(image: Image.Image, label: str) -> str:
     """纵向超长图切片并发识别，再按切片顺序拼回文本。"""
     slices = _iter_slices(image)
-    if not slices:
-        raise LlmError("Paddle OCR 长图切片为空")
 
     def recognize_one(slice_info):
         index, y_start, y_end, piece = slice_info

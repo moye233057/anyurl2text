@@ -10,7 +10,7 @@ PDF 抽取。
 """
 from pathlib import Path
 
-import fitz  # PyMuPDF
+import pymupdf  # PyMuPDF
 
 import configs.settings as settings
 from pipelines.processors.schema import EmbeddedAsset, ExtractContext, ExtractResult
@@ -18,7 +18,7 @@ from pipelines.processors.schema import EmbeddedAsset, ExtractContext, ExtractRe
 # 判定「这份 PDF 没有文字层」的字符数下限：低于它就走页面渲染
 TEXT_LAYER_MIN_CHARS = 30
 
-def _page_text(page: "fitz.Page") -> str:
+def _page_text(page: "pymupdf.Page") -> str:
     """取一页的文本块，按 (y, x) 排序后拼成文本；空页返回空串。"""
     blocks = page.get_text("blocks")
     items = []
@@ -31,7 +31,7 @@ def _page_text(page: "fitz.Page") -> str:
     items.sort(key=lambda item: (item[0], item[1]))
     return "\n".join(item[2] for item in items)
 
-def _save_embedded_images(doc: "fitz.Document", pages: int, ctx: ExtractContext) -> list:
+def _save_embedded_images(doc: "pymupdf.Document", pages: int, ctx: ExtractContext) -> list:
     """把前若干张内嵌图落盘成 PNG 素材，返回素材列表。"""
     assets = []
     used = 0
@@ -43,9 +43,9 @@ def _save_embedded_images(doc: "fitz.Document", pages: int, ctx: ExtractContext)
                 break
             xref = info[0]
             try:
-                pixmap = fitz.Pixmap(doc, xref)
+                pixmap = pymupdf.Pixmap(doc, xref)
                 if pixmap.n - pixmap.alpha >= 4:
-                    pixmap = fitz.Pixmap(fitz.csRGB, pixmap)
+                    pixmap = pymupdf.Pixmap(pymupdf.csRGB, pixmap)
                 target = ctx.work_dir / f"pdf_p{page_index + 1}_x{xref}.png"
                 pixmap.save(str(target))
             except Exception:
@@ -61,7 +61,7 @@ def _save_embedded_images(doc: "fitz.Document", pages: int, ctx: ExtractContext)
             )
     return assets
 
-def render_pages(doc: "fitz.Document", page_indexes: list, ctx: ExtractContext) -> list:
+def render_pages(doc: "pymupdf.Document", page_indexes: list, ctx: ExtractContext) -> list:
     """
     把指定页渲染成 PNG 素材。
 
@@ -100,7 +100,7 @@ def extract_pdf(path: Path, ctx: ExtractContext) -> ExtractResult:
     异常：不抛——打开或解析失败时返回降级结果并说明原因。
     """
     try:
-        doc = fitz.open(str(path))
+        doc = pymupdf.open(str(path))
     except Exception as exc:
         return ExtractResult(
             degraded=True,

@@ -8,7 +8,7 @@
 - `ExtractResult.content` 是**唯一来源**：不调模型、也不感知调用方是不是 understand
   （ADR 0002/0007：同一格式的确定性产出只有这一份实现）。
 - `EnhanceOutcome` 的三项只能追加：模型产出**永远不碰 `content`**——这是「两条路逐字节可对比」
-  的前提，`scripts/check_structure.py` 会查。
+  的前提，`tests/test_structure.py` 会查。
 """
 from dataclasses import dataclass, field
 from pathlib import Path

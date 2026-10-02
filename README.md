@@ -51,7 +51,7 @@ npm run dev                       # http://127.0.0.1:5173
 
 界面是三栏：左栏输入（可一键填入预设样例），中栏纯代码解析，右栏模型增强解析。**两栏各有自己的「运行」按钮，点哪栏只跑哪栏**，所以可以先用纯代码那一路确认文件本身没问题，再单独跑模型那一路。
 
-左栏的预设样例来自 `frontend/public/presets.config.js`——一个带注释的顶层配置文件，改它**不用改代码也不用重新 build**，刷新页面就生效（字段含义与校验规则写在那个文件的头部）。
+左栏的预设样例来自 `frontend/public/presets.config.js`——一个带注释的顶层配置文件，改它**不用改代码**：开发服务器下刷新页面即生效，跑的是构建产物时要重新 build（或直接改 `dist/` 里那份副本）。字段含义与校验规则写在那个文件的头部。
 
 生成演示用的样例文件：
 
@@ -66,12 +66,12 @@ python scripts/make_fixtures.py   # 输出到 backend/data/
 
 | 类别 | 格式 | 处理 |
 |---|---|---|
-| 文档 | pdf、docx、pptx、xlsx、xlsm、xls、ods、odt、odp、rtf、csv、txt、md、json、xml | 完整解析（版面顺序、表格、文本框、内嵌图位置） |
+| 文档 | pdf、docx、pptx、xlsx、xlsm、xls、ods、odt、odp、rtf、csv、txt、md、markdown、json、xml | 完整解析（版面顺序、表格、文本框、内嵌图位置） |
 | 网页 | html、htm | 标题 + 摘要 + 正文 + 去重链接 |
-| 图片 | png、jpg、gif、bmp、tiff、webp、heic、ico、svg | 结构信息（尺寸 / 格式 / 色彩模式 / 帧数 / EXIF） |
+| 图片 | png、jpg、jpeg、gif、bmp、tif、tiff、webp、heic、heif、ico、svg | 结构信息（尺寸 / 格式 / 色彩模式 / 帧数 / EXIF） |
 | 音频 | mp3、wav、aac、flac、ogg、wma、m4a | 结构信息（时长 / 采样率 / 声道 / 音轨格式） |
 | 视频 | mp4、avi、mkv、mov、wmv、flv、webm、mpeg、mpg | 同上，报的是它音轨的参数 |
-| 压缩包 | zip、tar、gz、bz2、xz、7z、rar | 条目清单（**不解压内容**），识别密码保护 |
+| 压缩包 | zip、tar、gz、tgz、bz2、tbz2、xz、txz、7z、rar | 条目清单（**不解压内容**），识别密码保护 |
 | 安装包 | apk、ipa、exe | 文件头 + 容器条目 + APK/IPA 结构指纹 |
 | **降级** | 老版 Office（doc/ppt/wps） | 只返回文件类型与大小，`meta.degraded` 与 `degrade_reason` 说明缺的是什么 |
 

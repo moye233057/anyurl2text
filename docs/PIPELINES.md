@@ -2,7 +2,7 @@
 
 > **用途**：按输入类型查这条源走了哪几步、关键判定与上限在哪、产出落到哪个字段。调试某一种格式先读这份。
 > **关联**：[architecture.md](./architecture.md)（模块落点） · [adr.md](./adr.md)（为什么这样拆） · [API.md](./API.md)（字段契约） · [CONTEXT.md](../CONTEXT.md)（术语表）
-> **基线**：2026-09-26
+> **基线**：2026-10-02
 > **代码基准**：`backend/pipelines/`（steps 六步 + processors 一个格式一个文件）
 
 ---
@@ -48,7 +48,7 @@ POST /extract | /extract/file | /understand | /understand/file
 
 失败不抛给调用方：入口阶段失败走 `step6_assemble.error_response()`（`type="error"`，带语义状态码），步骤 4 之后的失败转成 `meta.notes` 里的说明，HTTP 仍是 200。
 
-RAG 抽取不走上表。`POST /rag/extract/file` 由 `pipelines/rag_extract.py` 编排：准备与 extract 相同；PDF 先 pymupdf4llm 分页，抽出印刷目录则直接返回；否则复用步骤 4 的 `content` 作为 `text`。契约见 [API.md §10](./API.md)。
+RAG 抽取不走上表。`POST /rag/extract/file` 由 `pipelines/rag_extract.py` 编排：准备与 extract 相同；PDF 先 pymupdf4llm 分页，只在**前 `PREVIEW_FIRST_PAGES`（15 页）**里找印刷目录，抽出则直接返回；否则复用步骤 4 的 `content` 作为 `text`。契约见 [API.md §11](./API.md)。
 
 ## 2. 通用模块
 
@@ -69,7 +69,7 @@ RAG 抽取不走上表。`POST /rag/extract/file` 由 `pipelines/rag_extract.py`
 
 ### 2.2 判型（`step2_detect.py`）
 
-固定顺序 **文件头 → Content-Type → 扩展名**，越靠前越可靠。容器头只能定到「容器」，还要往里看一层：
+固定顺序 **文件头 → 文件名扩展名 → Content-Type**，越靠前越可靠。文件头最可靠但只覆盖容器格式；认不出时先信文件名（URL 路径）里的后缀——CDN 常给 `application/octet-stream` 这种没信息量的类型，路径后缀通常更可信；两者都没有才用 Content-Type 兜底。容器头只能定到「容器」，还要往里看一层：
 
 | 文件头 | 内部依据 | 落到的格式 |
 |---|---|---|
@@ -178,7 +178,7 @@ RAG 抽取不走上表。`POST /rag/extract/file` 由 `pipelines/rag_extract.py`
 
 `extract` 关键步骤：
 
-1. `fitz.open()`；打不开返回降级。`needs_pass` 且空密码认证失败 → 降级「PDF 受密码保护」。
+1. `pymupdf.open()`；打不开返回降级。`needs_pass` 且空密码认证失败 → 降级「PDF 受密码保护」。
 2. 逐页 `get_text("blocks")`，丢掉空块，按 **(y, x)** 排序后拼成一页；每页前加 `=== 第N页 ===`，页间空行。
 3. 累加 `get_images(full=True)` 得到图片总数（进 `meta.images`）。
 4. 文字层判定：全部页文本合计少于 `TEXT_LAYER_MIN_CHARS`（30 字）即视为「没有文字层（疑似扫描件）」。
@@ -312,7 +312,7 @@ ODS 与 CSV 也在这个文件里：这一族都按行列渲染成同一种文�
 | 7z | `py7zr` 取条目名与 `needs_password()` |
 | rar | `rarfile`（纯 Python 头解析，列目录不需要 unrar）；装不上时降级为「只识别格式，无法列出条目」 |
 
-条目渲染统一走 `entries_to_content()`：表头 `# <KIND> 条目清单（共 N 条）`，最多列 `MAX_ENTRIES=500` 条，超出只报数量；条目总数进 `meta.entry_count`。列表有 30 秒时间预算，防止损坏或刻意构造的包拖死请求。
+条目渲染统一走 `entries_to_content()`：表头 `# <KIND> 条目清单（共 N 条）`，最多列 `MAX_ENTRIES=500` 条，超出只报数量；条目总数进 `meta.entry_count`。
 
 `understand`：无素材，直接进摘要。
 
@@ -350,10 +350,11 @@ ODS 与 CSV 也在这个文件里：这一族都按行列渲染成同一种文�
 | `RENDERED_PAGE_MAX` / `RENDERED_PAGE_DPI` | 10 页 / 150 | 扫描件页面渲染 |
 | `RENDERED_PAGE_RETRY_MIN_CHARS` | 20 字 | 整页识别失败的切半重试阈值 |
 | `ASR_MAX_AUDIO_SECONDS` / `FFMPEG_TIMEOUT_SEC` | 600 秒 / 120 秒 | 转写与抽音轨 |
-| `MAX_ENTRIES` / `LIST_BUDGET_SEC` | 500 条 / 30 秒 | 压缩包条目清单 |
-| `MAX_ROWS_PER_SHEET` / `MAX_TABLE_ROWS` | 5000 / 2000 行 | 表格与 docx 表格渲染 |
-| `MAX_LINKS` | 100 条 | 网页链接清单 |
-| `TEXT_LAYER_MIN_CHARS` | 30 字 | PDF 文字层判定 |
-| `MAX_TEXT_BYTES` | 20MB | 文本类读取上限 |
+| `MAX_ENTRIES`（模块内常量） | 500 条 | 压缩包条目清单 |
+| `MAX_ROWS_PER_SHEET` / `MAX_ROWS_TO_READ`（模块内常量） | 5000 / 5001 行 | 表格读取上限；后者比前者多一行，用来区分「还有后续行」与「这是最后一行」 |
+| `MAX_TABLE_ROWS`（模块内常量） | 2000 行 | docx 表格渲染上限 |
+| `MAX_LINKS`（模块内常量） | 100 条 | 网页链接清单 |
+| `TEXT_LAYER_MIN_CHARS`（模块内常量） | 30 字 | PDF 文字层判定 |
+| `MAX_TEXT_BYTES`（模块内常量） | 20MB | 文本类读取上限 |
 
-全部取值与 `.env` 变量名见 [RUNBOOK.md](./RUNBOOK.md) 的配置项全表，判定见 [adr.md](./adr.md)。
+`.env` 变量与全部取值见 [RUNBOOK.md](./RUNBOOK.md) 的配置项全表，模块内常量（不是 `.env` 变量，改代码才变）见紧随其后的模块内常量表，判定见 [adr.md](./adr.md)。

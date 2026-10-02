@@ -18,8 +18,6 @@ from pipelines.processors.schema import ExtractResult
 
 # content 里最多列出的条目数，超出部分只报数量
 MAX_ENTRIES = 500
-# 列出目录的时间预算（秒），防止损坏或被精心构造的包拖死
-LIST_BUDGET_SEC = 30.0
 
 
 def entries_to_content(entries: list, archive_kind: str) -> tuple:

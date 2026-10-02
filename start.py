@@ -41,7 +41,7 @@ POLL_INTERVAL_SEC = 0.5
 BACKEND_REQUIRED = (
     "fastapi", "uvicorn", "httpx", "openai",
     "docx", "pptx", "openpyxl", "xlrd", "pyexcel_ods",
-    "fitz", "pymupdf4llm", "PIL", "bs4", "chardet",
+    "pymupdf", "pymupdf4llm", "PIL", "bs4", "chardet",
 )
 
 def step1_check_python() -> bool:

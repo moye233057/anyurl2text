@@ -2,7 +2,7 @@
 
 > **用途**：两个接口怎么调、响应每个字段是什么意思、失败长什么样。
 > **关联**：[architecture.md](./architecture.md)（模块与落点） · [adr.md](./adr.md)（为什么这样定） · [CONTEXT.md](../CONTEXT.md)（术语表）
-> **基线**：2026-09-12
+> **基线**：2026-10-02
 
 ---
 
@@ -15,7 +15,7 @@
 | POST | `/understand` | JSON `{url, query?}` | 模型增强解析 |
 | POST | `/understand/file` | multipart：`file`、`query?` | 同上，改成上传文件 |
 | GET | `/probe/health` | — | 自身配置自检，不探测上游 |
-| POST | `/rag/extract/file` | multipart：`file` | 检索入库用。契约见 §10，不进 ConvertResponse |
+| POST | `/rag/extract/file` | multipart：`file` | 检索入库用。契约见 §11，不进 ConvertResponse |
 
 `/extract` 与 `/extract/file` 除了入参方式**完全等价**，`/understand` 同理。
 
@@ -29,7 +29,7 @@
 | `file` | 是（上传版） | 文件本体；识别以**文件名 + 内容头**为准 |
 | `query` | 否 | 只有模型增强解析消费它。带 `query` 做针对性回答；不带则给通用摘要 |
 
-`query` 为 `null`、空串、`"None"`、`"null"` 都按「没有 query」处理——空串无法表达「要摘要但不要具体问题」。
+`query` 为 `null` 或空串都按「没有 query」处理（后端只判真值，不做字符串归一化）——空串无法表达「要摘要但不要具体问题」。因此**不要传字符串 `"None"` / `"null"`**：它们是真值，会被当成一个真正的问题交给模型。
 
 ## 2. 响应结构
 
@@ -122,6 +122,7 @@
 | 422 | 入参问题：URL 为空、协议不是 http(s)、缺主机名、命中内网或保留地址 |
 | 502 | 上游失败：HTTP 错误码、域名解析失败、重定向异常、网络错误 |
 | 504 | 下载超时 |
+| 500 | 未预期异常：`/rag/extract/file` 的兜底分支（见 §11），convert 两个接口不走这条 |
 
 **响应体始终带 `error` 字段**，所以「只看状态码」和「只看 body」两种消费方式都能用。
 
@@ -174,7 +175,7 @@
 
 纯代码那一路 `usage` 为 `null`；模型那一路给出摘要与用量（实测：模型耗时 3030 ms、缓存命中后成本约 ¥0.0032）。
 
-## 10. RAG 抽取（独立契约）
+## 11. RAG 抽取（独立契约）
 
 `POST /rag/extract/file` 给检索入库用，**不**走 ConvertResponse 的 7 字段。见 [adr.md](./adr.md) 的 ADR-0009。
 

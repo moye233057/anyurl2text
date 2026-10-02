@@ -23,6 +23,7 @@
 | `DEEPSEEK_MODEL` | `deepseek-flash` | 模型名 | 换模型时。用一个模型同时处理文本与图片 |
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | 模型端点 | 换供应商 |
 | `THINKING_ENABLED` | `false` | 思考模式 | 想让摘要质量更高时打开。**默认关闭是刻意的**：思维链按输出侧计费，输出价约为输入未命中价的 4 倍 |
+| `THINKING_EFFORT` | `high` | 思考模式的推理力度（随请求发成 `reasoning_effort`） | 只在 `THINKING_ENABLED` 打开时才发出去：想更快更省就调低，想更深就调高 |
 | `ANYURL2TEXT_PORT` | `8020` | 后端端口 | 改这里要同步改 `frontend/vite.config.ts` 的代理目标。本机连号：本服务 8020、OCR 8021、ASR 8022 |
 | `ALLOW_PRIVATE_HOSTS` | `false` | 允许下载内网 / 回环地址 | 仅在本机串本地文件服务调试时打开；对外可访问的部署保持 `false` |
 | `OCR_API_URL` | `http://127.0.0.1:8021/ocr-b64` | 本机 Paddle OCR 服务地址（独立图片判型为文字图片时由它读字） | 换了 OCR 服务端口，或部署到别处时 |
@@ -60,6 +61,20 @@
 | `ASR_TIMEOUT_SEC` | 300 | 单次语音转写请求超时；长音轨转写慢，所以比 OCR 宽 |
 | `FFMPEG_TIMEOUT_SEC` | 120 | 抽音轨超时（本地 CPU 转码，与模型超时分开计） |
 
+### 模块内常量（不是 `.env` 变量）
+
+下面这些是模块内常量，改代码才变；列在这里是为了让上限类数字都有出处，别再当成 `.env` 项去找。
+
+| 常量 | 取值 | 所在文件 | 作用 |
+|---|---|---|---|
+| `MAX_ENTRIES` | 500 | `backend/pipelines/processors/archive.py` | `content` 里最多列出的压缩包条目数，超出只报数量 |
+| `MAX_LINKS` | 100 | `backend/pipelines/processors/html.py` | 网页链接清单上限，防止导航区把正文淹掉 |
+| `MAX_ROWS_PER_SHEET` | 5000 | `backend/pipelines/processors/excel.py` | 单张表最多渲染的行数 |
+| `MAX_ROWS_TO_READ` | 5001（`MAX_ROWS_PER_SHEET + 1`） | `backend/pipelines/processors/excel.py` | 读取上限比渲染上限多一行，用来区分「还有后续行」与「这就是最后一行」 |
+| `MAX_TABLE_ROWS` | 2000 | `backend/pipelines/processors/docx.py` | 单个表格最多渲染的行数 |
+| `TEXT_LAYER_MIN_CHARS` | 30 | `backend/pipelines/processors/pdf.py` | 判定「这份 PDF 没有文字层」的字符数下限，低于它走页面渲染 |
+| `MAX_TEXT_BYTES` | 20971520（20 MB） | `backend/utils/textfile.py` | 文本类文件的体积上限，超过则只读头部，避免超级大的日志整份进内存 |
+
 ## 2. 启动服务
 
 一条命令把后端与前端都拉起来（两个服务仍是各自独立的进程，只是由一个脚本拉起与收尾）：
@@ -94,7 +109,7 @@ mp4 那一份需要 `imageio-ffmpeg`（可选依赖），没装时脚本跳过�
 - **左栏**：输入。切「远程 URL / 本地文件」，可点预设样例一键填入 URL（同时复制到剪贴板）。
 
 预设样例由 `frontend/public/presets.config.js` 配置：一个带注释的顶层文件，页面启动时按 URL 取回来，
-所以**改完刷新页面就生效**——不用改前端代码，dev 与构建产物都不用重新 build（`dist/` 里也有这份文件）。
+所以**改它不用改前端代码**：dev 下刷新页面即生效，跑构建产物时要重新 build（或直接改 `dist/` 里那份副本）。
 条目字段是 `kind`（标题）/ `desc`（描述）/ `url`（链接），顺序即界面顺序；字段缺失、类型不对或 url 不是 http(s)
 的条目会被跳过，界面在列表下方列出原因。文件取不回来（被删、语法错）时同样出提示，不会白屏。
 - **中栏**：纯代码解析。右上角「运行」只跑这一条。
@@ -104,12 +119,14 @@ mp4 那一份需要 `imageio-ffmpeg`（可选依赖），没装时脚本跳过�
 
 ## 5. 验收清单
 
-改完代码后逐条走一遍，每条都有可核查的判据。前两条是脚本（可重复执行、退出码非 0 即失败），后面是人工判断的部分。
+改完代码后逐条走一遍，每条都有可核查的判据。前两条是命令（可重复执行、退出码非 0 即失败），后面是人工判断的部分。
 
 | # | 做什么 | 判据 |
 |---|---|---|
-| 0a | `cd backend && python scripts/check_structure.py` | 五项全过：依赖方向、单文件预算、扩展名覆盖、`__init__.py` 无逻辑、`enhance_*` 不碰 `content` |
-| 0b | 起服务后 `cd backend && python scripts/smoke_check.py` | 20 种样例 + 6 项模型增强检查全过（含「两条路 content 逐字节一致」、独立图片判型分流与音视频转写；`sample.mp4` 缺 ffmpeg 时按可选样例跳过） |
+| 0a | `cd backend && python -m pytest tests -q` | 五条结构判据 + 各格式抽取 + 判型 + 通用件全过（结构判据在 `tests/test_structure.py`；不起服务、不联网、不调模型） |
+| 0b | 起服务后 `cd backend && python -m pytest tests -m model -q` | 贵缝全过：两条路 `content` 逐字节一致、模型增强产出、独立图片判型分流、音视频转写（真调模型，且本机 OCR（8021）/ ASR（8022）在跑） |
+
+两条 0 号命令之外都是人工核查。样例缺失时新套件**跳过**该条而不是失败——样例由 `python scripts/make_fixtures.py` 生成（见第 3 节）。
 
 | # | 做什么 | 判据 |
 |---|---|---|
@@ -138,7 +155,7 @@ mp4 那一份需要 `imageio-ffmpeg`（可选依赖），没装时脚本跳过�
 
 ### 结构自查报「文件超预算」或「依赖方向不对」
 
-`check_structure.py` 的判据与理由见 [adr.md](./adr.md) 的 ADR-0007：[architecture.md](./architecture.md) 里的依赖方向与单文件预算（总行数 ≤ 250、代码行 ≤ 150）。加东西前先想清楚它属于哪一层，别往 `pipelines/` 里塞格式实现。
+结构判据在 `backend/tests/test_structure.py`；依赖方向与单文件预算（总行数 ≤ 250、代码行 ≤ 150）的理由见 [architecture.md](./architecture.md) 第 4 节，单文件预算**不适用于** `backend/scripts/`（一次性生成脚本，`make_fixtures.py` 近 500 行）与 `backend/tests/`。加东西前先想清楚它属于哪一层，别往 `pipelines/` 里塞格式实现。
 
 ### 改了前端代码，页面行为还是旧的
 

@@ -8,12 +8,12 @@
 
 每节的结构相同：**动哪些文件 → 顺序 → 完成标准**。完成标准是可核查的判据，别凭「主要路径通了」收工。
 
-改完任何一处，先跑这两个脚本，再谈人工验收（清单见 [RUNBOOK.md](./RUNBOOK.md#5-验收清单)）：
+改完任何一处，先跑这两条命令，再谈人工验收（清单见 [RUNBOOK.md](./RUNBOOK.md#5-验收清单)）：
 
 ```bash
 cd backend
-python scripts/check_structure.py    # 结构：依赖方向、单文件预算、扩展名覆盖、__init__ 无逻辑、enhance_* 不碰 content
-python scripts/smoke_check.py        # 接口：18 种样例 + 两条路 content 一致 + 模型增强产出（需要服务已起）
+python -m pytest tests -q            # 自检缝：结构判据（tests/test_structure.py）+ 各格式抽取 + 判型 + 通用件；免费、不起服务、不联网、不调模型
+python -m pytest tests -m model -q   # 贵缝：两条路 content 逐字节一致 + 模型增强产出（服务已起，真调模型与本机 OCR / ASR）
 ```
 
 ---
@@ -29,15 +29,15 @@ python scripts/smoke_check.py        # 接口：18 种样例 + 两条路 content
    如果这种格式的**模型处理与通用素材读取不同**（例如独立图片要先判型），再在同一个文件里写
    `enhance_<格式>(client, …) -> EnhanceOutcome`；通用情况不用写，`pipelines/processors/reading.py` 的 `enhance_assets()` 已经覆盖。
 2. `backend/pipelines/steps/step4_extract.py` 的 `dispatch()` —— 在对应分组里加一行指向它；有专属模型增强时不用改这里（`enhance()` 会按格式找到 `<格式>.enhance_*`，没有的走通用读素材）。
-3. `backend/configs/formats.py` —— 把扩展名加进对应的格式集合（`IMAGE_EXTENSIONS` 等），并补 `MIME_BY_EXTENSION` 条目；如果是容器格式，`MAGIC_PREFIXES` 里补一行魔数。**容器头常常分不出家族成员**（OLE 里的 doc/xls/ppt、ZIP 里的 docx/xlsx/odt/apk），这种情况还要补一条容器内部指纹表——ZIP 补 `ZIP_ENTRY_FLAVORS` 或 `ODF_EXTENSION_BY_MIMETYPE`，OLE 补 `pipelines/steps/step2_detect.py` 的 `resolve_extension()` 里的分支；漏了这步，新格式会被判成容器本身（`zip` / `ole`），处理器永远进不去（ADR 0003）。
+3. `backend/configs/formats.py` —— 把扩展名加进对应的格式集合（`IMAGE_EXTENSIONS` 等）；如果是容器格式，`MAGIC_PREFIXES` 里补一行魔数。**容器头常常分不出家族成员**（OLE 里的 doc/xls/ppt、ZIP 里的 docx/xlsx/odt/apk），这种情况还要补一条容器内部指纹表——ZIP 补 `ZIP_ENTRY_FLAVORS` 或 `ODF_EXTENSION_BY_MIMETYPE`，OLE 补 `pipelines/steps/step2_detect.py` 的 `resolve_extension()` 里的分支；漏了这步，新格式会被判成容器本身（`zip` / `ole`），处理器永远进不去（ADR 0003）。
 
 **完成标准**：
 
-- `python scripts/check_structure.py` 全过（其中「扩展名覆盖」就是替你比对两个集合，别靠肉眼）。
+- `python -m pytest tests -q` 全过：结构判据（`tests/test_structure.py`）与各格式抽取、判型、通用件；其中「扩展名覆盖」就是替你比对两个集合，别靠肉眼。
 - 用真实文件跑一次两个接口：`type` 正确、`content` 非空（或对图片类为空的语义正确，见 [adr.md](./adr.md) 的 ADR-0004）。
 - `meta.ext` 是具体格式而不是容器名（`zip` / `ole`），`meta.engine` 是该格式的解析库——只看「请求成功」会漏掉整族格式被判成压缩包这类错误。
-- 同一个文件两条路的 `content` 逐字节相同（`smoke_check.py` 已覆盖两条样例，新加的格式自己再验一次）。
-- 在 `smoke_check.py` 的 `CASES` 里加一行，让这个格式以后每次都被自动验到。
+- 同一个文件两条路的 `content` 逐字节相同（`tests/test_understand_contract.py` 覆盖；它是贵缝、要真模型，新加的格式自己再验一次）。
+- 在 `backend/tests/test_processors_by_format.py` 的 `DOCUMENT_FIXTURES` 里加一行，并在该文件里补一条断言，让这个格式以后每次都被自动验到。
 
 ## 2. 加一次模型调用
 
@@ -46,7 +46,7 @@ python scripts/smoke_check.py        # 接口：18 种样例 + 两条路 content
 **动三个地方**：
 
 1. `backend/models/prompts/` —— 加一个提示词模板文件。要求模型输出 JSON 时，模板里**必须出现 `json` 字样并给结构示例**，否则模型可能一直吐空白。
-2. `backend/pipelines/understand.py`（编排）或某个处理器的 `enhance_*`（按格式的模型处理）——调 `client.chat(...)`，结果只往四处放：`meta.ocr_text`、`meta.asr_text`、`summary`、`meta.notes`，**绝不动 `content`**。`check_structure.py` 会查 `enhance_*` 有没有碰它。
+2. `backend/pipelines/understand.py`（编排）或某个处理器的 `enhance_*`（按格式的模型处理）——调 `client.chat(...)`，结果只往四处放：`meta.ocr_text`、`meta.asr_text`、`summary`、`meta.notes`，**绝不动 `content`**。`tests/test_structure.py` 的 `test_enhance_functions_never_touch_content` 会查 `enhance_*` 有没有碰它。
 3. 需要新字段就按第 3 节走契约改动流程。
 
 **注意**：
@@ -79,7 +79,6 @@ frontend/src/ResultPanel.tsx 界面渲染
 
 **完成标准**：
 
-- 写个静态检查读两边类型定义取差集，确认前后端字段一一对应——比人眼可靠。
 - `npx tsc --noEmit` 与 `npx vite build` 都通过。
 - 界面里新字段真的显示出来了（别改了类型忘了渲染）。
 
@@ -124,16 +123,16 @@ frontend/src/ResultPanel.tsx 界面渲染
 
 **已接好的 Paddle OCR**：出口在 `backend/models/paddle_ocr.py`（本机 `POST /ocr-b64`，纵向超长图在本地切片并发识别；地址与超时见 `.env` 的 `OCR_API_URL` / `OCR_TIMEOUT_SEC`）；编排在 `pipelines/processors/image.py` 的 `enhance_image()`——独立图片先用视觉模型判型（提示词 `models/prompts/classify_image.txt`）：判为语义图片就用那次调用给出的描述，判为文字图片就交 Paddle OCR 读字；判型输出解析不出来时按文字图片处理。
 
-**已接好的 Qwen3-ASR（音视频）**：出口在 `backend/models/qwen3_asr.py`（本机 `POST /asr-b64`，自己抽音轨后传字节，不用服务的 `/asr-url`；地址与超时见 `.env` 的 `ASR_API_URL` / `ASR_TIMEOUT_SEC`）；编排在 `pipelines/processors/media.py`：`extract_media()` 取到音轨（音频直接读，视频与容器音频用 `utils/ffmpeg.py` 抽）并报出 `meta.audio`，音轨同时登记进 `result.assets`（`kind="audio_track"`），`enhance_media()` 拿它转写，文字进 `meta.asr_text`。抽音轨靠 `imageio-ffmpeg`，缺它或缺 ASR 服务都退回降级并在 `meta.notes` 里说明。
+**已接好的 Qwen3-ASR（音视频）**：出口在 `backend/models/qwen3_asr.py`（本机 `POST /asr-b64`，自己抽音轨后传字节，不用服务的 `/asr-url`；地址与超时见 `.env` 的 `ASR_API_URL` / `ASR_TIMEOUT_SEC`）；编排在 `pipelines/processors/media.py`：`extract_media()` 取到音轨（音频直接读，视频与容器音频用 `utils/ffmpeg.py` 抽）并报出 `meta.audio`，音轨同时登记进 `result.assets`（`kind="audio_track"`），`enhance_media()` 拿它转写，文字进 `meta.asr_text`。抽音轨靠 `imageio-ffmpeg`，缺它或抽不出音轨时退回降级（`meta.degraded` 为 `true`）并在 `meta.notes` 里说明；ASR 服务没起只是转写失败，原因同样写进 `meta.notes`，`meta.degraded` 仍为 `false`。
 
 **完成标准**：
 
-- `python scripts/check_structure.py` 全过（新文件同样受单文件预算与依赖方向约束）。
-- 外部服务连不上不该让整条请求 500：`smoke_check.py` 里已有独立图片判型与音视频转写两类用例；再手工把服务停掉打一张含文字的图 / 一段音频，`meta.notes` 应说明原因且 HTTP 仍是 200。
+- `python -m pytest tests -q` 全过：结构判据（`tests/test_structure.py`）里的新文件同样受单文件预算与依赖方向约束。
+- 外部服务连不上不该让整条请求 500：`tests/test_understand_contract.py` 里已有独立图片判型与音视频转写两类用例；再手工把服务停掉打一张含文字的图 / 一段音频，`meta.notes` 应说明原因且 HTTP 仍是 200。
 - 确认模型增强那条路的 `content` 仍然逐字节等于纯代码那条路——OCR 读出的文字进 `meta.ocr_text`，语音转写的文字进 `meta.asr_text`，两者都不进 `content`。
 
 ## 7. 改 RAG 抽取
 
 检索入库口在 `POST /rag/extract/file`，契约是 `routers/rag/schema.py`，编排是 `pipelines/rag_extract.py`。印刷目录规则在 `pipelines/processors/catalogue.py`，分页在 `pdf_pages.py`。
 
-**不要**把页列表或目录区间写进 ConvertResponse。改完跑 `check_structure.py`，再用真实手册 PDF 打一次该口，确认 `catalogue_ranges` 非空。
+**不要**把页列表或目录区间写进 ConvertResponse。改完跑自检缝（`cd backend && python -m pytest tests -q`，结构判据在 `tests/test_structure.py`），再用真实手册 PDF 打一次该口，确认 `catalogue_ranges` 非空。

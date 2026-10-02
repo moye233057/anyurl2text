@@ -14,11 +14,11 @@
 
 ## ADR-0002 · 2026-09-12 · understand 复用 extract 的抽取内核，只做增量
 
-两个接口共用同一段下载、识别、解析代码，差异被限制在「是否调用模型」这一件事上。不共用就会出现两条各自演进的解析实现——同一份 PDF 在两条路下抽出不同文本，而「两条路可对比」正是本项目存在的理由。代价落成两条不可破的规矩：`extract_*` 不调模型、也不感知调用方是谁；`enhance_*` 只能在抽取产出之上追加，**不得改动 `content`**（由 `backend/scripts/check_structure.py` 的静态判据守着）。否掉「单一接口 + `mode` 参数」（调用方从 URL 上看不出代价量级，两条路也无法各自限流与超时）与「understand 独立实现端到端」。
+两个接口共用同一段下载、识别、解析代码，差异被限制在「是否调用模型」这一件事上。不共用就会出现两条各自演进的解析实现——同一份 PDF 在两条路下抽出不同文本，而「两条路可对比」正是本项目存在的理由。代价落成两条不可破的规矩：`extract_*` 不调模型、也不感知调用方是谁；`enhance_*` 只能在抽取产出之上追加，**不得改动 `content`**（由 `backend/tests/test_structure.py` 的静态判据守着）。否掉「单一接口 + `mode` 参数」（调用方从 URL 上看不出代价量级，两条路也无法各自限流与超时）与「understand 独立实现端到端」。
 
 ## ADR-0003 · 2026-10-02 · 覆盖范围以「纯 Python 库能否做到」划线
 
-纯 Python 库能解析的一律完整实现；做不到的不报错，而是**降级**为基础文件信息（文件类型 / 大小 / 扩展名 / 文件头），HTTP 仍是 200，`meta.degraded` 与 `degrade_reason` 说明缺的是什么——降级是**能力边界**而不是故障，混进 `error` 会让监控把已知边界当成事故。容器格式必须往里看一层，否则「完整解析」是空头承诺：OLE 头靠扩展名或 Content-Type 分 doc / xls / ppt / wps，ZIP 头读中央目录指纹定 docx / xlsx（带 `xl/vbaProject.bin` 则 xlsm）/ pptx / odt / ods / odp / apk / ipa，认不出才维持「这是个 ZIP」。今天真正缺依赖的只剩老版 Office（doc / ppt / wps，缺 LibreOffice 转换器）——音视频已按 ADR-0008 接上本机 ASR，不再降级。否掉「不支持的类型直接报错」：诚实但不可用，且逼迫调用方自己做类型预判。
+纯 Python 库能解析的一律完整实现；做不到的不报错，而是**降级**为基础文件信息（文件类型 / 大小 / 扩展名 / 文件头），HTTP 仍是 200，`meta.degraded` 与 `degrade_reason` 说明缺的是什么——降级是**能力边界**而不是故障，混进 `error` 会让监控把已知边界当成事故。容器格式必须往里看一层，否则「完整解析」是空头承诺：OLE 头靠扩展名或 Content-Type 分 doc / xls / ppt / wps，ZIP 头读中央目录指纹定 docx / xlsx（带 `xl/vbaProject.bin` 则 xlsm）/ pptx / odt / ods / odp / apk / ipa，认不出才维持「这是个 ZIP」。今天真正缺**不可替代**依赖的只剩老版 Office（doc / ppt / wps，缺 LibreOffice 转换器）——音视频已按 ADR-0008 接上本机 ASR，但 `soundfile` / `imageio-ffmpeg` 是可选依赖，缺它们或音轨抽不出时同样降级。否掉「不支持的类型直接报错」：诚实但不可用，且逼迫调用方自己做类型预判。
 
 ## ADR-0004 · 2026-09-11 · extract 对图片只给结构信息，不内置本地 OCR
 
@@ -47,4 +47,4 @@
 
 ## ADR-0009 · 2026-09-28 · RAG 抽取用独立契约，不进 ConvertResponse
 
-检索入库需要页列表与目录区间，而 ConvertResponse 的 `content` 必须在 extract / understand 下逐字节一致、不能为 RAG 改形状，所以新增 `POST /rag/extract/file`，响应 `{kind, pages?, text?, catalogue_ranges?, error}`、`error` 恒存在、**不调用模型**。PDF 抽出印刷目录才走 pymupdf4llm 分页加目录区间，抽不出则复用 extract 内核的交付文本。实现落点：路由 `routers/rag/`，编排 `pipelines/rag_extract.py`，目录规则 `processors/catalogue.py`，分页 `processors/pdf_pages.py`，契约 `routers/rag/schema.py`。代价是多一份契约与一条管线，对比界面不渲染此口。
+检索入库需要页列表与目录区间，而 ConvertResponse 的 `content` 必须在 extract / understand 下逐字节一致、不能为 RAG 改形状，所以新增 `POST /rag/extract/file`，响应 `{kind, pages?, text?, catalogue_ranges?, error}`、`error` 恒存在、**不调用模型**。PDF 先统一走 pymupdf4llm 分页（`extract_pdf_pages()`），再只看前 `PREVIEW_FIRST_PAGES`（15 页）找印刷目录：抽出则加上目录区间返回，抽不出才复用 extract 内核的交付文本。实现落点：路由 `routers/rag/`，编排 `pipelines/rag_extract.py`，目录规则 `processors/catalogue.py`，分页 `processors/pdf_pages.py`，契约 `routers/rag/schema.py`。代价是多一份契约与一条管线，对比界面不渲染此口。

@@ -34,54 +34,7 @@ MEDIA_EXTENSIONS = AUDIO_EXTENSIONS | VIDEO_EXTENSIONS
 
 OFFICE_LEGACY_EXTENSIONS = frozenset({"doc", "ppt", "wps"})
 
-# ---------- 扩展名 ↔ MIME ----------
-
-MIME_BY_EXTENSION = {
-    "pdf": "application/pdf",
-    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "xls": "application/vnd.ms-excel",
-    "xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
-    "csv": "text/csv",
-    "ods": "application/vnd.oasis.opendocument.spreadsheet",
-    "odt": "application/vnd.oasis.opendocument.text",
-    "odp": "application/vnd.oasis.opendocument.presentation",
-    "rtf": "application/rtf",
-    "txt": "text/plain",
-    "md": "text/markdown",
-    "markdown": "text/markdown",
-    "json": "application/json",
-    "xml": "application/xml",
-    "html": "text/html",
-    "htm": "text/html",
-    "png": "image/png",
-    "jpg": "image/jpeg",
-    "jpeg": "image/jpeg",
-    "gif": "image/gif",
-    "bmp": "image/bmp",
-    "tif": "image/tiff",
-    "tiff": "image/tiff",
-    "webp": "image/webp",
-    "heic": "image/heic",
-    "heif": "image/heif",
-    "ico": "image/x-icon",
-    "svg": "image/svg+xml",
-    "zip": "application/zip",
-    "tar": "application/x-tar",
-    "gz": "application/gzip",
-    "tgz": "application/gzip",
-    "7z": "application/x-7z-compressed",
-    "rar": "application/vnd.rar",
-    "apk": "application/vnd.android.package-archive",
-    "ipa": "application/octet-stream",
-    "exe": "application/vnd.microsoft.portable-executable",
-    "mp3": "audio/mpeg",
-    "wav": "audio/wav",
-    "mp4": "video/mp4",
-    "doc": "application/msword",
-    "ppt": "application/vnd.ms-powerpoint",
-}
+# ---------- Content-Type → 扩展名 ----------
 
 # Content-Type → 扩展名提示。只在文件头认不出、名字又取不到扩展名时兜底用，
 # 这时已经没有更可靠的依据，所以这里可以宽松。

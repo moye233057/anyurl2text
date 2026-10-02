@@ -3,7 +3,7 @@
 
 ```
 step1_download  下载 / 上传落盘（含四条下载安全基线）      两条路共用
-step2_detect    类型识别（文件头 → Content-Type → 扩展名）  两条路共用
+step2_detect    类型识别（文件头 → 文件名扩展名 → Content-Type）  两条路共用
 step3_prepare   补后缀、组装 PreparedSource、请求结束清理   两条路共用
 step4_extract   按格式跑抽取器（content 的唯一来源）+ 模型增强入口  两条路共用
 step5_enhance   模型增强 + 摘要                            只有 understand 走

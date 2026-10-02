@@ -326,11 +326,11 @@ def step4_make_pptx() -> None:
 
 def step5_make_pdf() -> None:
     """造十页纯文本 PDF：每页一段规程，用于验证分页与阅读顺序。"""
-    import fitz
+    import pymupdf
 
     font = _load_font(FONT_SIZE)
     lines = _page_lines(font)
-    document = fitz.open()
+    document = pymupdf.open()
     for page_index in range(10):
         page = document.new_page(width=595, height=842)
         page.insert_text((60, 70), f"第 {page_index + 1} 页 / 共 10 页", fontname="china-s", fontsize=12)
@@ -348,18 +348,18 @@ def step5_make_pdf() -> None:
 
 def step6_make_scanned_pdf() -> None:
     """造三页扫描件：整页是图，没有任何文字层——用来验收扫描件的页面渲染补全（ADR 0006）。"""
-    import fitz
+    import pymupdf
 
     font = _load_font(FONT_SIZE)
     lines = _page_lines(font)
-    document = fitz.open()
+    document = pymupdf.open()
     for page_index in range(3):
         image_path = DATA_DIR / f"_page_{page_index + 1}.png"
         # 每页错开几行，页面内容互不相同
         page_image = _draw_page(lines[page_index : page_index + 18], font)
         page_image.save(image_path)
         page = document.new_page(width=595, height=842)
-        page.insert_image(fitz.Rect(0, 0, 595, 842), filename=str(image_path))
+        page.insert_image(pymupdf.Rect(0, 0, 595, 842), filename=str(image_path))
         image_path.unlink()
     document.save(str(DATA_DIR / "scanned.pdf"))
     document.close()

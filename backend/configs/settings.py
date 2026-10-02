@@ -13,7 +13,6 @@ import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent  # backend/
-PROJECT_DIR = BASE_DIR.parent  # anyurl2text/：.env 与文档在项目根
 # 自建样例与调试产物都放在服务目录下（backend/data），与 backend/scripts 的生成脚本同级。
 DATA_DIR = BASE_DIR / "data"
 DEBUG_DIR = DATA_DIR / "debug"

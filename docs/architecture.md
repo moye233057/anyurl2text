@@ -22,7 +22,7 @@
 
 ## 2. 现行约束：四条铁律
 
-写代码前先认这四条，它们决定了各处的写法，由 `backend/scripts/check_structure.py` 的静态判据守着。
+写代码前先认这四条，它们决定了各处的写法，由 `backend/tests/test_structure.py` 的静态判据守着。这五条判据覆盖铁律 1 与 2；**铁律 3（状态码语义）与铁律 4（降级仍 200）没有静态判据**，铁律 1 的逐字节一致另由 `tests/test_understand_contract.py` 守（贵缝，要真模型）。
 
 1. **`content` 在两个接口下完全一致**：模型产出只进 `summary` / `meta.ocr_text` / `meta.asr_text` / `meta.notes`，绝不覆盖或追加进 `content`。
 2. **确定性产出只有一份实现**：`processors/` 里每个格式的 `extract_*` 不调模型、不感知调用方是谁；`enhance_*` 只能在其之上追加，**不得改动 `content`**（ADR-0002 / 0007）。
@@ -37,7 +37,7 @@
 |---|---|---|
 | 服务入口：加载 `.env`、装配路由与中间件、请求体早拒 | `backend/app.py` | 已实现 |
 | 运行配置、单价表、日志格式 | `backend/configs/settings.py`、`configs/log_config.py` | 已实现 |
-| 静态格式清单：扩展名集合 / MIME 双向表 / 魔数表 / ZIP 指纹 / 降级分类 | `backend/configs/formats.py` | 已实现 |
+| 静态格式清单：扩展名集合 / Content-Type → 扩展名反查表 / 魔数表 / ZIP 指纹 / 降级分类 | `backend/configs/formats.py` | 已实现 |
 | 对比接口契约（ConvertResponse） | `backend/routers/convert/schema.py` | 已实现 |
 | RAG 抽取契约 | `backend/routers/rag/schema.py` | 已实现 |
 | HTTP 层：收参与状态码 | `backend/routers/convert/router.py`、`routers/rag/router.py`、`routers/probe/router.py` | 已实现 |
@@ -49,20 +49,20 @@
 | RAG 分页与印刷目录规则 | `backend/pipelines/processors/pdf_pages.py`、`processors/catalogue.py` | 已实现 |
 | 模型出口（一模型一文件）+ 图片编码 + 提示词模板 | `backend/models/deepseek.py`、`paddle_ocr.py`、`qwen3_asr.py`、`images.py`、`prompts/` | 已实现 |
 | 通用件：文本解码与文件头、`LlmError`、计价记账、抽音轨 | `backend/utils/textfile.py`、`errors.py`、`usage.py`、`ffmpeg.py` | 已实现 |
-| 自查脚本：结构、接口冒烟、样例生成 | `backend/scripts/check_structure.py`、`smoke_check.py`、`make_fixtures.py` | 已实现 |
+| 样例生成与测试缝 | `backend/scripts/make_fixtures.py`；`backend/tests/`（含 pytest 配置 `backend/pytest.ini`） | 已实现 |
 | 单页对比界面（三栏、两栏各有运行按钮） | `frontend/src/`（表见 `App.tsx` / `ResultPanel.tsx`）；预设样例数据源 `frontend/public/presets.config.js` | 已实现 |
 | 一键拉起前后端两个进程 | `start.py`（项目根） | 已实现 |
 | 术语表 | `CONTEXT.md` | 已实现 |
 
 ## 4. 依赖方向
 
-单向，由 `check_structure.py` 守着：
+单向，由 `tests/test_structure.py` 守着：
 
 ```
 app → routers → pipelines → pipelines/steps → pipelines/processors → { models , utils } → configs
 ```
 
-叶子模块（自己不 import 项目内任何东西，所以任何层都能拿它当数据结构用，不会成环）：`routers/convert/schema.py`、`routers/rag/schema.py`、`configs/formats.py`、`configs/settings.py`、`utils/textfile.py`、`utils/errors.py`。
+叶子模块（自己不 import 项目内任何东西，所以任何层都能拿它当数据结构用，不会成环）：关键的几个是 `routers/convert/schema.py`、`routers/rag/schema.py`、`configs/formats.py`、`configs/settings.py`、`utils/textfile.py`、`utils/errors.py`；`configs/log_config.py`、`pipelines/processors/catalogue.py`、`pipelines/processors/pdf_pages.py`、`pipelines/processors/rtf.py` 与各 `__init__.py` 同样是叶子，实际共 20 个。完整清单由 `backend/tests/test_structure.py` 的 `leaf_modules()` 复算。
 
 另外两条结构性规矩：`__init__.py` 里不放逻辑（只有模块 docstring）；单文件总行数 ≤ 250 且代码行（剥离 docstring / 注释 / 空行）≤ 150。
 
@@ -72,7 +72,7 @@ app → routers → pipelines → pipelines/steps → pipelines/processors → {
 |---|---|---|
 | 收参与状态码 | `routers/convert/router.py` | 调下面某条管线，把 `PipelineResult.status` 写进 HTTP |
 | 1 下载 / 上传落盘 | `steps/step1_download.py` | 临时目录里的一个文件（SSRF 校验、流式限大小、TLS 不降级） |
-| 2 类型识别 | `steps/step2_detect.py` | 扩展名 + `Detector`（文件头 → Content-Type → 扩展名，容器再看一层） |
+| 2 类型识别 | `steps/step2_detect.py` | 扩展名 + `Detector`（文件头 → 文件名扩展名 → Content-Type，容器再看一层） |
 | 3 补后缀与组装 | `steps/step3_prepare.py` | `PreparedSource`；请求结束 `cleanup()` 整树删临时目录 |
 | 4 确定性抽取 | `steps/step4_extract.py` → `processors/*.extract_*()` | `content`（唯一来源）+ `assets` 素材清单 |
 | 4′ 模型增强（仅 understand） | `steps/step4_extract.py` → `processors/*.enhance_*()` / `reading.py` | `meta.ocr_text` / `meta.asr_text` / 描述 |
@@ -86,4 +86,4 @@ app → routers → pipelines → pipelines/steps → pipelines/processors → {
 
 - **老版 Office（doc / ppt / wps）没有解析路径**：要补就得引 LibreOffice 转换器或自己解析 OLE 流，两者都超出「纯 Python 库能否做到」这条线（ADR-0003）。
 - **下载层仍有 DNS 二次解析的时间窗**：SSRF 校验用的是 `socket.getaddrinfo` 的结果，`httpx` 建立连接时会再解析一次，理论上存在 DNS rebinding 的 TOCTOU 窗口；本机自用可接受，对外暴露前要补「解析一次、按 IP 连接」。
-- **`content` 一致性靠两条样例与静态判据守**：`smoke_check.py` 覆盖 `report.docx` / `table.csv` 两条，`check_structure.py` 查 `enhance_*` 是否碰 `content`；新增格式要自己补用例。
+- **`content` 一致性与模型产出边界由 `tests/` 下的用例覆盖**：`tests/test_understand_contract.py` 用同一个源比对两条路的 `content` 逐字节相同（贵缝，要真模型、由人在关键节点跑），`tests/test_structure.py` 静态查 `enhance_*` 是否碰 `content`；新增格式要自己补用例。

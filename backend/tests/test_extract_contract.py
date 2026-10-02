@@ -6,8 +6,8 @@ extract 缝的契约测试：只打 HTTP，不 import 项目内任何东西。
 每次改动都能跑，不联网、不花钱、不起 Paddle OCR / ASR。
 
 缝：`POST /extract/file`（本地文件上传，纯代码抽取，恒不调模型）。
-不覆盖：`understand` 那条路要调模型与本机 OCR / ASR 服务，属于贵缝，仍走
-        `scripts/smoke_check.py`，由人在关键节点跑；本文件刻意不重复它。
+不覆盖：`understand` 那条路要调模型与本机 OCR / ASR 服务，属于贵缝，由
+        `tests/test_understand_contract.py` 覆盖，由人在关键节点跑；本文件刻意不重复它。
 
 预期值不来自「跑一遍代码看它输出什么」，而来自：
 - `docs/RUNBOOK.md` 的验收清单

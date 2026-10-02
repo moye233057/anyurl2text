@@ -2,9 +2,9 @@
 """
 步骤 2：类型识别——决定一个文件交给哪个处理器（两条路共用）。
 
-识别顺序固定为 文件头 → Content-Type → 扩展名：
-文件头最可靠但只覆盖容器格式，认不出时退回 Content-Type，最后才用最容易撒谎的扩展名
-（URL 常无后缀、CDN 常给 application/octet-stream）。
+识别顺序固定为 文件头 → 文件名扩展名 → Content-Type：
+文件头最可靠但只覆盖容器格式，认不出时先信文件名（URL 路径）里的后缀，最后才用最容易
+撒谎的 Content-Type（CDN 常给 application/octet-stream 这种没信息量的类型）。
 
 容器头只能定到「容器」，还要往里看一层：OLE 头分不出 doc / xls / ppt，
 ZIP 头分不出普通压缩包与 docx / xlsx / pptx / odt / ods / odp / apk / ipa 这一族，
@@ -186,7 +186,7 @@ def resolve_extension(
     """
     综合文件头、Content-Type 与扩展名得出最终扩展名。
 
-    功能：按「文件头优先于 Content-Type 优先于名字扩展名」定序；
+    功能：按「文件头优先于名字扩展名优先于 Content-Type」定序；
           文件头只认容器格式，认不出时退回另两者；
           两类容器还要再看一层内部结构——OLE 头靠扩展名或 Content-Type 分
           doc / xls / ppt，ZIP 靠容器条目指纹分 docx / xlsx / pptx / odt / apk 一族（ADR 0003）。
