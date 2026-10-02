@@ -62,7 +62,7 @@
 app → routers → pipelines → pipelines/steps → pipelines/processors → { models , utils } → configs
 ```
 
-叶子模块（自己不 import 项目内任何东西，所以任何层都能拿它当数据结构用，不会成环）：关键的几个是 `routers/convert/schema.py`、`routers/rag/schema.py`、`configs/formats.py`、`configs/settings.py`、`utils/textfile.py`、`utils/errors.py`；`configs/log_config.py`、`pipelines/processors/catalogue.py`、`pipelines/processors/pdf_pages.py`、`pipelines/processors/rtf.py` 与各 `__init__.py` 同样是叶子，实际共 20 个。完整清单由 `backend/tests/test_structure.py` 的 `leaf_modules()` 复算。
+叶子模块（自己不 import 项目内任何东西，所以任何层都能拿它当数据结构用，不会成环）：关键的几个是 `routers/convert/schema.py`、`routers/rag/schema.py`、`configs/formats.py`、`configs/settings.py`、`utils/textfile.py`、`utils/errors.py`；`configs/log_config.py`、`pipelines/processors/catalogue.py`、`pipelines/processors/pdf_pages.py`、`pipelines/processors/rtf.py` 与各 `__init__.py` 同样是叶子，实际共 20 个。完整清单：`python -m pytest tests/test_structure.py -s -k leaf` 会打印出来（`-s` 才看得见被 pytest 捕获的输出）。
 
 另外两条结构性规矩：`__init__.py` 里不放逻辑（只有模块 docstring）；单文件总行数 ≤ 250 且代码行（剥离 docstring / 注释 / 空行）≤ 150。
 

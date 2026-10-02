@@ -283,7 +283,14 @@ def test_the_rules_are_looking_at_real_modules():
 
 
 def test_leaf_modules_include_the_contracts():
-    """行为：契约文件是叶子模块——它们不 import 实现层，所以任何层都能拿它当数据结构用。"""
+    """
+    行为：契约文件是叶子模块——它们不 import 实现层，所以任何层都能拿它当数据结构用。
+
+    同时把完整清单打出来（pytest 会捕获输出，要加 `-s` 才看得见）：
+    加新模块后想知道它算不算叶子、因而能不能被任何层 import，看这一行就够。
+    """
     leaves = leaf_modules(production_modules())
+    listing = "、".join(sorted(leaves))
+    print(f"\n叶子模块（不 import 项目内任何东西，任何层都能用，共 {len(leaves)} 个）：{listing}")
     for expected in ("routers.convert.schema", "routers.rag.schema", "configs.formats", "configs.settings"):
         assert expected in leaves, f"{expected} 不再是叶子模块，依赖方向需要重新审视"
