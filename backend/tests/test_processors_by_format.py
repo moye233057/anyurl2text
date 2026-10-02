@@ -37,6 +37,12 @@ DOCUMENT_FIXTURES = (
     "manual.pdf",
 )
 
+# 音视频样例的生成参数（`scripts/make_fixtures.py` 阶段 11/12 写死）：
+# 16kHz 单声道 3 秒的 wav，mp4 由这段音频封成，所以两者报出的音轨参数应当一样。
+AUDIO_SECONDS = 3.0
+AUDIO_SAMPLE_RATE = 16000
+AUDIO_CHANNELS = 1
+
 
 @pytest.fixture
 def ctx(work_dir):
@@ -162,6 +168,42 @@ def test_image_extract_yields_structure_only(name, ctx, fixture_copy):
     assert image.width and image.height
     assert image.format
     assert result.audio_meta is None
+
+
+def test_audio_reports_its_track_structure(ctx, fixture_copy):
+    """
+    行为：音频的确定性产出是音轨参数（时长 / 采样率 / 声道），没有正文，也不降级。
+
+    来源：README「音频 → 结构信息（时长 / 采样率 / 声道 / 音轨格式）」+ 样例生成参数
+    （`sample.wav` 写死 3 秒、16kHz、单声道）。音频文件本身就是音轨，所以不该出现 ffmpeg。
+    """
+    result = run("sample.wav", ctx, fixture_copy)
+    assert result.content == "", "音频没有可确定性抽取的正文"
+    assert result.degraded is False, f"音轨读得出来就不该降级：{result.degrade_reason}"
+    assert result.engines == ["soundfile"], "音频不需要先抽音轨"
+    assert result.audio_meta is not None, "音频应给出音轨参数"
+    assert result.audio_meta.duration_seconds == pytest.approx(AUDIO_SECONDS, abs=0.05)
+    assert result.audio_meta.sample_rate == AUDIO_SAMPLE_RATE
+    assert result.audio_meta.channels == AUDIO_CHANNELS
+
+
+def test_video_reports_the_parameters_of_its_extracted_track(ctx, fixture_copy):
+    """
+    行为：视频先抽出音轨，报出的是**音轨**的参数（统一转成 16kHz 单声道），正文同样为空且不降级。
+
+    来源：README「视频 → 同上，报的是它音轨的参数」+ 样例生成参数（`sample.mp4` 由 `sample.wav`
+    封成，时长同为 3 秒）+ `utils/ffmpeg.py` 把音轨统一成 16kHz 单声道。
+    若哪天改成直接报容器的原始参数，采样率与声道就对不上——这条同时钉住「报的是抽出的那条音轨」。
+    """
+    result = run("sample.mp4", ctx, fixture_copy)
+    assert result.content == "", "视频容器里没有可确定性抽取的正文"
+    assert result.degraded is False, f"音轨抽得出来就不该降级：{result.degrade_reason}"
+    assert result.engines == ["ffmpeg"], "视频要先抽音轨"
+    assert result.audio_meta is not None, "视频报的是它音轨的参数"
+    assert result.audio_meta.duration_seconds == pytest.approx(AUDIO_SECONDS, abs=0.1)
+    assert result.audio_meta.sample_rate == AUDIO_SAMPLE_RATE, "报的应是抽出的音轨参数"
+    assert result.audio_meta.channels == AUDIO_CHANNELS
+    assert result.notes, "抽过音轨这件事要说明，不能静默"
 
 
 @pytest.mark.parametrize(("name", "entries"), [("bundle.zip", 12), ("demo.apk", 6)])

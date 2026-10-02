@@ -64,13 +64,17 @@ def call(pipeline: str, file_name: str, query=None):
 
 # ---------- 核心不变量：两条路逐字节一致 ----------
 
-@pytest.mark.parametrize("name", ["plain.txt", "table.csv", "report.docx", "manual.pdf", "legacy.doc"])
+@pytest.mark.parametrize(
+    "name",
+    ["plain.txt", "table.csv", "report.docx", "manual.pdf", "legacy.doc", "sample.wav", "sample.mp4"],
+)
 def test_both_paths_deliver_byte_identical_text(name, understanding_is_possible):
     """
     行为：同一个源，`/extract/file` 与 `/understand/file` 的 `content` 逐字节相同。
 
     来源：README「两条路产出的正文 **逐字节一致**，所以可以直接对比」——本项目存在的理由。
-    覆盖三种态：纯文本、表格、带内嵌图的文档、PDF，以及降级源。
+    覆盖四种态：纯文本、表格、带内嵌图的文档、PDF、降级源，以及音视频——
+    音视频没有可确定性抽取的正文，两条路都该是空串：从音轨里听出的字只能进 `meta.asr_text`。
     """
     _, fast = call("extract", name)
     _, deep = call("understand", name)
@@ -164,6 +168,31 @@ def test_semantic_image_gets_a_description_instead_of_ocr(understanding_is_possi
     assert not body["meta"]["ocr_text"], "语义图片不该有识别文本"
     assert body["summary"], "语义图片应直接给出客观描述"
     assert body["content"] == ""
+
+
+# ---------- 音视频：音轨交本机 ASR，正文仍为空 ----------
+
+@pytest.mark.parametrize(("name", "modality"), [("sample.wav", "audio"), ("sample.mp4", "video")])
+def test_media_stays_a_boundary_and_says_what_it_did(name, modality, understanding_is_possible):
+    """
+    行为：音视频在模型增强路上仍是「正常结果」——没有正文、不降级、按源报 audio / video 两种模态、
+    音轨参数照报，并把「音轨送没送去转写、结果如何」写进现场说明。
+
+    来源：CONTEXT「音轨」与「转写文本」（转写出的文字进 `meta.asr_text`，不进 content）
+    + README「音视频要本机 ASR 服务起着…缺任一项都退回降级并在 `meta.notes` 里说明」。
+    样例是正弦音、没有说话声，所以转写文本为空：真从这段纯音里"听"出文字才是异常信号。
+    不断言 `notes` 的措辞——转写为空与转写服务出问题都会留下说明，钉字面就成了抄实现。
+    """
+    _, body = call("understand", name)
+    assert body["error"] is None
+    assert body["content"] == ""
+    assert body["type"] == modality
+    assert body["meta"]["degraded"] is False
+    assert body["meta"]["audio"], "音轨参数要照报"
+    assert not body["meta"]["asr_text"], "正弦音样例没有说话声，不该有转写文本"
+    assert body["meta"]["notes"], "转写结果如何要说明，不能静默"
+    assert body["summary"] is None, "没有说话声就没有可摘要的文本"
+    assert body["usage"] is None, "本机 ASR 不算模型用量，没摘要就不该记账"
 
 
 # ---------- 降级与失败仍走契约 ----------
