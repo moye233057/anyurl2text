@@ -1,0 +1,33 @@
+# 密钥与本地配置：绝不入库
+.env
+.env.*
+# 例外：配置模板必须入库。`.env.*` 会连 `.env.example` 一起忽略，
+# 而 README 让使用者复制它——不放行的话 clone 下来没有可复制的样本。
+!.env.example
+
+# 运行产物（都在 backend/data/ 下）
+backend/data/debug/
+*.log
+
+# 大件样例：18.67 MB，由 make_fixtures.py 阶段 6 生成，不入库。
+# backend/data/ 下其余样例照常入库——其中 7 个（plain.txt / table.csv / sample.json /
+# feed.xml / page.html / sample.rtf / notes.md）不是脚本生成的，只有仓库里有。
+backend/data/scanned.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# 前端
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# 编辑器与系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

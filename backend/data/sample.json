@@ -1,0 +1,22 @@
+{
+  "service": "anyurl2text",
+  "version": "0.1.0",
+  "endpoints": [
+    { "path": "/extract", "uses_model": false, "note": "纯代码解析" },
+    { "path": "/understand", "uses_model": true, "note": "模型增强解析" }
+  ],
+  "limits": {
+    "max_download_bytes": 209715200,
+    "max_content_chars": 200000,
+    "rendered_page_max": 10
+  },
+  "supported": [
+    "pdf", "docx", "pptx", "xlsx", "xls", "csv", "ods", "odt", "odp",
+    "rtf", "txt", "md", "json", "xml", "html", "png", "jpg", "webp", "zip", "apk"
+  ],
+  "degraded": {
+    "audio": "缺少语音识别能力",
+    "video": "缺少系统级转码工具",
+    "office_legacy": "缺少 LibreOffice 转换器"
+  }
+}

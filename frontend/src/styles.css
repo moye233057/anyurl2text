@@ -1,0 +1,464 @@
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --border: #dfe3e8;
+  --text: #1f2328;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --accent-soft: #eff4ff;
+  --warn: #b45309;
+  --warn-soft: #fff7ed;
+  --error: #b91c1c;
+  --error-soft: #fef2f2;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* 让最外层占满视口高度，区域才能按屏幕分配高度而不是被内容撑开 */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.app {
+  height: 100%;
+  padding: 14px;
+}
+
+/* 三个固定区域并排：输入区 + 两条管线各一栏。整页不滚动。 */
+.layout {
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+/* 白底铺满自己的格子（height:100%），内容多少都不影响区域本身的大小 */
+.region {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  overflow: hidden;
+}
+
+.region-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.region-head .title {
+  font-weight: 600;
+}
+
+/* 运行按钮推到区域标题的右侧：每条管线各有一个，点哪个跑哪个 */
+.run-button {
+  margin-left: auto;
+  flex: none;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.run-button:disabled {
+  background: #b9c7e6;
+  cursor: not-allowed;
+}
+
+.region-sub {
+  flex: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  margin: 6px 0 10px;
+}
+
+/* 空态与加载态撑满区域并居中，避免区域看起来是塌的 */
+.region-note {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* 区域主体：区块纵向排列。
+   只在这里放一根滚动条——整个区域超出时才滚。
+   早先给每个区块各自加滚动条，结果是统计/元信息/用量三块把高度吃光，
+   只剩几十像素留给「解析内容」和「内容摘要」，长摘要只能看到两行，完全不实用。 */
+.region-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.block:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.block-title {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.block-body {
+  min-width: 0;
+}
+
+.region-body::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.region-body::-webkit-scrollbar-thumb {
+  background: #cfd6de;
+  border-radius: 4px;
+}
+
+.region-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.kv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px 12px;
+  font-size: 12.5px;
+}
+
+.kv-grid .k {
+  color: var(--muted);
+  margin-right: 6px;
+}
+
+.kv-grid .v {
+  font-family: var(--mono);
+  word-break: break-all;
+}
+
+pre.fill {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+pre.fill.prose {
+  font-family: inherit;
+  font-size: 13px;
+}
+
+/* 来源整行显示：它可能是一条很长的 URL，塞进网格会把整行顶高、还折得读不出 */
+.source-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+}
+
+.source-line .k {
+  flex: none;
+  color: var(--muted);
+}
+
+.source-line .v {
+  min-width: 0;
+  font-family: var(--mono);
+  word-break: break-all;
+}
+
+.sub-label {
+  margin: 10px 0 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.sub-label.first {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* ---------- 输入区表单 ---------- */
+
+.mode-switch {
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.mode-switch button {
+  border: 0;
+  background: #fff;
+  padding: 6px 16px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.mode-switch button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* min-width: 0 让输入框能在 flex 列里正常收缩，不被内容顶宽 */
+.field {
+  min-width: 0;
+}
+
+.field-label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.field-label .hint {
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 6px;
+  font-size: 12px;
+}
+
+input[type='text'],
+input[type='url'],
+textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 14px;
+  background: #fff;
+  color: var(--text);
+}
+
+textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+/* URL 框：高度由 App.tsx 量过 scrollHeight 后写进行内样式，这里只定上限与折行方式。
+   原来用单行 input，长地址只能横向滚动，右边那段永远看不见；
+   现在按填入的地址长高、折行显示完整，只有确实过长的地址才在框内自己滚动。
+   上限约 5 行：再长就让框内滚动，否则一条超长地址会把整个输入区顶掉。 */
+.url-field {
+  min-height: 0;
+  max-height: 130px;
+  overflow-y: auto;
+  resize: none;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ---------- 预设样例 ----------
+   输入区里的内层区域：列表自己滚，按钮再多也不会把输入区撑长。 */
+.preset-box {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.preset-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 7px 10px;
+  background: #f9fafb;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.preset-head .hint {
+  font-weight: 400;
+  font-size: 11.5px;
+}
+
+.preset-list {
+  max-height: 34vh;
+  overflow-y: auto;
+}
+
+.preset-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.preset-item:last-child {
+  border-bottom: 0;
+}
+
+.preset-item:hover {
+  background: var(--accent-soft);
+}
+
+.preset-item.active {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.preset-kind {
+  display: block;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.preset-desc {
+  display: block;
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.preset-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.preset-list::-webkit-scrollbar-thumb {
+  background: #cfd6de;
+  border-radius: 4px;
+}
+
+.inline-warn {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--warn-soft);
+  border: 1px solid #fed7aa;
+  color: var(--warn);
+  font-size: 12.5px;
+}
+
+/* ---------- 共用小件 ---------- */
+
+.badge {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 1px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.badge.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-color: #fed7aa;
+}
+
+.error-box {
+  background: var(--error-soft);
+  border: 1px solid #fecaca;
+  color: var(--error);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.note-box {
+  background: var(--warn-soft);
+  border: 1px solid #fed7aa;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-top: 8px;
+  font-size: 12.5px;
+}
+
+.note-box ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.note-box + .note-box {
+  margin-top: 6px;
+}
+
+/* ---------- 窄屏回退 ----------
+   三栏并排在窄屏上会把每栏压得没法读。
+   这里改为上下堆叠：整页恢复滚动，但每个区域仍固定高度、内部各自滚动。 */
+@media (max-width: 1180px) {
+  html,
+  body,
+  #root {
+    height: auto;
+  }
+
+  .app {
+    height: auto;
+  }
+
+  .layout {
+    height: auto;
+    grid-template-columns: 1fr;
+  }
+
+  .region {
+    height: 72vh;
+  }
+}

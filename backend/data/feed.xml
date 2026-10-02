@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<catalog>
+  <book id="b-001" category="tech">
+    <title>文档解析实践</title>
+    <author>示例作者</author>
+    <pages>312</pages>
+  </book>
+  <book id="b-002" category="design">
+    <title>界面与信息密度</title>
+    <author>另一位作者</author>
+    <pages>248</pages>
+  </book>
+  <notes>
+    这个文件的用途是验证 XML 抽取会保留元素名与属性。
+  </notes>
+</catalog>

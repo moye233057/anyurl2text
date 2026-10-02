@@ -1,0 +1,186 @@
+# 运行 · 配置 · 验收
+
+> **用途**：首次启动见 [README 的快速开始](../README.md#快速开始)；这份讲跑起来之后的配置项、样例生成、验收清单与故障处置。
+> **关联**：[architecture.md](./architecture.md)（模块与落点） · [API.md](./API.md)（字段契约）
+> **基线**：2026-09-12
+
+---
+
+## 1. 配置项
+
+全部配置从**项目根目录**的 `.env` 读取（不是 `backend/`）。缺文件不报错，只是所有项取默认值——启动日志第二行会打出它实际读了哪个路径，认准那一行。
+
+### 必填
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `DEEPSEEK_API_KEY` | 空 | 不填则模型增强解析失败并说明原因，纯代码解析不受影响 |
+
+### 常用
+
+| 变量 | 默认 | 作用 | 什么时候改 |
+|---|---|---|---|
+| `DEEPSEEK_MODEL` | `deepseek-flash` | 模型名 | 换模型时。用一个模型同时处理文本与图片 |
+| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | 模型端点 | 换供应商 |
+| `THINKING_ENABLED` | `false` | 思考模式 | 想让摘要质量更高时打开。**默认关闭是刻意的**：思维链按输出侧计费，输出价约为输入未命中价的 4 倍 |
+| `ANYURL2TEXT_PORT` | `8020` | 后端端口 | 改这里要同步改 `frontend/vite.config.ts` 的代理目标。本机连号：本服务 8020、OCR 8021、ASR 8022 |
+| `ALLOW_PRIVATE_HOSTS` | `false` | 允许下载内网 / 回环地址 | 仅在本机串本地文件服务调试时打开；对外可访问的部署保持 `false` |
+| `OCR_API_URL` | `http://127.0.0.1:8021/ocr-b64` | 本机 Paddle OCR 服务地址（独立图片判型为文字图片时由它读字） | 换了 OCR 服务端口，或部署到别处时 |
+| `ASR_API_URL` | `http://127.0.0.1:8022/asr-b64` | 本机 Qwen3-ASR 服务地址（音频与视频的音轨由它转写） | 换了 ASR 服务端口，或部署到别处时 |
+| `ASR_MAX_AUDIO_SECONDS` | 600 | 送转写的音轨时长上限；超过就跳过并写进 `meta.notes` | 想转写更长录音时。**先把 ASR 服务的 `max_new_tokens` 调大**，否则上游会把尾部静默丢掉 |
+
+### 成本相关
+
+想控花费时按这个顺序调。
+
+| 变量 | 默认 | 影响 |
+|---|---|---|
+| `MAX_MODEL_INPUT_CHARS` | 120000 | 送进模型的文本上限，直接决定摘要那一次调用的输入 token |
+| `MAX_EMBEDDED_IMAGES` | 3 | 每份文档最多 OCR 几张内嵌图 |
+| `RENDERED_PAGE_MAX` | 10 | 扫描件最多渲染几页 |
+| `MAX_CONTENT_CHARS` | 200000 | `content` 的字符上限（也会影响送模型的量） |
+| `LLM_MAX_TOKENS` | 8192 | 单次模型输出上限。长文档摘要看着被截断就提高它 |
+| `DEBUG_ARTIFACTS` | `false` | 打开后把中间产物留档到 `backend/data/debug/`，用于排查 |
+
+### 其余
+
+| 变量 | 默认 | 作用 |
+|---|---|---|
+| `ANYURL2TEXT_HOST` | `127.0.0.1` | 监听地址；要让局域网访问改成 `0.0.0.0` |
+| `REQUEST_BUDGET_SEC` | 120 | 单请求总时间预算 |
+| `CONNECT_TIMEOUT_SEC` / `READ_TIMEOUT_SEC` | 10 / 30 | 连接与读取超时（秒） |
+| `MAX_DOWNLOAD_BYTES` | 209715200（200 MB） | 下载与上传的内容上限 |
+| `MAX_REDIRECTS` | 5 | 重定向跟随上限 |
+| `ANYURL2TEXT_USER_AGENT` | 桌面 Chrome UA | 下载时的 UA |
+| `RENDERED_PAGE_OCR_ENABLED` | `true` | 扫描件页面渲染总开关 |
+| `RENDERED_PAGE_DPI` | 150 | 渲染 DPI。小字识别不清时提高（模型侧会把图缩到约 1300×1300 总像素，过高没有收益） |
+| `RENDERED_PAGE_RETRY_MIN_CHARS` | 20 | 整页识别结果短于此值就判定「没认出来」，切成上下两半重试 |
+| `LLM_TIMEOUT_SEC` / `LLM_MAX_RETRIES` | 180 / 3 | 模型调用超时与重试次数 |
+| `OCR_TIMEOUT_SEC` | 60 | 单次 Paddle OCR 请求超时（纵向长图会切片并发，按片计时） |
+| `ASR_TIMEOUT_SEC` | 300 | 单次语音转写请求超时；长音轨转写慢，所以比 OCR 宽 |
+| `FFMPEG_TIMEOUT_SEC` | 120 | 抽音轨超时（本地 CPU 转码，与模型超时分开计） |
+
+## 2. 启动服务
+
+一条命令把后端与前端都拉起来（两个服务仍是各自独立的进程，只是由一个脚本拉起与收尾）：
+
+```bash
+python start.py          # 项目根目录执行；无参数
+```
+
+它按顺序做这些事：打印用的是哪个解释器 → 检查后端依赖与 `frontend/node_modules` → 检查 8020 / 5173 是否已被占用（占用就直接说明「可能已经在跑」并退出，不会起第二个）→ 起后端（`python app.py`，cwd=`backend/`）与前端（`npm run dev`，cwd=`frontend/`）→ 等到两个都真的能应答 → 打开浏览器 → 按 Ctrl+C 把两个进程一起收掉（Windows 上用 `taskkill /T`，否则 npm 拉起的 node 会变成占着端口的孤儿进程）。
+
+不想自动开浏览器就把文件顶部的 `OPEN_BROWSER` 改成 `False`。只想起后端、或要分开调试，仍照 [README 的快速开始](../README.md#快速开始) 分别启动。
+
+## 3. 生成样例
+
+```bash
+cd backend
+python scripts/make_fixtures.py
+```
+
+输出到 `backend/data/`，与随仓库提供的文本类样例同级。需要后端依赖已安装（脚本用到 python-docx / python-pptx / openpyxl / pymupdf / pillow）。
+
+生成的东西：带表格与内嵌图的 docx、含空单元格的 xlsx、六页 pptx、十页有文字层的 PDF、**三页无文字层的扫描件**、odt、odp、压缩包、APK 结构样本、老版 `.doc` 头样本、16kHz 单声道 wav、由它封装的 mp4。
+
+`.apk` 与 `.doc` 只是**结构样本**，用来验证类型识别与降级分支，不是真的安装包与 Word 文档。
+音视频样例是一段**正弦音、没有说话声**，只用于验证结构信息与「抽音轨 → 送本机 ASR」这条链；要验收转写质量请自备一段真实录音。
+mp4 那一份需要 `imageio-ffmpeg`（可选依赖），没装时脚本跳过它并说明原因。
+
+## 4. 界面怎么用
+
+打开前端后是三栏：
+
+- **左栏**：输入。切「远程 URL / 本地文件」，可点预设样例一键填入 URL（同时复制到剪贴板）。
+
+预设样例由 `frontend/public/presets.config.js` 配置：一个带注释的顶层文件，页面启动时按 URL 取回来，
+所以**改完刷新页面就生效**——不用改前端代码，dev 与构建产物都不用重新 build（`dist/` 里也有这份文件）。
+条目字段是 `kind`（标题）/ `desc`（描述）/ `url`（链接），顺序即界面顺序；字段缺失、类型不对或 url 不是 http(s)
+的条目会被跳过，界面在列表下方列出原因。文件取不回来（被删、语法错）时同样出提示，不会白屏。
+- **中栏**：纯代码解析。右上角「运行」只跑这一条。
+- **右栏**：模型增强解析。有自己的「运行」按钮、摘要与用量区块。
+
+两条管线**互不牵动**：点哪栏的运行就只跑哪栏，另一栏保持原状。所以可以先用纯代码那一路确认文件本身没问题，再单独跑模型那一路。
+
+## 5. 验收清单
+
+改完代码后逐条走一遍，每条都有可核查的判据。前两条是脚本（可重复执行、退出码非 0 即失败），后面是人工判断的部分。
+
+| # | 做什么 | 判据 |
+|---|---|---|
+| 0a | `cd backend && python scripts/check_structure.py` | 五项全过：依赖方向、单文件预算、扩展名覆盖、`__init__.py` 无逻辑、`enhance_*` 不碰 `content` |
+| 0b | 起服务后 `cd backend && python scripts/smoke_check.py` | 20 种样例 + 6 项模型增强检查全过（含「两条路 content 逐字节一致」、独立图片判型分流与音视频转写；`sample.mp4` 缺 ffmpeg 时按可选样例跳过） |
+
+| # | 做什么 | 判据 |
+|---|---|---|
+| 1 | 访问 `/probe/health` | `model_key_configured` 为 `true`；启动日志里配置文件路径指向项目根目录的 `.env` |
+| 2 | `/extract` 一个纯文本样例 | `type` 为 `document`，`content` 非空，`usage` 为 `null` |
+| 3 | `/understand` 一张含文字的图（如 `screenshot.png`，需先起 Paddle OCR 服务） | `meta.ocr_text` 非空，`meta.notes` 里说明判为文字图片；`usage` 非 `null` 且 `cost_cny` 大于 0 |
+| 3b | `/understand` 一张没有文字的图（如 `photo.png`） | `meta.ocr_text` 为 `null`、`summary` 是图像的客观描述，`meta.notes` 里说明判为语义图片 |
+| 4 | 同一个文档分别调两个接口 | 两次的 `content` **逐字节相同**（字符数一致是最低要求） |
+| 5 | `/extract` 扫描件 PDF | `content` 为空，`meta.notes` 里说明「没有文字层」 |
+| 6 | `/understand` 同一个扫描件 | `meta.ocr_text` 非空，`meta.notes` 里出现「整页渲染已覆盖页面上的图，不再单独抽内嵌图」 |
+| 7 | `/extract` 一段 wav 或 mp4 | `type` 为 `audio` / `video`，`content` 为空，`meta.audio` 有时长与采样率，`meta.degraded` 为 `false`，`usage` 为 `null` |
+| 7b | `/understand` 同一份音频（需先起 Qwen3-ASR 服务） | `meta.asr_text` 有值，或 `meta.notes` 说明「音轨里没有说话声」；`timings.model_ms` 大于 0；`content` 与第 7 条的逐字节相同 |
+| 8 | 界面上点一个预设样例 | URL 被填入输入框、该预设高亮；点中栏「运行」后右栏仍显示未运行 |
+
+第 4 条是本项目最核心的不变量：它一旦不成立，「两条路可对比」这个前提就没了。
+
+## 6. 故障处置
+
+### 改了后端代码没生效
+
+后端不是热重载的，改完要重启 `python app.py` 或 `python start.py`。别拿还在跑的旧进程当成新代码已通过。
+
+### `start.py` 说端口已被占用
+
+8020 或 5173 上已经有进程在监听，脚本不会起第二个。先确认是不是旧的服务还在跑（`Get-NetTCPConnection -LocalPort 8020 -State Listen`），要重启就先停掉它。
+
+### 结构自查报「文件超预算」或「依赖方向不对」
+
+`check_structure.py` 的判据与理由见 [adr.md](./adr.md) 的 ADR-0007：[architecture.md](./architecture.md) 里的依赖方向与单文件预算（总行数 ≤ 250、代码行 ≤ 150）。加东西前先想清楚它属于哪一层，别往 `pipelines/` 里塞格式实现。
+
+### 改了前端代码，页面行为还是旧的
+
+看 `self-react` 的 `references/troubleshooting.md`：那里的流程是「先确认 dev server 到底给的是新版还是旧版（直接取模块源码看一眼）→ 更新文件 mtime 触发重编译 → 才考虑重启」，比重启更快定位。改完记得硬刷新（Ctrl+Shift+R）。
+
+### 模型增强解析报「未配置 DEEPSEEK_API_KEY」
+
+`.env` 不在项目根目录。放到 `anyurl2text/.env`（与 `README.md` 同级），不是 `backend/.env`。
+
+### 含文字的图报「Paddle OCR 服务不可达」
+
+独立图片判型为文字图片后要调本机 OCR 服务（`OCR_API_URL`，默认 `http://127.0.0.1:8021/ocr-b64`）。
+先确认它起着：`Individual/paddle-ocr` 下 `python main.py`，`GET /health` 应返回 `"code": "200"`；
+端口不同就改 `.env` 的 `OCR_API_URL`。服务没起不会让请求 500——那一张图的模型增强失败，
+原因写进 `meta.notes`，`summary` 相应缺失。
+
+### 音频/视频报「Qwen3-ASR 服务不可达」
+
+音频与视频的音轨要交给本机 ASR 服务（`ASR_API_URL`，默认 `http://127.0.0.1:8022/asr-b64`）。
+先确认它起着：`Individual/qwen3-asr` 下 `python main.py`（模型加载要十几秒），`GET /health` 应返回 `"code": "200"`；
+端口不同就改 `.env` 的 `ASR_API_URL`。服务没起不会让请求 500——这一类源的转写失败，原因写进 `meta.notes`，
+`summary` 相应缺失，`meta.audio` 仍然有值（音轨参数是纯代码读出来的，不依赖服务）。
+
+### 视频与 m4a/aac/wma 报「未安装 imageio-ffmpeg」
+
+这几个容器要先抽音轨才能读，靠 `imageio-ffmpeg` 自带的静态 ffmpeg，不需要系统装 ffmpeg：
+
+```bash
+pip install imageio-ffmpeg
+```
+
+装之前/装不上时这一类走降级（`meta.degraded` 为 `true`），mp3/wav/flac/ogg 这些 libsndfile 直接读得动的音频不受影响。
+`/probe/health` 的 `ffmpeg_available` 就是这项能力的开关状态。
+
+### 下载失败，说命中内网或保留地址
+
+这是 SSRF 防护在工作。要串本机起的本地文件服务时，把 `ALLOW_PRIVATE_HOSTS` 临时设为 `true`；对外可访问的部署保持 `false`。
+
+### 请求返回 413
+
+超过 `MAX_DOWNLOAD_BYTES`（默认 200 MB）。上传的超限是在读请求体之前就拒掉的，不会先把文件缓冲到磁盘。
+
+### 前端所有请求都失败
+
+先查端口：`frontend/vite.config.ts` 里代理的目标端口必须与后端 `.env` 的 `ANYURL2TEXT_PORT` 一致。这两处是手工同步的，改一边忘一边的症状就是「前端全挂、控制台只有网络错误」。
