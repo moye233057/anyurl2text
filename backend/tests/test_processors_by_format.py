@@ -219,6 +219,50 @@ def test_archive_family_lists_entries_without_extracting(name, entries, ctx, fix
     assert result.content.strip(), "条目清单应作为交付文本给出"
 
 
+# ---------- 合并单元格：格位不变式 ----------
+
+# 样例生成参数：三个样例都是 3 列，横向合并在第一行、纵向合并在第一列；
+# 合并文本是脚本阶段 13 写死的固定串（见 `scripts/make_fixtures.py`）。
+MERGED_FIXTURES = ("merged.docx", "merged.xlsx", "merged.pptx")
+MERGED_COLUMNS = 3
+MERGED_TITLE = "合并标题"
+MERGED_VERTICAL = "纵向合并"
+
+
+def _table_lines(content: str) -> list:
+    """只取表格行：滤掉空行与 `=== ... ===` 这类分节标记。"""
+    return [line for line in content.splitlines() if line.strip() and not line.startswith("===")]
+
+
+@pytest.mark.parametrize("name", MERGED_FIXTURES)
+def test_merged_text_appears_exactly_once(name, ctx, fixture_copy):
+    """
+    行为：合并区的文本在交付文本里只出现一次——合并只影响坐标，不复制内容。
+
+    来源：CONTEXT「交付文本」+ 样例生成参数（A1:B1 横向、A2:A3 纵向各一处）。
+    实测（2026-10-02）：docx 走 `row.cells` 时同一个格位被返回多次，合并标题与纵向合并各出现
+    两次，下游看到的是「两列同一个值」，列对应关系因此失真。pptx 侧 python-pptx 对覆盖格返回
+    空串、本来就正确，这条用例在它上面是回归锁。
+    """
+    result = run(name, ctx, fixture_copy)
+    assert result.content.count(MERGED_TITLE) == 1, f"横向合并的文本重复：{result.content!r}"
+    assert result.content.count(MERGED_VERTICAL) == 1, f"纵向合并的文本重复：{result.content!r}"
+
+
+@pytest.mark.parametrize("name", MERGED_FIXTURES)
+def test_merged_rows_keep_the_same_column_count(name, ctx, fixture_copy):
+    """
+    行为：同一张表里每行的制表符个数相同——合并区覆盖的空列也要占列位。
+
+    来源：`excel.py` 模块 docstring「按列位置输出制表符，空列留空；列一错位整张表就读不出
+    对应关系」+ 样例生成参数（`merged.xlsx` 第二张表只有 A1:C1 一处合并，覆盖列没有任何别的值）。
+    实测（2026-10-02）：原来「列宽从内容反推」，这张表被读成 1 列（0 个制表符），坐标随之丢失。
+    """
+    lines = _table_lines(run(name, ctx, fixture_copy).content)
+    widths = {line.count("\t") for line in lines}
+    assert widths == {MERGED_COLUMNS - 1}, f"表内行宽不一致（覆盖列被裁掉）：{sorted(widths)}，{lines!r}"
+
+
 # ---------- 降级路径 ----------
 
 def test_legacy_office_degrades_to_basic_file_info(ctx, fixture_copy):

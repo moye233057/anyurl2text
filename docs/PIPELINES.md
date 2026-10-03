@@ -194,7 +194,7 @@ RAG 抽取不走上表。`POST /rag/extract/file` 由 `pipelines/rag_extract.py`
 `extract` 关键步骤：
 
 1. `Document()`；失败降级。
-2. `iter_inner_content()` 按 body **块级顺序**遍历：表格走 `_render_table()`（制表符分隔、**保留空单元格以对齐列**、超 `MAX_TABLE_ROWS=2000` 行截断并说明）；段落取文本，段落里含 `a:blip` 时在文本末追加中性占位符 `[图片 N]`。
+2. `iter_inner_content()` 按 body **块级顺序**遍历：表格走 `_render_table()`——按 `w:tc` 收成格位规格（**不用 `row.cells`**：合并区会被返回多次、文本因此重复），交给 `processors/grid.py` 的格位网格渲染（制表符分隔、合并区文本只出现一次、覆盖位占列位、超 `MAX_TABLE_ROWS=2000` 行截断并说明）；段落取文本，段落里含 `a:blip` 时在文本末追加中性占位符 `[图片 N]`。
 3. 页数取 `docProps/app.xml` 里的 `<Pages>`——那是保存时的缓存渲染值，读到就在 `notes` 里注明来源，读不到置 `None`。
 4. 文本框（`w:txbxContent` / VML textbox / Word 2010 shape 三类容器）单独成节 `=== 文本框内容 ===`：它们通常锚定浮动位置，硬插进正文会给错阅读顺序，直接丢又会掉信息。
 5. 内嵌图总数由 `a:blip` 计数得到；`prepare_assets=True` 时把前 `MAX_EMBEDDED_IMAGES` 张经 `related_parts` 取出、转 PNG 落盘成素材。
@@ -220,7 +220,7 @@ RAG 抽取不走上表。`POST /rag/extract/file` 由 `pipelines/rag_extract.py`
 
 1. 按扩展名选解析器：`xlsx/xlsm` → openpyxl（先 `read_only=True, data_only=True`，失败退回常规模式）；`xls` → xlrd；`ods` → `pyexcel_ods.get_data`；`csv` → 先 `read_text_file` 探测编码解码，再交给 `csv.reader`。解析异常直接降级。
 2. 只读可见工作表（`sheet_state == "visible"`）；逐行**边读边停**，读到 `MAX_ROWS_TO_READ=5001` 行即止（多读一行是为了让渲染层能区分「还有后续行」与「这就是最后一行」）。
-3. `_render_rows()` 统一渲染，四种格式只有这一套方言：`=== SHEET: 名 ===` 加制表符分隔的行；裁掉整列为空的尾列；跳过整行全空的行；单表超 `MAX_ROWS_PER_SHEET=5000` 行截断并说明。
+3. `_render_rows()` 统一渲染，四种格式只有这一套方言：`=== SHEET: 名 ===` 加制表符分隔的行；列宽从格位网格读（**合并区覆盖的空列也算列宽**，不会再被当空尾列裁掉）；跳过整行全空的行；单表超 `MAX_ROWS_PER_SHEET=5000` 行截断并说明。xlsx / xlsm 的合并区由 `xlsx_merges.py` 从包内 XML 读：`read_only=True` 的 worksheet 没有 `merged_cells`，而只在常规模式读会让两条读取路径对同一文件给出不同 `content`（违反 ADR-0002）。
 4. 空单元格输出空串（openpyxl 的空单元格是 `None`，直接 `str()` 会写出字面量 `None` 污染整列）。
 5. `pages / pages_used` 记工作表数；没有可见内容时写一条 `notes`。
 

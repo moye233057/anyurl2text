@@ -12,7 +12,7 @@
 """
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from routers.convert.schema import AudioMeta, Detector, ImageMeta
 
@@ -99,3 +99,26 @@ class EnhanceOutcome:
     asr_text: Optional[str] = None
     description: Optional[str] = None
     notes: List[str] = field(default_factory=list)
+
+@dataclass
+class GridSpan:
+    """表格的一个 origin 格位：内容与跨度只挂在这里（跨度至少 1）。"""
+
+    text: str = ""
+    col_span: int = 1
+    row_span: int = 1
+
+@dataclass
+class CoveredSlot:
+    """
+    被某个跨度覆盖的格位，指回覆盖它的 origin。
+
+    它**不持有文本**——这就是「每个逻辑格位恰好出现一次」的全部含义：合并只影响坐标。
+    """
+
+    origin_row: int
+    origin_col: int
+
+# 一个格位要么是 origin 要么是被覆盖者；一张表就是一个格位矩阵（构造与渲染见 `processors/grid.py`）
+CellSlot = Union[GridSpan, CoveredSlot]
+TableGrid = List[List[CellSlot]]

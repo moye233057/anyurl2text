@@ -17,7 +17,9 @@ import io
 from itertools import islice
 from pathlib import Path
 
-from pipelines.processors.schema import ExtractContext, ExtractResult
+from pipelines.processors.grid import GridBuilder, render_tsv
+from pipelines.processors.schema import ExtractContext, ExtractResult, TableGrid
+from pipelines.processors.xlsx_merges import read_merge_rects
 from utils.textfile import read_text_file
 
 # 单表最多渲染的行数上限
@@ -28,31 +30,17 @@ MAX_ROWS_TO_READ = MAX_ROWS_PER_SHEET + 1
 
 def _render_rows(sheets: list) -> str:
     """
-    把「(表名, 行列表)」渲染成统一的文本表格。
+    把「(表名, 行列表, 合并矩形)」渲染成统一的文本表格。
 
-    功能：逐表输出 `=== SHEET: 名 ===` 加制表符分隔的行；裁掉整表都为空的尾列；
-          跳过整行全空的行；超过行数上限时截断并说明。
+    功能：逐表输出 `=== SHEET: 名 ===` 加制表符分隔的行；表格先装配成格位网格再渲染——
+          合并区覆盖的空列不被裁掉、合并文本只出现一次；跳过整行全空的行；超行数上限时截断并说明。
     应用场景：xlsx / xls / ods / csv 四条路径共用，避免各写一份渲染规则。
-    输入：sheets — [(表名, [[单元格文本, ...], ...]), ...]。
+    输入：sheets — [(表名, [[单元格文本, ...], ...], [(行起, 列起, 行止, 列止), ...]), ...]。
     输出：拼接后的文本。
     """
     blocks = []
-    for name, rows in sheets:
-        width = 0
-        for row in rows:
-            for index in range(len(row) - 1, -1, -1):
-                if _cell_text(row[index]):
-                    width = max(width, index + 1)
-                    break
-        lines = []
-        for row in rows:
-            cells = [_cell_text(cell) for cell in row[:width]]
-            if not any(cells):
-                continue
-            if len(lines) >= MAX_ROWS_PER_SHEET:
-                lines.append(f"... 其余行未列出（本表超过 {MAX_ROWS_PER_SHEET} 行）")
-                break
-            lines.append("\t".join(cells))
+    for name, rows, merges in sheets:
+        lines = render_tsv(_sheet_grid(rows, merges), MAX_ROWS_PER_SHEET)
         if lines:
             blocks.append(f"=== SHEET: {name} ===\n" + "\n".join(lines))
     return "\n\n".join(blocks)
@@ -71,6 +59,40 @@ def _cell_text(cell) -> str:
         return ""
     return str(cell).replace("\t", " ").replace("\n", " ").strip()
 
+def _sheet_grid(rows: list, merges: list) -> TableGrid:
+    """
+    一个表的行值 + 合并矩形 → 格位网格。
+
+    功能：合并区只让左上格落位（带横纵跨度），其余位置交给覆盖位；矩形超出读到范围的部分裁掉，
+          免得为没读进来的行补出格位。
+    应用场景：`_render_rows` 逐表调用。
+    输入：rows — 行值列表；merges — 半开矩形 (行起, 列起, 行止, 列止)。
+    输出：可渲染的格位网格。
+    """
+    usable = [
+        (row_start, col_start, min(row_end, len(rows)), col_end)
+        for row_start, col_start, row_end, col_end in merges
+        if row_start < row_end and col_start < col_end and row_start < len(rows)
+    ]
+    covered = set()
+    spans = {}
+    for row_start, col_start, row_end, col_end in usable:
+        spans[(row_start, col_start)] = (col_end - col_start, row_end - row_start)
+        for row in range(row_start, row_end):
+            for col in range(col_start, col_end):
+                if (row, col) != (row_start, col_start):
+                    covered.add((row, col))
+    builder = GridBuilder()
+    for row_index, row in enumerate(rows):
+        builder.next_row()
+        for col_index in range(len(row)):
+            if (row_index, col_index) in covered:
+                builder.covered()
+                continue
+            col_span, row_span = spans.get((row_index, col_index), (1, 1))
+            builder.place(_cell_text(row[col_index]), col_span, row_span)
+    return builder.finish()
+
 def _read_xlsx(path: Path) -> list:
     """用 openpyxl 读 xlsx/xlsm；read_only 失败时退回常规模式（部分文件的样式表会让只读模式报错）。"""
     import openpyxl
@@ -80,8 +102,9 @@ def _read_xlsx(path: Path) -> list:
     except Exception:
         workbook = openpyxl.load_workbook(str(path), data_only=True)
     try:
+        merges = read_merge_rects(path)
         sheets = []
-        for sheet in workbook.worksheets:
+        for index, sheet in enumerate(workbook.worksheets):
             if getattr(sheet, "sheet_state", "visible") != "visible":
                 continue
             # 边读边停：整表先读进内存的话，几十万行的表会把内存打爆，
@@ -91,7 +114,7 @@ def _read_xlsx(path: Path) -> list:
                 rows.append(list(row))
                 if len(rows) >= MAX_ROWS_TO_READ:
                     break
-            sheets.append((sheet.title, rows))
+            sheets.append((sheet.title, rows, merges[index] if index < len(merges) else []))
         return sheets
     finally:
         workbook.close()
@@ -104,7 +127,7 @@ def _read_xls(path: Path) -> list:
     sheets = []
     for sheet in book.sheets():
         rows = [sheet.row_values(index) for index in range(min(sheet.nrows, MAX_ROWS_TO_READ))]
-        sheets.append((sheet.name, rows))
+        sheets.append((sheet.name, rows, ()))
     return sheets
 
 def _read_ods(path: Path) -> list:
@@ -115,13 +138,13 @@ def _read_ods(path: Path) -> list:
     # （表名另有用途，不能丢）。
     # pyexcel-ods 没有流式接口，只能读完后立刻截断。
     data = get_data(str(path))
-    return [(name, rows[:MAX_ROWS_TO_READ]) for name, rows in data.items()]
+    return [(name, rows[:MAX_ROWS_TO_READ], ()) for name, rows in data.items()]
 
 def _read_csv(path: Path) -> list:
     """读 CSV：先按编码探测解码，再交给 csv 解析一次（不二次拼接）。"""
     text = read_text_file(path)
     rows = list(islice(csv.reader(io.StringIO(text)), MAX_ROWS_TO_READ))
-    return [(path.stem or "csv", rows)]
+    return [(path.stem or "csv", rows, ())]
 
 def extract_excel(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:
     """

@@ -25,6 +25,12 @@ _Avoid_: 模型解析、AI 处理
 需要模型处理时再提供该格式的模型增强入口——两者在同一份实现里，所以调试一种格式只开一个文件。
 _Avoid_: 解析器、抽取器、handler
 
+**格位**（格位网格）：
+表格里一个逻辑位置的表示。内容与跨度只挂在 origin 上，被跨度覆盖的位置只记「指向哪个 origin」，
+所以合并单元格既不会让文本重复、也不会让列错位——四个表格格式共用这一份结构
+（`pipelines/processors/grid.py`），渲染也只有一份实现。
+_Avoid_: 单元格矩阵、merge 表、span 表
+
 **模态**：
 响应 `type` 字段的唯一维度，取值 document / image / audio / video / webpage / archive / install_package / file / error。它只回答「这是什么」，不回答「用什么做的」——引擎与策略一律进 `meta`。
 _Avoid_: 类型、文件类型

@@ -12,6 +12,7 @@ DOCX 抽取。
 """
 import re
 from io import BytesIO
+from itertools import islice
 from pathlib import Path
 
 from docx import Document
@@ -20,6 +21,7 @@ from docx.table import Table
 from PIL import Image
 
 import configs.settings as settings
+from pipelines.processors.grid import GridBuilder, fill_from_specs, render_tsv
 from pipelines.processors.schema import EmbeddedAsset, ExtractContext, ExtractResult
 
 # 单个表格最多渲染的行数，避免广表把 content 淹掉
@@ -45,15 +47,29 @@ def _textbox_texts(document: "Document") -> list:
             texts.append("\n".join(paragraphs))
     return texts
 
-def _render_table(table: "Document.tables") -> str:
-    """把表格渲染成制表符分隔的行，保留空单元格以对齐列。"""
-    lines = []
-    for row_index, row in enumerate(table.rows):
-        if row_index >= MAX_TABLE_ROWS:
-            lines.append(f"... 其余 {len(table.rows) - MAX_TABLE_ROWS} 行未列出")
-            break
-        cells = [re.sub(r"\s+", " ", (cell.text or "").strip()) for cell in row.cells]
-        lines.append("\t".join(cells))
+def _row_specs(row) -> list:
+    """一行的格位规格：[(文本, 横向跨度, 是否纵向继续格)]，行首缺格补空。"""
+    specs = [("", 1, False) for _ in range(row.grid_cols_before)]
+    for tc in row._tr.tc_lst:
+        text = re.sub(r"\s+", " ", "\n".join(paragraph.text for paragraph in tc.p_lst)).strip()
+        specs.append((text, tc.grid_span or 1, tc.vMerge not in (None, "restart")))
+    return specs
+
+def _render_table(table) -> str:
+    """
+    把表格渲染成制表符分隔的行。
+
+    功能：按 `w:tc` 收成格位规格（**不用 `row.cells`**：合并区会被返回多次，文本因此重复），
+          再交给格位网格填充与渲染——纵向合并的行跨度由网格从继续格数出来。
+    应用场景：extract_docx 遇到表格时调用。
+    输入：table — python-docx 的表格对象。
+    输出：制表符分隔的多行文本；合并区文本只出现一次、覆盖位占列位。
+    """
+    total_rows = len(table.rows)
+    specs_by_row = [_row_specs(row) for row in islice(table.rows, MAX_TABLE_ROWS)]
+    lines = render_tsv(fill_from_specs(GridBuilder(), specs_by_row), MAX_TABLE_ROWS)
+    if total_rows > MAX_TABLE_ROWS:
+        lines.append(f"... 其余 {total_rows - MAX_TABLE_ROWS} 行未列出")
     return "\n".join(lines)
 
 def _save_embedded_images(document: "Document", ctx: ExtractContext) -> list:

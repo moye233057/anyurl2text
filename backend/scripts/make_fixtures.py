@@ -18,6 +18,7 @@
     step10_make_odf          odt / odp 最小可用文档（标准库拼 ODF 包，不依赖 odfpy）
     step11_make_audio        16kHz 单声道 wav 样本，验证音频的结构信息与「送本机 ASR」
     step12_make_video        把音频样本封成 mp4，验证视频要先抽音轨那条链
+    step13_make_merged       含合并单元格的 docx / xlsx / pptx，验证表格格位建模
 
 运行方式：在 backend/ 下执行 python scripts/make_fixtures.py（无参数；`__main__` 只按序号调用各 step）
 使用前注意：
@@ -117,6 +118,13 @@ AUDIO_SAMPLE_RATE = 16000
 AUDIO_SECONDS = 3
 AUDIO_TONE_HZ = 440
 AUDIO_AMPLITUDE = 12000
+
+# 合并单元格样例：三种格式用同一套结构与同一批固定文本，文本取成可数的串。
+# xlsx 多一张「合并区是唯一尾部内容」的表，用来验证覆盖位占列位、尾列不被裁掉。
+MERGED_TITLE = "合并标题"
+MERGED_VERTICAL = "纵向合并"
+MERGED_TAIL = "尾列合并"
+MERGED_COLUMNS = 3
 
 ODF_MANIFEST = """<?xml version="1.0" encoding="UTF-8"?>
 <manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">
@@ -471,6 +479,67 @@ def step12_make_video() -> None:
         return
     print(f"[阶段12] 已写入 {target}（3 秒视频，音轨取自 sample.wav）")
 
+def step13_make_merged() -> None:
+    """
+    造三个含合并单元格的样例，用于验证表格格位建模。
+
+    功能：docx 与 pptx 各一张 3x3 表（A1:B1 横向合并、A2:A3 纵向合并）；xlsx 两张表——
+          第一张 4x3 同构（纵向跨 3 行），第二张只有 A1:C1 一处合并且覆盖列没有任何别的值。
+    应用场景：验证「合并区文本只出现一次」与「覆盖位占列位、尾列不被裁掉」。
+    输入：无（写 data/merged.docx、merged.pptx、merged.xlsx）。
+    输出：无返回值；文件路径打印到 stdout。
+    """
+    from docx import Document
+    from openpyxl import Workbook
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    body = (("", "", "c1"), ("", "b2", "c2"), ("", "b3", "c3"))
+
+    document = Document()
+    word_table = document.add_table(rows=3, cols=MERGED_COLUMNS)
+    word_table.style = "Table Grid"
+    for row_index, values in enumerate(body):
+        for column_index, value in enumerate(values):
+            word_table.cell(row_index, column_index).text = value
+    # 先填后并：合并会把非左上格的文本并进左上格，期望值就不再是「只出现一次」
+    word_table.cell(0, 0).merge(word_table.cell(0, 1)).text = MERGED_TITLE
+    word_table.cell(1, 0).merge(word_table.cell(2, 0)).text = MERGED_VERTICAL
+    document.save(str(DATA_DIR / "merged.docx"))
+    print(f"[阶段13] 已写入 {DATA_DIR / 'merged.docx'}（3x3，横向与纵向合并各一处）")
+
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    shape = slide.shapes.add_table(3, MERGED_COLUMNS, Inches(0.8), Inches(1.0), Inches(8), Inches(3))
+    slide_table = shape.table
+    for row_index, values in enumerate(body):
+        for column_index, value in enumerate(values):
+            slide_table.cell(row_index, column_index).text = value
+    # python-pptx 的 merge() 不返回合并后的格（与 python-docx 不同），仍在左上格上写文本
+    slide_table.cell(0, 0).merge(slide_table.cell(0, 1))
+    slide_table.cell(0, 0).text = MERGED_TITLE
+    slide_table.cell(1, 0).merge(slide_table.cell(2, 0))
+    slide_table.cell(1, 0).text = MERGED_VERTICAL
+    presentation.save(str(DATA_DIR / "merged.pptx"))
+    print(f"[阶段13] 已写入 {DATA_DIR / 'merged.pptx'}（3x3，横向与纵向合并各一处）")
+
+    workbook = Workbook()
+    structured = workbook.active
+    structured.title = "结构化合并"
+    structured_body = (("", "", "c1"), ("", "b2", "c2"), ("", "b3", "c3"), ("", "b4", "c4"))
+    for row_index, values in enumerate(structured_body, start=1):
+        for column_index, value in enumerate(values, start=1):
+            structured.cell(row=row_index, column=column_index, value=value)
+    structured.merge_cells("A1:C1")
+    structured["A1"] = MERGED_TITLE
+    structured.merge_cells("A2:A4")
+    structured["A2"] = MERGED_VERTICAL
+    tail = workbook.create_sheet("尾部合并")
+    tail.merge_cells("A1:C1")
+    tail["A1"] = MERGED_TAIL
+    workbook.save(str(DATA_DIR / "merged.xlsx"))
+    print(f"[阶段13] 已写入 {DATA_DIR / 'merged.xlsx'}（4x3 结构合并 + 只有尾列合并的第二张表）")
+
 if __name__ == "__main__":
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     # 阶段1：先造图片（后续文档与演示要内嵌它们）→ screenshot.png / photo.png
@@ -497,4 +566,6 @@ if __name__ == "__main__":
     step11_make_audio()
     # 阶段12：视频样例（由 sample.wav 封装，需要 imageio-ffmpeg）→ sample.mp4
     step12_make_video()
+    # 阶段13：合并单元格样例（横向 / 纵向 / 尾部合并）→ merged.docx / merged.pptx / merged.xlsx
+    step13_make_merged()
     print(f"\n全部完成，输出目录：{DATA_DIR}")

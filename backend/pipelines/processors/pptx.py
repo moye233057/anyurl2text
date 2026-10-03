@@ -16,6 +16,7 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from PIL import Image
 
 import configs.settings as settings
+from pipelines.processors.grid import GridBuilder, render_tsv
 from pipelines.processors.schema import EmbeddedAsset, ExtractContext, ExtractResult
 
 def _walk_shapes(shapes) -> list:
@@ -34,13 +35,29 @@ def _shape_text(shape) -> str:
     return (shape.text_frame.text or "").strip()
 
 def _table_text(shape) -> str:
-    """把表格形状渲染成制表符分隔的行。"""
+    """
+    把表格形状渲染成制表符分隔的行。
+
+    功能：`row.cells` 在演示文稿里是一行一个 `a:tc`、顺序即列序；被覆盖的格由 `is_spanned` 判出
+          交给格位网格，跨度只在合并区左上角取（python-pptx 明确说非 origin 上的跨度不可靠）。
+    应用场景：extract_pptx 遇到表格形状时调用。
+    输入：shape — 页上的形状。
+    输出：制表符分隔的多行文本；不是表格时返回空串。
+    """
     if not getattr(shape, "has_table", False):
         return ""
-    lines = []
+    builder = GridBuilder()
     for row in shape.table.rows:
-        lines.append("\t".join((cell.text or "").strip() for cell in row.cells))
-    return "\n".join(lines)
+        builder.next_row()
+        for cell in row.cells:
+            if cell.is_spanned:
+                builder.covered()
+                continue
+            col_span = cell.span_width if cell.is_merge_origin else 1
+            row_span = cell.span_height if cell.is_merge_origin else 1
+            builder.place((cell.text or "").strip(), col_span, row_span)
+    grid = builder.finish()
+    return "\n".join(render_tsv(grid, len(grid)))
 
 def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
     """
