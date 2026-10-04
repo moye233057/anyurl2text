@@ -1,0 +1,6 @@
+# 本仓不做换行符转换：所有文件按原样入库、原样检出，Git 不再报
+# "LF will be replaced by CRLF"（core.autocrlf=true 时每次提交都刷的那屏警告）。
+# 为什么不用 `* text=auto eol=lf`：那会把全仓已入库的文件重新规范化，制造一屏与内容
+# 无关的 diff（仓里有 19.5 MB 的样例 PDF 与 29 个二进制样例），收益只是统一换行符。
+# 实测：`* -text` 不影响文本 diff（两组 diff 输出逐字节相同），只停掉 EOL 转换。
+* -text
