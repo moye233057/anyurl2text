@@ -8,6 +8,7 @@ PPTX 抽取。
   由 MAX_EMBEDDED_IMAGES 上限兜住。
 - 组合形状（GroupShape）递归展开——不递归会漏掉成组排版的正文。
 """
+import re
 from io import BytesIO
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from PIL import Image
 import configs.settings as settings
 from pipelines.processors import table_kind
 from pipelines.processors.grid import GridBuilder, render_tsv
-from pipelines.processors.schema import EmbeddedAsset, ExtractContext, ExtractResult
+from pipelines.processors.schema import CoveredSlot, EmbeddedAsset, ExtractContext, ExtractResult
 
 def _walk_shapes(shapes) -> list:
     """递归展开形状与组合形状，返回扁平列表。"""
@@ -35,6 +36,32 @@ def _shape_text(shape) -> str:
         return ""
     return (shape.text_frame.text or "").strip()
 
+def _merge_residue(grid, residues: dict) -> int:
+    """
+    把被覆盖格里的残留文字并回它的 origin，返回并入的处数。
+
+    为什么会残留：合并区的非左上格是 DrawingML 的**续格**（`hMerge` / `vMerge`），产出方
+    （WPS / LibreOffice / 手工改过的文件）有时把文字留在续格里。anydoc 直接丢弃这类文字，
+    本仓的取向是「尽量抽出来」——并回 origin（空格分隔），既不丢字、也不改列位。
+    去重是为了不重复：python-pptx 自己的 `merge()` 会把续格文字搬进 origin，两边都有的不并第二次。
+    应用场景：`_table_text` 构造完网格后调用。
+    输入：grid — `GridBuilder.finish()` 的网格；residues — {(行, 列): 文字}。
+    输出：真正并入的处数。
+    """
+    merged = 0
+    for (row, column), text in residues.items():
+        if row >= len(grid) or column >= len(grid[row]):
+            continue
+        slot = grid[row][column]
+        if not isinstance(slot, CoveredSlot):
+            continue
+        origin = grid[slot.origin_row][slot.origin_col]
+        if text in origin.text:
+            continue
+        origin.text = f"{origin.text} {text}".strip()
+        merged += 1
+    return merged
+
 def _table_text(shape) -> tuple:
     """
     把表格形状渲染成制表符分隔的行。
@@ -43,23 +70,29 @@ def _table_text(shape) -> tuple:
           交给格位网格，跨度只在合并区左上角取（python-pptx 明确说非 origin 上的跨度不可靠）。
     应用场景：extract_pptx 遇到表格形状时调用。
     输入：shape — 页上的形状。
-    输出：(制表符分隔的多行文本, 命中的上界名列表, 表类型)；不是表格时返回 ("", [], None)。
+    输出：(制表符分隔的多行文本, 命中的上界名列表, 表类型, 并入的残留文字处数)；不是表格时返回 ("", [], None, 0)。
     """
     if not getattr(shape, "has_table", False):
-        return "", [], None
+        return "", [], None, 0
     builder = GridBuilder()
-    for row in shape.table.rows:
+    residues: dict = {}
+    for row_index, row in enumerate(shape.table.rows):
         builder.next_row()
-        for cell in row.cells:
+        for column_index, cell in enumerate(row.cells):
+            # 格内空白压成单空格：一个格里有多段时，换行会把这一行切成两行，同表列数就对不上了
+            text = re.sub(r"\s+", " ", cell.text or "").strip()
             if cell.is_spanned:
                 builder.covered()
+                if text:
+                    residues[(row_index, column_index)] = text
                 continue
             col_span = cell.span_width if cell.is_merge_origin else 1
             row_span = cell.span_height if cell.is_merge_origin else 1
-            builder.place((cell.text or "").strip(), col_span, row_span)
+            builder.place(text, col_span, row_span)
     grid = builder.finish()
+    residue_count = _merge_residue(grid, residues)
     lines = render_tsv(grid, len(grid))
-    return "\n".join(lines), list(builder.limit_hits), table_kind.classify(lines)
+    return "\n".join(lines), list(builder.limit_hits), table_kind.classify(lines), residue_count
 
 def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
     """
@@ -88,6 +121,7 @@ def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
     hits = []
     hidden_slides = []
     table_kinds = []
+    residues = 0
     for slide_index, slide in enumerate(presentation.slides, start=1):
         # 隐藏幻灯片（`p:sld@show="0"`）照抽——隐藏只是放映时跳过，不是没有内容；
         # 这里只登记是哪几张，让调用方知道产出里有「界面上看不到的页」（用户 2026-10-04 拍板）
@@ -98,10 +132,11 @@ def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
             text = _shape_text(shape)
             if text:
                 blocks.append(text)
-            table, table_hits, kind = _table_text(shape)
+            table, table_hits, kind, residue_count = _table_text(shape)
             if table:
                 blocks.append(table)
                 table_kinds.append(kind)
+            residues = residues + residue_count
             hits.extend(table_hits)
             if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
                 images_total += 1
@@ -139,6 +174,8 @@ def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
         pages.append(title + ("\n" + "\n".join(blocks) if blocks else ""))
 
     notes = []
+    if residues:
+        notes.append(f"覆盖格里的残留文字已并入合并单元格（{residues} 处）")
     if hidden_slides:
         listed = "、".join(f"第 {index} 张" for index in hidden_slides)
         notes.append(f"隐藏内容照抽：{listed}幻灯片是隐藏的（show=\"0\"）")

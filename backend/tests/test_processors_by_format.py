@@ -687,6 +687,93 @@ def test_docx_with_two_tables_leaves_the_header_count_empty(ctx, work_dir):
     assert any("2 张表" in note for note in result.notes), result.notes
 
 
+# ---------- 两处「未核实」的实测固化（01 §4.1 / §4.5） ----------
+
+@pytest.mark.capability_table
+def test_xlsx_without_a_covered_cell_element_keeps_its_column(ctx, work_dir):
+    """
+    行为：产出方**不给覆盖位写 `<c>`** 时，合并区后面的值仍落在源列上（`合并标题\\t\\tc1`）。
+
+    来源：`01-表格格位建模.md` §4.1 的未核实项——本仓 `_sheet_grid` 按列号落位，隐含依赖
+          「覆盖位在值矩阵里占一个位置」。实测：openpyxl 自己写出来的 xlsx **就不写** B1 的 `<c>`
+          （本用例先断言这一前提），而读取侧仍按合并矩形把 B1 标成覆盖位，所以列位不左移。
+    预期值来源：本用例写 A1:B1 合并 + C1、A2/B2，形状即预期（第一行第 3 列是 c1）。
+    """
+    import openpyxl
+    import zipfile
+
+    path = work_dir / "no_covered_cell.xlsx"
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet["A1"] = "合并标题"
+    sheet["C1"] = "c1"
+    sheet["A2"] = "a2"
+    sheet["B2"] = "b2"
+    sheet.merge_cells("A1:B1")
+    book.save(str(path))
+
+    with zipfile.ZipFile(path) as package:
+        sheet_xml = package.read("xl/worksheets/sheet1.xml").decode("utf-8")
+    assert 'r="B1"' not in sheet_xml, "前提变了：产出方开始给覆盖位写 <c> 了，这条核实要重做"
+
+    lines = [line for line in dispatch("xlsx", path, ctx).content.splitlines() if "\t" in line]
+    assert lines[0] == "合并标题\t\tc1", lines
+    assert lines[1] == "a2\tb2\t", lines
+
+
+@pytest.mark.capability_table
+def test_ods_repeated_columns_keep_the_merge_coordinates(ctx, work_dir):
+    """
+    行为：多张表 + `number-columns-repeated` 补位时，合并区坐标仍按展开后的列号算——
+          「补位」重复 3 次后，后面的文字落在第 4 列；跨列表的覆盖位不左移。
+
+    来源：`01-表格格位建模.md` §4.5 的未核实项（`ods_merges` 的重复列游标假设）；`align_values`
+          依赖 `read_merge_rects` 的坐标与 pyexcel-ods 的展开口径一致。
+    预期值来源：本用例写两张表——表一「A1:B1 合并 + C1」，表二「3 个重复空格 + 四列」「尾合并 跨 2 列 + d2」。
+    """
+    from odf.opendocument import OpenDocumentSpreadsheet
+    from odf.table import CoveredTableCell, Table, TableCell, TableRow
+    from odf.text import P
+
+    def cell(text, span=1, repeat=1):
+        attributes = {"valuetype": "string"} if text else {}
+        if span > 1:
+            attributes["numbercolumnsspanned"] = span
+        if repeat > 1:
+            attributes["numbercolumnsrepeated"] = repeat
+        node = TableCell(**attributes)
+        if text:
+            node.addElement(P(text=text))
+        return node
+
+    document = OpenDocumentSpreadsheet()
+    first = Table(name="表一")
+    row = TableRow()
+    row.addElement(cell("合并标题", span=2))
+    row.addElement(CoveredTableCell())
+    row.addElement(cell("c1"))
+    first.addElement(row)
+    document.spreadsheet.addElement(first)
+    second = Table(name="表二")
+    row = TableRow()
+    row.addElement(cell("补位", repeat=3))
+    row.addElement(cell("四列"))
+    second.addElement(row)
+    row = TableRow()
+    row.addElement(cell("尾合并", span=2))
+    row.addElement(CoveredTableCell())
+    row.addElement(cell("d2"))
+    second.addElement(row)
+    document.spreadsheet.addElement(second)
+    path = work_dir / "repeat_columns.ods"
+    document.save(str(path))
+
+    lines = [line for line in dispatch("ods", path, ctx).content.splitlines() if "\t" in line]
+    assert lines[0] == "合并标题\t\tc1", lines
+    assert lines[1] == "补位\t补位\t补位\t四列", lines
+    assert lines[2] == "尾合并\t\td2\t", lines
+
+
 # ---------- 隐藏内容：docx 隐藏文字 / 隐藏幻灯片 / 网页隐藏元素 ----------
 
 @pytest.mark.capability_document
@@ -989,6 +1076,63 @@ def test_paragraph_inside_content_control_reaches_the_text(ctx, work_dir):
     document.save(str(path))
 
     assert "控件里的段落" in dispatch("docx", path, ctx).content
+
+
+@pytest.mark.capability_table
+def test_pptx_multiline_cell_keeps_the_row_on_one_line(ctx, work_dir):
+    """
+    行为：一个格里有多个段落时，格内换行压成空格——这一行仍是**一行**，与同表其他行同列数。
+
+    来源：`excel._cell_text` / `docx._cell_text` 都是这么压的（行导向方言里换行会把一行切成两行，
+          同表列数就对不上）；实测 python-pptx 的 `cell.text` 在合并后也会带出换行。
+    预期值来源：本用例写 2×2 表，左上格两段（「上半」/「下半」），断言它渲染成 `上半 下半` 一行。
+    """
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    path = work_dir / "multiline_cell.pptx"
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+    table = slide.shapes.add_table(2, 2, Inches(1), Inches(1), Inches(4), Inches(1)).table
+    table.cell(0, 0).text = "上半"
+    table.cell(0, 0).text_frame.add_paragraph().text = "下半"
+    table.cell(0, 1).text = "右上"
+    table.cell(1, 0).text = "a2"
+    table.cell(1, 1).text = "b2"
+    presentation.save(str(path))
+
+    lines = [line for line in dispatch("pptx", path, ctx).content.splitlines() if "\t" in line]
+    assert {line.count("\t") for line in lines} == {1}, f"同表列数应一致：{lines}"
+    assert "上半 下半" in lines[0], lines
+
+
+@pytest.mark.capability_table
+def test_pptx_text_left_in_a_covered_cell_is_merged_back(ctx, work_dir):
+    """
+    行为：合并区非左上格（续格）里若被产出方留下文字，文字并回合并单元格并在 `notes` 里登记。
+
+    来源：`01-表格格位建模.md` §4.4 的未核实项——anydoc 直接丢弃续格文字，本仓取向是「尽量抽出来」。
+    预期值来源：本用例写 2×2 表、把 A1:B1 合并，再把续格单独写上「续格残留字」（并清掉 origin 里的
+          同名文字），所以正文里必须出现这两段、且 notes 报 1 处。
+    """
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    path = work_dir / "residue.pptx"
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+    table = slide.shapes.add_table(2, 2, Inches(1), Inches(1), Inches(4), Inches(1)).table
+    table.cell(0, 0).text = "合并标题"
+    table.cell(0, 0).merge(table.cell(0, 1))
+    table.cell(0, 0).text = "合并标题"  # 清掉 python-pptx 搬进来的续格文字，只留续格那份
+    table.cell(0, 1).text = "续格残留字"
+    table.cell(1, 0).text = "a2"
+    table.cell(1, 1).text = "b2"
+    presentation.save(str(path))
+
+    result = dispatch("pptx", path, ctx)
+    assert "合并标题 续格残留字" in result.content, result.content
+    assert any("残留文字已并入合并单元格（1 处）" in note for note in result.notes), result.notes
 
 
 # ---------- 内嵌图：同一张图被引多次 ----------

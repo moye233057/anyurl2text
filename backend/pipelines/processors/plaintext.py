@@ -14,7 +14,7 @@ import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from pipelines.processors.rtf import rtf_to_text
+from pipelines.processors.rtf import extract_rtf, rtf_to_text
 from pipelines.processors.schema import ExtractResult
 from utils.textfile import read_text_file
 
@@ -39,17 +39,19 @@ def extract_plaintext(path: Path, ext: str) -> ExtractResult:
     """
     抽取纯文本类格式。
 
-    功能：txt 直读；md 原样；json 缩进美化；xml 结构化缩进；rtf 走控制字解析。
+    功能：txt 直读；md 原样；json 缩进美化；xml 结构化缩进；rtf 走控制字解析（表格还原成网格列）。
           五种都保留原始信息，不做会掉内容的加工。
     应用场景：dispatch 分派 plaintext 组时调用。
     输入：path — 文件路径；ext — 已识别的小写扩展名。
     输出：ExtractResult，content 为文本本身。
+    说明：rtf 在**读盘之前**分出去——`extract_rtf` 自己读一次盘（表格要按控制字重建网格，
+          顺带把表头行数与 `max_table_rows` 带回结果），这里再读一次纯属浪费。
     """
+    if ext == "rtf":
+        return extract_rtf(path)
     text, hits = read_text_file(path)
     if ext == "json":
         return ExtractResult(content=_pretty_json(text), engines=["json"], limits_hit=hits)
     if ext == "xml":
         return ExtractResult(content=_pretty_xml(text), engines=["ElementTree"], limits_hit=hits)
-    if ext == "rtf":
-        return ExtractResult(content=rtf_to_text(text), engines=["RTF 控制字解析"], limits_hit=hits)
     return ExtractResult(content=text, engines=["原文直读"], limits_hit=hits)

@@ -200,7 +200,7 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 `extract` 关键步骤：
 
 1. `Document()`；失败降级。
-2. `iter_inner_content()` 按 body **块级顺序**遍历：表格走 `_render_table()`——按 `w:tc` 收成格位规格（**不用 `row.cells`**：合并区会被返回多次、文本因此重复），交给 `processors/grid.py` 的格位网格渲染（制表符分隔、合并区文本只出现一次、覆盖位占列位、超 `MAX_TABLE_ROWS=2000` 行截断并说明），并数出**源自己标出的**表头行数（`w:trPr/w:tblHeader`，Word 用它声明「跨页重复的表头行」）；段落取文本，段落里含 `a:blip` 时在文本末追加中性占位符 `[图片 N]`。
+2. `iter_inner_content()` 按 body **块级顺序**遍历：表格走 `_render_table()`——按 `w:tc` 收成格位规格（**不用 `row.cells`**：合并区会被返回多次、文本因此重复），交给 `processors/grid.py` 的格位网格渲染（制表符分隔、合并区文本只出现一次、覆盖位占列位、超 `MAX_TABLE_ROWS=2000` 行截断并说明），并数出**源自己标出的**表头行数（`w:trPr/w:tblHeader`，Word 用它声明「跨页重复的表头行」）；段落取文本，段落里含 `a:blip` 时在文本末追加中性占位符 `[图片 N]`。**取行与取格文字都走 XML**：`_row_elements` 会把 `w:sdt/w:sdtContent` 里的行也收进来（python-docx 的 `table.rows` 只看直属 `w:tr`，Word 的「重复表行内容控件」因此整行消失），`_cell_text` 拆 `w:sdt` 并把**格内嵌套表**按 `a / b` 行、行间空格收进这一格（旧实现按 `tc.p_lst` 取不到它们）。`w:rPr/w:vanish` 的隐藏文字照抽，处数与字数写进 `notes`。
 3. 页数取 `docProps/app.xml` 里的 `<Pages>`——那是保存时的缓存渲染值，读到就在 `notes` 里注明来源，读不到置 `None`。
 4. 文本框（`w:txbxContent` / VML textbox / Word 2010 shape 三类容器）单独成节 `=== 文本框内容 ===`：它们通常锚定浮动位置，硬插进正文会给错阅读顺序，直接丢又会掉信息。
 5. 内嵌图总数由 `a:blip` 计数得到（记的是**引用次数**：同一张图被引 N 次算 N）；`prepare_assets=True` 时按来源关系 id（`r:embed` / `r:link`）去重，把前 `MAX_EMBEDDED_IMAGES` 张**不同的**图经 `related_parts` 取出、转 PNG 落盘成素材。
@@ -215,7 +215,8 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 1. `Presentation()`；失败降级。
 2. 逐张幻灯片，`_walk_shapes()` **递归展开组合形状**（不递归会漏掉成组排版的正文）。
 3. 每个形状按「文本框文本 → 表格（制表符）」顺序追加；`PICTURE` 类形状计数（引用次数），`prepare_assets=True` 时按图片部件的 `sha1` 去重后，把未超上限的不同图转 PNG 落盘成素材（**不能按 rId 去重**：rId 只在页内唯一，而 python-pptx 在包级按内容复用同一个 image part，同一张图跨页时 rId 可以不同）。
-4. 每页前加 `=== 幻灯片 N ===`；`pages` 与 `pages_used` 都是幻灯片数。
+4. 每页前加 `=== 幻灯片 N ===`；`pages` 与 `pages_used` 都是幻灯片数。**隐藏幻灯片照抽**（`p:sld@show="0"` 只是放映时跳过），是哪几张写进 `notes`。
+5. 表格里的格内空白压成单空格（不压的话一格多段会把这一行切成两行、同表列数对不上）；合并区**续格里的残留文字并回合并单元格**（产出方有时把文字留在续格，anydoc 直接丢，本仓并回来并在 `notes` 报处数），已出现在 origin 里的不重复并。
 
 **不做无效图过滤**（小于 100x100、近似纯色这类）：跳过判断只能靠猜，而漏掉的往往正是流程图或截图；代价由 `MAX_EMBEDDED_IMAGES` 上限兜住。
 
@@ -228,12 +229,13 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 1. 按扩展名选解析器：`xlsx/xlsm` → openpyxl（先 `read_only=True, data_only=True`，失败退回常规模式）；`xls` → xlrd；`ods` → `pyexcel_ods.get_data`；`csv` → 先 `read_text_file` 探测编码解码，再嗅探分隔符后交给 `csv.reader`。解析异常直接降级。
 2. **隐藏工作表照读**——`sheet_state` 只管界面显示，不是「没有内容」（用户 2026-10-04 拍板：隐藏内容一律照抽，例外只有「会把系统打爆」与「解析超过 60 秒」）。逐行**边读边停**，读到 `MAX_ROWS_TO_READ=5001` 行即止（多读一行是为了让渲染层能区分「还有后续行」与「这就是最后一行」）。
 3. `_render_rows()` 统一渲染，四种格式只有这一套方言：`=== SHEET: 名 ===` 加制表符分隔的行；列宽从格位网格读（**合并区覆盖的空列也算列宽**，不会再被当空尾列裁掉）；跳过整行全空的行；单表超 `MAX_ROWS_PER_SHEET=5000` 行截断并说明。**行尾缺格补空**（OOXML 允许一行提前结束、pptx 生产者也常省略尾部续格，不补的话这一行的制表符个数与同表其他行不同、后面所有列位都错开）；**CSV / TSV 除外**——锯齿行是源文件里的真实形状，传 `pad_short_rows=False` 保真。格位网格另有**三条预算**——跨度展开 `max_grid_expansion`、格位数 `max_grid_slots`、文字量 `max_grid_text_chars`：命中时**不落该格**并把名字交回 `limits_hit`；四条表格路径（docx / odf / excel / pptx）都会上报（2026-10-04 修掉了 excel / pptx「只交网格、不交命中的名字」的静默）。
-4. 合并区按容器分家、都归到同一份格位网格：`xlsx / xlsm` 由 `xlsx_merges.py` 从包内 XML 读（`read_only=True` 的 worksheet 没有 `merged_cells`，只在常规模式读会让两条读取路径对同一文件给出不同 `content`，违反 ADR-0002）；`xls` 取 xlrd 的 `merged_cells`——**它只在 `formatting_info=True` 时才有值**，且坐标是开区间且行在前，要过 `grid.merge_rect` 换算；`ods` 由 `ods_merges.py` 从 `content.xml` 读（`pyexcel-ods` 丢跨度），并把「不给覆盖位留位置」的值行按覆盖位对齐（该库对 `covered-table-cell` 不产出值，不对齐则后面的值整体左移）。
-5. 空单元格输出空串（openpyxl 的空单元格是 `None`，直接 `str()` 会写出字面量 `None` 污染整列）；**浮点**单元格按 15 位有效数字写（`f"{value:.15g}"`）——`str(0.1 + 0.2)` 会写出 `0.30000000000000004` 这种二进制误差长尾，而整数与字符串一律原样不动（整数因此不会平白多出小数点）。
-6. `pages / pages_used` 记工作表数（含隐藏表）；没有内容时写一条 `notes`。
-7. **隐藏状态另登记进 `notes`**（内容照抽，登记是为了不静默）：整表隐藏的工作表写明 `hidden` / `veryHidden`，隐藏行与隐藏列按连续段写，例如 `隐藏内容照抽：工作表「可见表」有隐藏行（第 2 行、第 4-5 行）、隐藏列（B 列）`。`xlsx / xlsm` 由 `xlsx_visibility.py` 从包内 XML 读——**`read_only=True` 的 worksheet 没有 `row_dimensions` / `column_dimensions`**（实测同一份文件常规模式给出 `hidden_rows=[2]`、只读模式是空的），而值必须走只读模式，所以隐藏状态自己解包；`xls` 取 xlrd 的 `visibility` / `rowinfo_map` / `colinfo_map`（BOUNDSHEET 编码：0 可见、1 隐藏、2 非常隐藏）。登记段数超过 `max_visibility_ranges=24` 时只登记前 24 段并报出该上界名——**钳的只是登记，正文一格不少**。
+4. 合并区按容器分家、都归到同一份格位网格：`xlsx / xlsm` 由 `xlsx_merges.py` 从包内 XML 读（`read_only=True` 的 worksheet 没有 `merged_cells`，只在常规模式读会让两条读取路径对同一文件给出不同 `content`，违反 ADR-0002）；`xls` 取 xlrd 的 `merged_cells`——**它只在 `formatting_info=True` 时才有值**，且坐标是开区间且行在前，要过 `grid.merge_rect` 换算；`ods` 由 `ods_merges.py` 从 `content.xml` 读（`pyexcel-ods` 丢跨度），并把「不给覆盖位留位置」的值行按覆盖位对齐（该库对 `covered-table-cell` 不产出值，不对齐则后面的值整体左移）。三家的收行都走 `odf_table_rows` / 直属 `w:tr` 那一层，**行组（表头行组、`table:table-rows`、`table:table-row-group`）会往里走一层**——只取直属行会让整组内容消失。
+5. **表类型**（`meta.table_kind`）：交付文本只有一张表时给 `data` / `layout`，口径照 anydoc 的 `TableKind`——1×1 单格表算 `layout`（排版壳）。判据是**渲染好的行**（`table_kind.classify`），所以四条表格路径口径一致。
+6. 空单元格输出空串（openpyxl 的空单元格是 `None`，直接 `str()` 会写出字面量 `None` 污染整列）；**浮点**单元格按 15 位有效数字写（`f"{value:.15g}"`）——`str(0.1 + 0.2)` 会写出 `0.30000000000000004` 这种二进制误差长尾，而整数与字符串一律原样不动（整数因此不会平白多出小数点）。
+7. `pages / pages_used` 记工作表数（含隐藏表）；没有内容时写一条 `notes`。
+8. **隐藏状态另登记进 `notes`**（内容照抽，登记是为了不静默）：整表隐藏的工作表写明 `hidden` / `veryHidden`，隐藏行与隐藏列按连续段写，例如 `隐藏内容照抽：工作表「可见表」有隐藏行（第 2 行、第 4-5 行）、隐藏列（B 列）`。`xlsx / xlsm` 由 `xlsx_visibility.py` 从包内 XML 读——**`read_only=True` 的 worksheet 没有 `row_dimensions` / `column_dimensions`**（实测同一份文件常规模式给出 `hidden_rows=[2]`、只读模式是空的），而值必须走只读模式，所以隐藏状态自己解包；`xls` 取 xlrd 的 `visibility` / `rowinfo_map` / `colinfo_map`（BOUNDSHEET 编码：0 可见、1 隐藏、2 非常隐藏）；**`ods` 走 `ods_visibility.py`**（见下）。登记段数超过 `max_visibility_ranges=24` 时只登记前 24 段并报出该上界名——**钳的只是登记，正文一格不少**。
 
-ODS 的隐藏是**样式**说了算（`table:display="false"`），`pyexcel-ods` 照读不筛，所以 `hidden.ods` 的内容不少；它的可见性登记是已知未做（`01-表格格位建模.md` §1.2）。
+ODS 的隐藏是**样式**说了算（整表 `table:display="false"`、行列 `table:visibility="collapse"`），`pyexcel-ods` 照读不筛，所以 `hidden.ods` 的内容不少；**可见性由 `ods_visibility.py` 解 `content.xml` 的自动样式表读出来**（值那条路只给值，样式一概丢掉），行列按 `number-*-repeated` 展开后压成 0 基半开区间，与 xlsx / xls 的产出同形——三份容器对同一形状给出同一段正文与同一条登记（有用例钉住）。
 
 ODS 与 CSV 也在这个文件里：这一族都按行列渲染成同一种文本表格，不必为了名字精确再拆开。
 
@@ -257,14 +259,14 @@ CSV 的分隔符嗅探规则（确定性，实现只在 `excel._sniff_delimiter`
 
 ### 3.6 纯文本族 txt / md / json / xml / rtf（`plaintext.py`）
 
-先统一解码：`read_text_file()` 按 `utf-8-sig`（吃 BOM）→ `utf-8` → `chardet` 探测 → `utf-8 + errors=replace` 依次尝试，保证不抛异常；单文件读取上限 20MB，超出截读。
+先统一解码：`read_text_file()` 按 `utf-8-sig`（吃 BOM）→ `utf-8` → `chardet` 探测 → `utf-8 + errors=replace` 依次尝试，保证不抛异常；单文件读取上限 20MB，超出截读。**`rtf` 是例外**：它在读盘之前就分给 `rtf.extract_rtf(path)`（自己读一次盘，表格要重建网格），不走这里的 `read_text_file`。
 
 | 扩展名 | 关键步骤 |
 |---|---|
 | txt / md / markdown | 原文直读。**Markdown 不做 HTML 转换**——标题层级、列表、表格、链接都是信息，再加工只会掉信息 |
 | json | `json.loads` 后 `indent=2` 美化；解析失败原样返回，不因格式问题丢内容 |
 | xml | `ET.fromstring` + `ET.indent` + `tostring` 缩进输出并**保留属性**；解析失败原样返回 |
-| rtf | `rtf.py` 的 `rtf_to_text()` 逐字符解析控制字：处理 `\uN`（含负值 UTF-16 码位）与 `\'hh` 十六进制转义（按 utf-8 → gbk → cp1252 → latin-1 解码），**整组跳过** `fonttbl` / `colortbl` / `stylesheet` / `pict` 等可忽略目的地（否则字体名会混进正文），`\par` / `\line` 还原成换行，最后折叠连续空行 |
+| rtf | `rtf.py` 逐字符解析控制字：处理 `\uN`（含负值 UTF-16 码位）与 `\'hh` 十六进制转义（按 utf-8 → gbk → cp1252 → latin-1 解码），**整组跳过** `fonttbl` / `colortbl` / `stylesheet` / `pict` 等可忽略目的地（否则字体名会混进正文），`\par` / `\line` 还原成换行，最后折叠连续空行。**表格另走 `rtf_tables.build_lines`**：`\trowd` / `\cellx` / `\cell` / `\row` 按 anydoc 的边界聚类还原成网格列——右边界先归一化成严格递增，再把**全部行的右边界**贪心聚类成列（容差 10 twips，**与簇的种子比**，否则 `\cellx` 的 1-2 twips 抖动会把整行并成一簇），横向合并折成列跨度（文本首尾直拼）、纵向链按**精确列区间**相等匹配、无主的续格变回可见格；`\trhdr` 是源自己标的表头行（进 `meta.table_header_rows`）。列位由 `grid.py` 渲染，与 docx 同一份；`plaintext.py` 在读盘之前把 rtf 交给 `extract_rtf(path)`（表头行数与行数上限要随结果带回） |
 
 `understand`：无素材，直接进摘要。
 
