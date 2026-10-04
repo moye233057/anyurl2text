@@ -140,6 +140,26 @@ pytest 的缓存是关掉的（`backend/pytest.ini` 里的 `-p no:cacheprovider`
 
 两条 0 号命令之外都是人工核查。样例缺失时新套件**跳过**该条而不是失败——样例由 `python scripts/make_fixtures.py` 生成（见第 3 节）。
 
+### 怎么看测试结果
+
+**这套测试分三缝，先认清自己要跑哪一缝**（每一条的 docstring 开头就写着它的「行为 / 来源 / 预期值来源」）：
+
+| 缝 | 覆盖什么 | 前置 | 命令（cwd=`backend/`） |
+|---|---|---|---|
+| 自检缝 | 处理器产出、判型、通用件、结构判据、错误码、RAG 口 | 无（几秒） | `python -m pytest tests --ignore=tests/test_extract_contract.py` |
+| HTTP 缝 | `POST /extract/file` 的契约与状态码（26 条） | **后端在 8020 应答** | `python -m pytest tests/test_extract_contract.py -v` |
+| 贵缝 | `/understand` 两条路一致、模型增强、音视频转写 | 真模型 + 本机 8021/8022 | `python -m pytest tests -m model` |
+
+**跑完一次会留三份东西给人看**（不是只有 `passed` 的数量）：
+
+1. 终端结尾的「没通过的用例」一节：每条未通过的用例名 + **「这条在测什么」** + 用时；
+2. `--durations=5` 标出最慢的五条——「跑了十几分钟」时一眼看出是谁；
+3. **全量清单落盘**到 `backend/data/debug/last_test_run.txt`：每条的状态、用时、用例名与「这条在测什么」（`data/debug/` 在 `.gitignore` 里）。`-ra` 另会把跳过/失败的原因收尾列出。
+
+想看每条用例的实时名字加 `-v`（注意 `-q` 与 `-v` 相抵，别一起用）；只想跑一条用 `-k 关键字`，例如 `python -m pytest tests -k epub -v`。
+
+**卡住、或只看到一行行 `F` 与一个数字**：先探后端，`Invoke-WebRequest http://127.0.0.1:8020/probe/health -TimeoutSec 5 -UseBasicParsing`。两种坏法要分清——**没在听**（连接被拒，用例立刻失败）与**连着却不回话**（半死的旧进程占着端口，每条 HTTP 用例都要等满超时才红）。后者用 `Get-NetTCPConnection -LocalPort 8020 -State Listen | Select-Object OwningProcess` 找到占用进程，结束掉再按第 2 节重起。HTTP 缝现在有启动探活前置：后端不应答会**当场**用一条可读消息点明，不会让你等十几分钟；单次请求上限也压到 20 秒（本地上传口正常 1 秒内返回）。
+
 | # | 做什么 | 判据 |
 |---|---|---|
 | 1 | 访问 `/probe/health` | `model_key_configured` 为 `true`；启动日志里配置文件路径指向项目根目录的 `.env` |

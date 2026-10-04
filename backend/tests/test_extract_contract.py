@@ -36,7 +36,10 @@ import pytest
 
 BASE_URL = os.environ.get("ANYURL2TEXT_BASE_URL", "http://127.0.0.1:8020")
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-TIMEOUT = 120.0
+# 本地服务的单次请求上限：本文件打的都是 127.0.0.1 的上传口，正常 1 秒内返回。
+# **别**照搬「下载大文件」那类 120 秒——服务卡住时那就是 26 × 120 秒 ≈ 十几分钟，
+# 而人只看到一行行 F 与最后那个数字（踩过这个坑，见 docs/RUNBOOK.md「怎么看测试结果」）。
+TIMEOUT = 20.0
 
 # README「响应形状恒定：7 个固定字段，error 恒存在（成功为 null）」
 RESPONSE_KEYS = {"type", "content", "summary", "meta", "usage", "timings", "error"}
@@ -69,6 +72,25 @@ def extract(file_name, raw=None, query=None):
     data = {"query": query} if query else None
     response = httpx.post(f"{BASE_URL}/extract/file", files=files, data=data, timeout=TIMEOUT)
     return response.status_code, response.json()
+
+@pytest.fixture(scope="session", autouse=True)
+def service_is_answerable():
+    """
+    前置：后端在 8020 上**真的应答**。不在就当场说清，不要等 26 条用例各超时一次。
+
+    来源：`docs/RUNBOOK.md` 第 5 节「怎么看测试结果」——后端由人在自己终端起，AI 不自起
+    （端口唯一；uvicorn 的 reloader 在沙箱里建不了命名管道）。卡住的服务比不存在的服务更难查：
+    TCP 连着却不回话时，每条用例都要等满 `TIMEOUT`。
+    """
+    try:
+        response = httpx.get(f"{BASE_URL}/probe/health", timeout=5)
+    except Exception as exc:
+        pytest.fail(
+            f"后端没在 {BASE_URL} 应答（{exc.__class__.__name__}）。本文件每条用例都要它："
+            "先起/重启后端，或先跑 --ignore=tests/test_extract_contract.py（RUNBOOK 第 5/6 节）"
+        )
+    if response.status_code != 200:
+        pytest.fail(f"{BASE_URL}/probe/health 返回 {response.status_code}，后端状态不对（RUNBOOK 第 6 节）")
 
 def test_service_is_reachable():
     """缝的前置条件：服务应答健康检查，否则后面每条失败都只是噪音。"""
