@@ -10,41 +10,19 @@ xlsx / xlsm 包内 XML 里的**隐藏状态**读取：哪张工作表整表隐�
 隐藏**不是**丢弃内容的理由（用户 2026-10-04 拍板：隐藏只是界面上没显示）；本模块产出的信息
 只用于 `notes` 登记，让调用方知道这份产出的可见性状态。
 
-本模块不 import 项目内任何东西，是叶子模块（ADR-0007）。
+本模块只引用叶子模块 `index_runs`（区间换算），不 import 其它项目内代码。
 """
 import xml.etree.ElementTree as ElementTree
 import zipfile
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from pipelines.processors.index_runs import to_runs
+
 # 工作表可见性的取值（OOXML 的 `<sheet state="...">`）
 VISIBLE = "visible"
 HIDDEN = "hidden"
 VERY_HIDDEN = "veryHidden"
-
-def column_letters(index: int) -> str:
-    """0 基列号 → 列字母：0 → A、25 → Z、26 → AA。"""
-    letters = ""
-    value = index + 1
-    while value > 0:
-        value, remainder = divmod(value - 1, 26)
-        letters = chr(ord("A") + remainder) + letters
-    return letters
-
-def to_runs(indices: List[int]) -> List[Tuple[int, int]]:
-    """
-    一串 0 基索引 → 半开区间的连续段：`[1, 2, 3, 5]` → `[(1, 4), (5, 6)]`。
-
-    为什么返回区间而不是逐个索引：`<col min="1" max="16384" hidden="1"/>` 这类一次性隐藏整行整列的
-    写法（以及老版 .xls 的 `colinfo_map`）逐个展开会有上万个数字；区间只跟元素个数同阶。
-    """
-    runs: List[Tuple[int, int]] = []
-    for index in sorted(set(indices)):
-        if runs and index == runs[-1][1]:
-            runs[-1] = (runs[-1][0], index + 1)
-        else:
-            runs.append((index, index + 1))
-    return runs
 
 def read_visibility(path: Path) -> Dict[str, dict]:
     """

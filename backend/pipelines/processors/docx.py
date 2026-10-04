@@ -164,6 +164,32 @@ def _count_embedded_images(document: "Document") -> int:
     """数一数文档里一共嵌了多少张图（含未落盘的）。"""
     return sum(1 for _ in document.element.body.iter(qn("a:blip")))
 
+def _hidden_text_note(document) -> str:
+    """
+    隐藏文字（`w:rPr/w:vanish`）的登记文案。
+
+    功能：数出正文（含表格、文本框里的段落）中带 `w:vanish` 的 run 与它们的字符数。
+    为什么只登记、不扣内容：隐藏只是 Word 里没显示，不是没有内容（用户 2026-10-04 拍板：
+    隐藏内容一律照抽），登记是为了让调用方知道这份产出里有没有「界面上看不见的字」。
+    应用场景：extract_docx 组装 notes 时调用。
+    输入：document — python-docx 的 Document。
+    输出：一句文案；没有隐藏文字时返回空串。
+    """
+    runs = 0
+    chars = 0
+    for element in document.element.body.iter(qn("w:r")):
+        properties = element.find(qn("w:rPr"))
+        if properties is None:
+            continue
+        vanish = properties.find(qn("w:vanish"))
+        if vanish is None or (vanish.get(qn("w:val")) or "").lower() in ("0", "false", "off"):
+            continue
+        runs += 1
+        chars += len("".join(node.text or "" for node in element.iter(qn("w:t"))))
+    if not runs:
+        return ""
+    return f"隐藏内容照抽：正文里有 {runs} 处隐藏文字（w:vanish），共 {chars} 字"
+
 def extract_docx(path: Path, ctx: ExtractContext) -> ExtractResult:
     """
     抽取 DOCX 的正文、表格、文本框与内嵌图信息。
@@ -219,6 +245,9 @@ def extract_docx(path: Path, ctx: ExtractContext) -> ExtractResult:
         result.notes.append(
             f"正文里有 {len(table_headers)} 张表，meta.table_header_rows 只在交付文本只有一张表时给值"
         )
+    hidden_note = _hidden_text_note(document)
+    if hidden_note:
+        result.notes.append(hidden_note)
     if declared_pages:
         result.notes.append("页数取自文档自带的 docProps/app.xml，是保存时的缓存值，可能不精确")
 

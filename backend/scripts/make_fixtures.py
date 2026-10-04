@@ -1142,29 +1142,54 @@ def step21_make_hidden_fixtures() -> None:
     legacy.save(str(target))
     print(f"[阶段21] 已写入 {target}（同形状的老版 .xls，可见性走 BOUNDSHEET 记录）")
 
+    from odf.namespaces import TABLENS
     from odf.opendocument import OpenDocumentSpreadsheet
-    from odf.style import Style, TableProperties
-    from odf.table import Table, TableCell, TableRow
+    from odf.style import Style, TableColumnProperties, TableProperties, TableRowProperties
+    from odf.table import Table, TableCell, TableColumn, TableRow
     from odf.text import P
 
     spreadsheet = OpenDocumentSpreadsheet()
     hidden_style = Style(name="hiddenTable", family="table")
     hidden_style.addElement(TableProperties(display="false"))
     spreadsheet.automaticstyles.addElement(hidden_style)
-    for name, text, style in (
-        ("可见表", "头A", None),
-        (HIDDEN_SHEET, HIDDEN_SHEET_CELL, hidden_style.getAttribute("name")),
-    ):
-        table = Table(name=name, stylename=style) if style else Table(name=name)
-        row = TableRow()
-        cell = TableCell(valuetype="string")
-        cell.addElement(P(text=text))
-        row.addElement(cell)
-        table.addElement(row)
-        spreadsheet.spreadsheet.addElement(table)
+    # 隐藏行列在 ODF 里是**样式**（`table:visibility="collapse"`），而 odfpy 的语法表不收这个属性
+    # ——它自带的官方后门 `setAttrNS` 绕过检查（源码 docstring 就写着「schema 不校验」）。
+    row_style = Style(name="hiddenRow", family="table-row")
+    row_props = TableRowProperties()
+    row_props.setAttrNS(TABLENS, "visibility", "collapse")
+    row_style.addElement(row_props)
+    spreadsheet.automaticstyles.addElement(row_style)
+    column_style = Style(name="hiddenColumn", family="table-column")
+    column_props = TableColumnProperties()
+    column_props.setAttrNS(TABLENS, "visibility", "collapse")
+    column_style.addElement(column_props)
+    spreadsheet.automaticstyles.addElement(column_style)
+
+    visible = Table(name="可见表")  # 与 hidden.xlsx / hidden.xls 同形状：隐藏第 2、4-5 行与 B 列
+    for index in range(max(len(HIDDEN_CELLS[0]), len(HIDDEN_COLUMN_INDEXES) + 1)):
+        visible.addElement(
+            TableColumn(stylename="hiddenColumn") if index in HIDDEN_COLUMN_INDEXES else TableColumn()
+        )
+    for row_index, values in enumerate(HIDDEN_CELLS):
+        row = TableRow(stylename="hiddenRow") if row_index in HIDDEN_ROW_INDEXES else TableRow()
+        for value in values:
+            cell = TableCell(valuetype="string")
+            if value:
+                cell.addElement(P(text=value))
+            row.addElement(cell)
+        visible.addElement(row)
+    spreadsheet.spreadsheet.addElement(visible)
+
+    hidden = Table(name=HIDDEN_SHEET, stylename=hidden_style.getAttribute("name"))
+    row = TableRow()
+    cell = TableCell(valuetype="string")
+    cell.addElement(P(text=HIDDEN_SHEET_CELL))
+    row.addElement(cell)
+    hidden.addElement(row)
+    spreadsheet.spreadsheet.addElement(hidden)
     target = DATA_DIR / "hidden.ods"
     spreadsheet.save(str(target))
-    print(f"[阶段21] 已写入 {target}（隐藏表用 table:display=\"false\" 的样式）")
+    print(f'[阶段21] 已写入 {target}（隐藏表用 table:display="false"，隐藏行列用 table:visibility="collapse"）')
 
 # 源标表头样例（阶段 22）：两种容器各自的「这一行是表头」写法
 HEADER_DOCX_ROWS = (("季度", "金额"), ("一季度", "1200"), ("二季度", "1500"))

@@ -24,7 +24,8 @@ from pipelines.processors.ods_merges import align_values as align_ods_values
 from pipelines.processors.ods_merges import read_merge_rects as read_ods_merge_rects
 from pipelines.processors.schema import ExtractContext, ExtractResult, TableGrid
 from pipelines.processors.xlsx_merges import read_merge_rects
-from pipelines.processors.xlsx_visibility import column_letters, to_runs
+from pipelines.processors.index_runs import column_letters, to_runs
+from pipelines.processors.ods_visibility import read_visibility as read_ods_visibility
 from pipelines.processors.xlsx_visibility import read_visibility as read_xlsx_visibility
 from utils.textfile import read_text_file
 
@@ -185,8 +186,8 @@ def _read_ods(path: Path) -> tuple:
     两步都不能省：该库丢跨度（合并区要自己解包读），而且它对 `covered-table-cell` 不产出值
     （含纵向合并的行会少项、后面的值整体左移，要按覆盖位插空对齐）。
 
-    隐藏表照读（实测 `table:display="false"` 的表也在返回里），所以这里没有隐藏状态可登记；
-    ODS 的 visible 登记是**已知未做**，见 01 §1.2。输出 (sheets, {})。
+    隐藏表照读（实测 `table:display="false"` 的表也在返回里），可见性从包内样式读（`ods_visibility.py`）——
+    该库只给值矩阵，样式一概丢掉。输出 (sheets, visibility)。
     """
     from pyexcel_ods import get_data
 
@@ -198,7 +199,7 @@ def _read_ods(path: Path) -> tuple:
     for name, rows in data.items():
         rects = merges.get(name, [])
         sheets.append((name, align_ods_values(rows, rects)[: limits.MAX_ROWS_TO_READ], rects))
-    return sheets, {}
+    return sheets, read_ods_visibility(path)
 
 # CSV 分隔符嗅探：候选顺序即平局时的优先级，逗号在最前——普通逗号 CSV 的产出因此逐字节不变
 CSV_DELIMITERS = (",", ";", "\t", "|")

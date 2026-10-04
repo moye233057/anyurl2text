@@ -84,7 +84,12 @@ def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
     assets = []
     seen = set()
     hits = []
+    hidden_slides = []
     for slide_index, slide in enumerate(presentation.slides, start=1):
+        # 隐藏幻灯片（`p:sld@show="0"`）照抽——隐藏只是放映时跳过，不是没有内容；
+        # 这里只登记是哪几张，让调用方知道产出里有「界面上看不到的页」（用户 2026-10-04 拍板）
+        if (slide.element.get("show") or "1") == "0":
+            hidden_slides.append(slide_index)
         blocks = []
         for shape in _walk_shapes(slide.shapes):
             text = _shape_text(shape)
@@ -129,9 +134,15 @@ def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
         title = f"=== 幻灯片 {slide_index} ==="
         pages.append(title + ("\n" + "\n".join(blocks) if blocks else ""))
 
+    notes = []
+    if hidden_slides:
+        listed = "、".join(f"第 {index} 张" for index in hidden_slides)
+        notes.append(f"隐藏内容照抽：{listed}幻灯片是隐藏的（show=\"0\"）")
+
     return ExtractResult(
         content="\n\n".join(pages),
         engines=["python-pptx"],
+        notes=notes,
         pages=len(presentation.slides),
         pages_used=len(presentation.slides),
         images=images_total,

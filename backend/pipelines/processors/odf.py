@@ -22,6 +22,7 @@ import zipfile
 from pathlib import Path
 
 import configs.limits as limits
+from pipelines.processors import odf_table_rows
 from pipelines.processors.grid import GridBuilder, render_tsv
 from pipelines.processors.schema import ExtractResult
 
@@ -67,35 +68,6 @@ def _cell_text(cell) -> str:
     """取单元格里的文字：把其中的段落（含嵌套列表项里的段落）拼成一行。"""
     return " ".join(part for part in (_text_of(p) for p in cell.iter(TEXT_NS + "p")) if part)
 
-def _table_rows(table) -> tuple:
-    """
-    一张 ODF 表格里的行（文档顺序）+ 其中属于表头行组的行数。
-
-    功能：`table:table-row` **不只直接挂在** `table:table` 下——`table:table-header-rows`
-          （表头行组）、`table:table-rows`、`table:table-row-group` 都会再包一层，只取直属行的话
-          整组内容会凭空消失（实测：`table:table-header-rows` 里的两格文字一个字都没进正文）。
-          这里按容器递归收行；遇到嵌套表停住（它的行不属于外层，文字已由 `_cell_text` 收进格子里）。
-    应用场景：`_render_table` 取行时调用。
-    输入：table — `table:table` 元素（也可以是行组容器，递归用）。
-    输出：(行元素列表, 表头行组里的行数——含 `number-rows-repeated` 展开后的行数)。
-    """
-    rows = []
-    header_rows = 0
-    for child in table:
-        if child.tag == TABLE_NS + "table-row":
-            rows.append(child)
-        elif child.tag in ROW_GROUPS:
-            nested_rows, nested_headers = _table_rows(child)
-            rows.extend(nested_rows)
-            header_rows += nested_headers
-        elif child.tag == HEADER_ROWS_GROUP:
-            group = [row for row in child if row.tag == TABLE_NS + "table-row"]
-            rows.extend(group)
-            header_rows += sum(
-                _count(row, "number-rows-repeated", limits.MAX_REPEATED_SLOTS) for row in group
-            )
-    return rows, header_rows
-
 def _render_table(table, hits: list) -> tuple:
     """
     把 ODF 表格渲成制表符分隔的行。
@@ -108,7 +80,9 @@ def _render_table(table, hits: list) -> tuple:
     输入：table — `table:table` 元素；hits — 命中的上界名收集到这一份列表里。
     输出：(制表符分隔的多行文本, 源标出的表头行数)；超行数上限时末行说明还剩多少行。
     """
-    rows, header_rows = _table_rows(table)
+    rows, header_rows = odf_table_rows.table_rows(
+        table, lambda row: _count(row, "number-rows-repeated", limits.MAX_REPEATED_SLOTS)
+    )
     repeats = [_count(row, "number-rows-repeated", limits.MAX_REPEATED_SLOTS) for row in rows]
     total_rows = sum(repeats)
     builder = GridBuilder()

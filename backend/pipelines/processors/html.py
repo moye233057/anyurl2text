@@ -30,6 +30,38 @@ def _clean_text(raw: str) -> str:
             kept.append("")
     return "\n".join(kept).strip()
 
+def _hidden_note(soup) -> str:
+    """
+    隐藏元素（`display:none` / `visibility:hidden` / `hidden` 属性）的登记文案。
+
+    功能：数出**最外层**隐藏元素的数量与它们里面的文字字符数——嵌套的隐藏元素只算一次
+          （外层已经盖住了内层），空的隐藏元素（如占位 div）不计入。
+    为什么只登记、不扣内容：隐藏只是页面上没显示，不是没有内容（用户 2026-10-04 拍板：
+    隐藏内容一律照抽），登记是为了让调用方知道这份产出里有没有「界面上看不见的字」。
+    应用场景：`extract_html` 在清洗正文前调用一次。
+    输入：soup — BeautifulSoup 文档（已剥掉 script / style）。
+    输出：一句文案；没有隐藏内容时返回空串。
+    """
+    hidden_elements = []
+    for element in soup.find_all(True):
+        style = (element.get("style") or "").replace(" ", "").lower()
+        marked = (
+            "display:none" in style
+            or "visibility:hidden" in style
+            or element.has_attr("hidden")
+        )
+        if not marked:
+            continue
+        # 祖先已经隐藏了就不重复计数：外层那一句已经涵盖它
+        if any(parent in hidden_elements for parent in element.parents):
+            continue
+        hidden_elements.append(element)
+    texts = [element.get_text(strip=True) for element in hidden_elements]
+    chars = sum(len(text) for text in texts)
+    if not chars:
+        return ""
+    return f"隐藏内容照抽：页面里有 {sum(1 for text in texts if text)} 处隐藏文字，共 {chars} 字"
+
 def extract_html(path: Path, page_url: str = "") -> ExtractResult:
     """
     抽取 HTML 正文。
@@ -86,6 +118,9 @@ def extract_html(path: Path, page_url: str = "") -> ExtractResult:
         blocks.append("## 链接\n" + "\n".join(links))
 
     notes = []
+    hidden_note = _hidden_note(soup)
+    if hidden_note:
+        notes.append(hidden_note)
     if len(table_headers) > 1:
         notes.append(
             f"页面里有 {len(table_headers)} 张表，meta.table_header_rows 只在交付文本只有一张表时给值"

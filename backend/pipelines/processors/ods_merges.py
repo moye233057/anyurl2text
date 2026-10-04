@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 import configs.limits as limits
+from pipelines.processors.odf_table_rows import table_rows
 
 TABLE_NS = "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}"
 
@@ -44,7 +45,8 @@ def _table_rects(table: ElementTree.Element) -> List[Tuple[int, int, int, int]]:
     """
     rects: List[Tuple[int, int, int, int]] = []
     row_index = 0
-    for row in table.findall(TABLE_NS + "table-row"):
+    rows, _ = table_rows(table, lambda row: _repeat(row, "number-rows-repeated"))
+    for row in rows:
         cells: List[Tuple[str, int, int]] = []
         for cell in row:
             if cell.tag == TABLE_NS + "covered-table-cell":

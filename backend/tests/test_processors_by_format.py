@@ -685,6 +685,76 @@ def test_docx_with_two_tables_leaves_the_header_count_empty(ctx, work_dir):
     assert any("2 张表" in note for note in result.notes), result.notes
 
 
+# ---------- 隐藏内容：docx 隐藏文字 / 隐藏幻灯片 / 网页隐藏元素 ----------
+
+@pytest.mark.capability_document
+def test_hidden_docx_text_is_extracted_and_registered(ctx, work_dir):
+    """
+    行为：docx 的隐藏文字（`w:rPr/w:vanish`）照进正文，并在 `notes` 里登记处数与字数。
+
+    来源：用户 2026-10-04 拍板「隐藏内容一律照抽」（`01-表格格位建模.md` §1.2）；
+          python-docx 的 `run.font.hidden = True` 写的就是 `w:vanish`。
+    预期值来源：本用例写 1 段普通文字 + 1 处隐藏文字「隐藏文字样本XYZ」（9 字）。
+    """
+    from docx import Document
+
+    path = work_dir / "hidden_text.docx"
+    document = Document()
+    document.add_paragraph("普通段落")
+    document.add_paragraph().add_run("隐藏文字样本XYZ").font.hidden = True
+    document.save(str(path))
+
+    result = dispatch("docx", path, ctx)
+    assert "隐藏文字样本XYZ" in result.content
+    assert any("1 处隐藏文字" in note and "共 9 字" in note for note in result.notes), result.notes
+
+
+@pytest.mark.capability_document
+def test_hidden_pptx_slide_is_extracted_and_registered(ctx, work_dir):
+    """
+    行为：隐藏幻灯片（`p:sld@show="0"`）的正文照进交付文本，`notes` 里登记是哪一张。
+
+    来源：同 §1.2——隐藏只是放映时跳过，不是没有内容。
+    预期值来源：本用例写 3 页、只把第 2 页标成隐藏，所以登记的应当是「第 2 张」且第 2 页正文仍在。
+    """
+    from pptx import Presentation
+
+    path = work_dir / "hidden_slide.pptx"
+    presentation = Presentation()
+    for index in range(3):
+        slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+        slide.shapes.title.text = f"第{index + 1}页标题"
+        if index == 1:
+            slide.element.set("show", "0")
+    presentation.save(str(path))
+
+    result = dispatch("pptx", path, ctx)
+    assert "第2页标题" in result.content
+    assert any("第 2 张幻灯片是隐藏的" in note for note in result.notes), result.notes
+
+
+@pytest.mark.capability_document
+def test_hidden_html_content_is_extracted_and_registered(ctx, work_dir):
+    """
+    行为：`display:none` 与 `hidden` 属性里的文字照进正文，`notes` 登记处数与字数（嵌套只算一处）。
+
+    来源：同 §1.2。预期值来源：本用例写 1 处 `display:none`（外层 div 套内层 span，只算一处、9 字）
+          + 1 处 `hidden` 属性（「属性隐藏的段落」7 字），合计 2 处 16 字。
+    """
+    path = work_dir / "hidden.html"
+    path.write_text(
+        "<html><body><p>普通段落</p>"
+        "<div style='display:none'><span>隐藏文字样本XYZ</span></div>"
+        "<p hidden>属性隐藏的段落</p></body></html>",
+        encoding="utf-8",
+    )
+
+    result = dispatch("html", path, ctx)
+    assert "隐藏文字样本XYZ" in result.content
+    assert "属性隐藏的段落" in result.content
+    assert any("2 处隐藏文字" in note and "共 16 字" in note for note in result.notes), result.notes
+
+
 # ---------- 内嵌图：同一张图被引多次 ----------
 
 # 样例生成参数（`scripts/make_fixtures.py` 阶段 14）：photo.png 被引 3 次、screenshot.png 被引 1 次，
@@ -991,15 +1061,41 @@ def test_hidden_visibility_is_registered_for_legacy_xls(ctx, fixture_copy):
 @pytest.mark.capability_table
 def test_hidden_ods_table_content_survives(ctx, fixture_copy):
     """
-    行为：ODS 的隐藏是**样式**说了算（`table:display="false"`），隐藏表的内容照样进正文。
+    行为：ODS 的隐藏是**样式**说了算（整表 `table:display="false"`、行列 `table:visibility="collapse"`）——
+          隐藏表与隐藏行列的内容照样进正文，可见性同样登记进 `notes`。
 
-    来源：同 §1.2；实测 `pyexcel-ods` 不按 visible 过滤（阶段 21 的 `hidden.ods`）。
-          这一族的**登记**仍是已知未做（`01-表格格位建模.md` §1.2），所以本用例只验内容不丢。
-    预期值来源：阶段 21 写死的两格文字 + 表数 2（可见表 + 隐藏表）。
+    来源：用户 2026-10-04 拍板「隐藏内容一律照抽」（`01-表格格位建模.md` §1.2）；
+          `pyexcel-ods` 只给值矩阵、样式一概丢掉，所以可见性由 `processors/ods_visibility.py`
+          解 `content.xml` 的自动样式表读出来。
+    预期值来源：阶段 21 的生成参数——与 `hidden.xlsx` / `hidden.xls` 同一组常量（隐藏第 2、4-5 行与 B 列、
+          另有一张 hidden 表）。
     """
     result = run("hidden.ods", ctx, fixture_copy)
     assert "隐藏表的格子" in result.content
+    assert "隐藏行列交叉" in result.content
     assert result.pages == 2, result.pages
+    assert any("「隐藏表」整表为 hidden" in note for note in result.notes), result.notes
+    assert any("隐藏行（第 2 行、第 4-5 行）" in note and "隐藏列（B 列）" in note for note in result.notes), result.notes
+
+
+@pytest.mark.capability_table
+def test_hidden_visibility_matches_across_table_containers(ctx, fixture_copy):
+    """
+    行为：同一份形状（隐藏第 2、4-5 行与 B 列）在 xlsx / xls / ods 三种容器里给出**同一段正文**
+          与同一条隐藏行列登记——列位与可见性口径不因容器而变。
+
+    来源：`excel.py` 的三条读取路径归到同一份渲染（`_sheet_grid` + `render_tsv`）与同一条登记
+          （`_visibility_notes`）；三个容器的可见性来源各不相同（包内 XML / xlrd 映射 / ODF 样式）。
+    预期值来源：阶段 21 的三个样例由同一组常量生成（`HIDDEN_CELLS` / `HIDDEN_ROW_INDEXES` /
+          `HIDDEN_COLUMN_INDEXES`），所以「可见表」那一段必须逐字节相同。
+    """
+    blocks, notes = {}, {}
+    for name in ("hidden.xlsx", "hidden.xls", "hidden.ods"):
+        result = run(name, ctx, fixture_copy)
+        blocks[name] = result.content.split("=== SHEET: 隐藏表 ===")[0]
+        notes[name] = tuple(note for note in result.notes if "隐藏行" in note)
+    assert len(set(blocks.values())) == 1, blocks
+    assert len(set(notes.values())) == 1, notes
 
 
 @pytest.mark.capability_limits
