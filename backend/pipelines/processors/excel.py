@@ -3,7 +3,8 @@
 表格族的处理器：xlsx / xlsm / xls / ods / csv。
 
 文件名按「一看就懂」取成 excel：这一族在本项目里统一按行列渲染成制表符表格，所以放在同一个文件里；
-ODS 与 CSV / TSV 也在这里，不必为了名字精确把它再拆开。
+ODS 与 CSV / TSV 也在这里，不必为了名字精确把它再拆开。合并区的读取按容器分家：OOXML 在
+`xlsx_merges.py`、ODF 在 `ods_merges.py`，两者都归到同一份格位网格。
 
 设计要点：
 - **只有一套表格方言**：`=== SHEET: 名 ===` 加制表符分隔的行。给不同容器各造一套标记
@@ -18,25 +19,28 @@ from itertools import islice
 from pathlib import Path
 
 import configs.limits as limits
-from pipelines.processors.grid import GridBuilder, render_tsv
+from pipelines.processors.grid import GridBuilder, merge_rect, render_tsv
+from pipelines.processors.ods_merges import align_values as align_ods_values
+from pipelines.processors.ods_merges import read_merge_rects as read_ods_merge_rects
 from pipelines.processors.schema import ExtractContext, ExtractResult, TableGrid
 from pipelines.processors.xlsx_merges import read_merge_rects
 from utils.textfile import read_text_file
 
-def _render_rows(sheets: list) -> tuple:
+def _render_rows(sheets: list, pad_short_rows: bool = True) -> tuple:
     """
     把「(表名, 行列表, 合并矩形)」渲染成统一的文本表格。
 
     功能：逐表输出 `=== SHEET: 名 ===` 加制表符分隔的行；表格先装配成格位网格再渲染——
           合并区覆盖的空列不被裁掉、合并文本只出现一次；跳过整行全空的行；超行数上限时截断并说明。
     应用场景：xlsx / xls / ods / csv 四条路径共用，避免各写一份渲染规则。
-    输入：sheets — [(表名, [[单元格文本, ...], ...], [(行起, 列起, 行止, 列止), ...]), ...]。
+    输入：sheets — [(表名, [[单元格文本, ...], ...], [(行起, 列起, 行止, 列止), ...]), ...]；
+          pad_short_rows — 见 `grid.render_tsv`：结构化表格补行尾缺格，CSV / TSV 传 False。
     输出：(拼接后的文本, 命中的上界名列表)。
     """
     blocks = []
     hits = []
     for name, rows, merges in sheets:
-        lines = render_tsv(_sheet_grid(rows, merges), limits.MAX_ROWS_PER_SHEET)
+        lines = render_tsv(_sheet_grid(rows, merges), limits.MAX_ROWS_PER_SHEET, pad_short_rows=pad_short_rows)
         if len(rows) > limits.MAX_ROWS_PER_SHEET and "max_rows_per_sheet" not in hits:
             hits.append("max_rows_per_sheet")
         if lines:
@@ -121,25 +125,54 @@ def _read_xlsx(path: Path) -> list:
         workbook.close()
 
 def _read_xls(path: Path) -> list:
-    """用 xlrd 读老版 .xls。"""
+    """
+    用 xlrd 读老版 .xls，合并区取它的 `merged_cells`。
+
+    两个坑都实测过：① 坐标是**开区间且行在前**（`(rlo, rhi, clo, chi)`），要过 `grid.merge_rect`
+    换算成本项目统一的半开形态；② `merged_cells` **只在 `formatting_info=True` 时才有值**——
+    默认打开时它恒为空列表（这一点谁也不会从签名上看出来）。万一某份文件的格式化记录带不动，
+    退回默认模式：值照读，只是合并区丢失。
+    """
     import xlrd
 
-    book = xlrd.open_workbook(str(path))
+    try:
+        book = xlrd.open_workbook(str(path), formatting_info=True)
+    except Exception:
+        book = xlrd.open_workbook(str(path))
     sheets = []
     for sheet in book.sheets():
         rows = [sheet.row_values(index) for index in range(min(sheet.nrows, limits.MAX_ROWS_TO_READ))]
-        sheets.append((sheet.name, rows, ()))
+        # xlrd 给的是 (rlo, rhi, clo, chi)：**行在前、开区间**，且列不是紧挨着行的那个位置——
+        # 直接 `merge_rect(*item)` 会把「行止」当成「列起」（实测：A2:A3 被换算成 A1:B2、A1:B1
+        # 因退化被整个丢掉）。所以按名字取，不按位置展开。
+        rects = [
+            rect
+            for rect in (
+                merge_rect(item[0], item[2], item[1], item[3]) for item in sheet.merged_cells
+            )
+            if rect
+        ]
+        sheets.append((sheet.name, rows, rects))
     return sheets
 
 def _read_ods(path: Path) -> list:
-    """用 pyexcel_ods 读 ODS。"""
+    """
+    用 pyexcel_ods 读 ODS 的值；合并区另从包内 XML 读，值行再按覆盖位对齐。
+
+    两步都不能省：该库丢跨度（合并区要自己解包读），而且它对 `covered-table-cell` 不产出值
+    （含纵向合并的行会少项、后面的值整体左移，要按覆盖位插空对齐）。
+    """
     from pyexcel_ods import get_data
 
     # 必须按 (表名, 行) 解包：写成 `for x in data.items()` 会把元组当成行序列，输出是乱的
-    # （表名另有用途，不能丢）。
-    # pyexcel-ods 没有流式接口，只能读完后立刻截断。
+    # （表名另有用途，不能丢）。pyexcel-ods 没有流式接口，只能读完后立刻截断。
     data = get_data(str(path))
-    return [(name, rows[: limits.MAX_ROWS_TO_READ], ()) for name, rows in data.items()]
+    merges = read_ods_merge_rects(path)
+    sheets = []
+    for name, rows in data.items():
+        rects = merges.get(name, [])
+        sheets.append((name, align_ods_values(rows, rects)[: limits.MAX_ROWS_TO_READ], rects))
+    return sheets
 
 # CSV 分隔符嗅探：候选顺序即平局时的优先级，逗号在最前——普通逗号 CSV 的产出因此逐字节不变
 CSV_DELIMITERS = (",", ";", "\t", "|")
@@ -208,7 +241,7 @@ def extract_excel(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:
             engines=["基础文件信息"],
         )
 
-    content, hits = _render_rows(sheets)
+    content, hits = _render_rows(sheets, pad_short_rows=ext not in ("csv", "tsv"))
     notes = []
     if not content:
         notes.append("表内没有可见单元格内容（可能是空表或整表被隐藏）")

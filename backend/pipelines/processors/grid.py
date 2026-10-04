@@ -26,12 +26,14 @@ def _holds_place(slot) -> bool:
 class GridBuilder:
     """网格的唯一构造者：逐行 `next_row()`，一行内按列序 `place()` / `covered()`，最后 `finish()`。"""
 
-    def __init__(self, limit: int = limits.MAX_GRID_EXPANSION) -> None:
+    def __init__(self, limit: Optional[int] = None) -> None:
         self.grid: TableGrid = []
         self.limit_hit: Optional[str] = None
         self._pending: Dict[Tuple[int, int], Tuple[int, int]] = {}
         self._expansion = 0
-        self._limit = limit
+        # 上限在**调用时**读，不用默认参数：默认参数在 import 期就绑定，用例没法 monkeypatch 它。
+        # `configs/limits.py` 仍是唯一事实源，改值只改那一处。
+        self._limit = limits.MAX_GRID_EXPANSION if limit is None else limit
 
     def next_row(self) -> None:
         """开一行。行内格位必须按列序落：列号由本类维护，调用方不要自己数。"""
@@ -150,14 +152,76 @@ def fill_from_specs(builder: GridBuilder, specs_by_row: list) -> TableGrid:
             column += col_span
     return builder.finish()
 
-def render_tsv(grid: TableGrid, max_rows: int) -> List[str]:
+def merge_rect(row_start: int, col_start: int, row_end: int, col_end: int):
+    """
+    把外来的合并矩形统一成本项目的半开形态 (行起, 列起, 行止, 列止)。
+
+    为什么要这一层：不同库的坐标约定不一样——openpyxl 的 `CellRange` 是**闭区间且列在前**
+    （`bounds` 是 `(min_col, min_row, max_col, max_row)`），xlrd 的 `sheet.merged_cells` 是
+    **开区间且行在前**（`(rlo, rhi, clo, chi)`）。`.xls` 这条走这里；`.xlsx` 那条在
+    `xlsx_merges.py` 里就地换算（那里保持叶子模块，不 import 本模块）。
+    功能：起止写反时对调，退化的空矩形返回 `None` 由调用方过滤。
+    应用场景：`excel._read_xls` 逐项换算 xlrd 的合并区。
+    输入：四个整数（含义见上，行序/列序均可）。
+    输出：半开矩形四元组；空矩形返回 None。
+    """
+    if row_end < row_start:
+        row_start, row_end = row_end, row_start
+    if col_end < col_start:
+        col_start, col_end = col_end, col_start
+    if row_end <= row_start or col_end <= col_start:
+        return None
+    return (row_start, col_start, row_end, col_end)
+
+def check_grid(grid: TableGrid) -> List[str]:
+    """
+    不变式校验：每个 origin 声明的每个位置，都必须有指回它的覆盖位。
+
+    为什么要有它：01 号专题把这条校验列为「必须抄的一件」——「每个逻辑格位恰好出现一次」如果只靠
+    `GridBuilder` 的构造过程正确，那么任何一次构造路径改动（新格式接入、坐标换算写错）都可能悄悄
+    产出矛盾网格，而渲染出来只是「某一列少一格」，看不出根因。校验函数把这件事变成可核查判据。
+    应用场景：由 `tests/test_processors_by_format.py` 调用。生产路径**不调它**——`GridBuilder` 是
+    唯一构造者、`finish()` 会把跨度认领过而产出方没写的覆盖位补齐，所以线上没有第二个构造来源
+    （理由记在 `00-总览与优先级.md` §4.3-1）；若将来出现「构造完成后再改网格」的路径，再接线。
+    输入：grid — 一张表的格位网格。
+    输出：问题描述列表；空列表表示自洽。
+    """
+    problems: List[str] = []
+    for row_index, row in enumerate(grid):
+        for col_index, slot in enumerate(row):
+            if isinstance(slot, CoveredSlot):
+                continue
+            for row_offset in range(slot.row_span):
+                for col_offset in range(slot.col_span):
+                    if (row_offset, col_offset) == (0, 0):
+                        continue
+                    target_row, target_col = row_index + row_offset, col_index + col_offset
+                    if target_row >= len(grid) or target_col >= len(grid[target_row]):
+                        backing = None
+                    else:
+                        backing = grid[target_row][target_col]
+                    if not isinstance(backing, CoveredSlot) or (
+                        backing.origin_row,
+                        backing.origin_col,
+                    ) != (row_index, col_index):
+                        problems.append(
+                            f"origin ({row_index},{col_index}) 在 ({target_row},{target_col}) 没有覆盖位背书"
+                        )
+    return problems
+
+def render_tsv(grid: TableGrid, max_rows: int, pad_short_rows: bool = True) -> List[str]:
     """
     把格位网格渲染成制表符分隔的行（各格式共用这一份）。
 
     功能：覆盖位输出空串（占列位不占内容）；列宽取「最后一个有文字或有覆盖位的列」，所以合并区
           覆盖的空列不会被裁掉；整行没有文字的行跳过（保持现有方言）；超过行数上限时截断并说明。
+          `pad_short_rows`：行尾缺格时补空——OOXML 允许一行提前结束（尾部 `w:tc` 省略，
+          python-docx 用 `row.grid_cols_after` 暴露），pptx 的生产者也常省略尾部续格；不补的话
+          这一行的制表符个数与同表其他行不同，后面所有列位都错开。
+          分隔符文本（CSV / TSV）传 `False`：锯齿行是源文件里的真实形状，保真优先——这与结构化
+          表格「列位由结构保住」是两种取向，别混。
     应用场景：各处理器的表格渲染段调用。
-    输入：grid — 格位网格；max_rows — 最多渲染多少行。
+    输入：grid — 格位网格；max_rows — 最多渲染多少行；pad_short_rows — 是否把短行补到网格宽度。
     输出：行列表；`=== SHEET: 名 ===` 这类分节标记由处理器自己拼。
     """
     width = max(
@@ -170,6 +234,8 @@ def render_tsv(grid: TableGrid, max_rows: int) -> List[str]:
             lines.append(f"... 其余 {len(grid) - index} 行未列出")
             break
         cells = ["" if isinstance(slot, CoveredSlot) else slot.text for slot in row[:width]]
+        if pad_short_rows and len(cells) < width:
+            cells.extend([""] * (width - len(cells)))
         if not any(cells):
             continue
         lines.append("\t".join(cells))

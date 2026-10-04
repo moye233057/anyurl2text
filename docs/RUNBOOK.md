@@ -104,7 +104,7 @@ python scripts/make_fixtures.py
 
 输出到 `backend/data/`，与随仓库提供的文本类样例同级：`plain.txt`、`table.csv`、`sample.json`、`feed.xml`、`page.html`、`sample.rtf`、`notes.md` 这 7 个是**仓库自带的手写样例**，脚本既不生成也不覆盖它们（`notes.md` 还是 `/extract` 验收用例的必需样例）。需要后端依赖已安装（脚本用到 python-docx / python-pptx / openpyxl / pymupdf / pillow）。
 
-生成的东西：带表格与内嵌图的 docx、含空单元格的 xlsx、六页 pptx、**含合并单元格的 docx / xlsx / pptx（`merged.*`，横向与纵向各一处）**、**同一张图被引 3 次的 docx / pptx / pdf（`repeated.*`，另有一张只引 1 次）**、**带合并表格与两级列表的 `structured.odt`**、**含超链接的 `hyperlink.docx`（同一地址写两次 + 一条没有文字的链接，验证链接去重与截断）**、**三章的 `sample.epub`（spine 顺序与 manifest / zip 顺序都故意不同，另带跨章与章内引用、样式表）**、十页有文字层的 PDF、**三页无文字层的扫描件**、odt、odp、**两页的 `sample.ofd`（页序取自文档根、zip 写入顺序相反，第 2 页带一个图像对象）**、**制表符分隔的 `sample.tsv`（一格含逗号与分号）**、压缩包、APK 结构样本、老版 `.doc` 头样本、16kHz 单声道 wav、由它封装的 mp4。
+生成的东西：带表格与内嵌图的 docx、含空单元格的 xlsx、六页 pptx、**含合并单元格的 docx / xlsx / pptx（`merged.*`，横向与纵向各一处）**、**表格边界形状（阶段 20：`merged_tail.docx` 行尾缺格；`merged.ods` / `merged.xls` 横纵合并各一处，各带一张只有尾部合并的表）**、**同一张图被引 3 次的 docx / pptx / pdf（`repeated.*`，另有一张只引 1 次）**、**带合并表格与两级列表的 `structured.odt`**、**含超链接的 `hyperlink.docx`（同一地址写两次 + 一条没有文字的链接，验证链接去重与截断）**、**三章的 `sample.epub`（spine 顺序与 manifest / zip 顺序都故意不同，另带跨章与章内引用、样式表）**、十页有文字层的 PDF、**三页无文字层的扫描件**、odt、odp、**两页的 `sample.ofd`（页序取自文档根、zip 写入顺序相反，第 2 页带一个图像对象）**、**制表符分隔的 `sample.tsv`（一格含逗号与分号）**、压缩包、APK 结构样本、老版 `.doc` 头样本、16kHz 单声道 wav、由它封装的 mp4。
 
 `.apk` 与 `.doc` 只是**结构样本**，用来验证类型识别与降级分支，不是真的安装包与 Word 文档。
 音视频样例是一段**正弦音、没有说话声**，只用于验证结构信息与「抽音轨 → 送本机 ASR」这条链；要验收转写质量请自备一段真实录音。
@@ -156,13 +156,13 @@ pytest 的缓存是关掉的（`backend/pytest.ini` 里的 `-p no:cacheprovider`
 |---|---|---|
 | `capability_detect` | 105 | `(扩展名, 判据来源, 模态)`——决定这个文件送哪个处理器、响应的 `type` |
 | `capability_document` | 26 | 正文内容 / 页数 / 内嵌图数 / 文本框节 |
-| `capability_table` | 15 | 合并单元格不重复、行宽一致、分隔符、数值格式 |
+| `capability_table` | 24 | 合并单元格不重复、行宽一致、分隔符、数值格式 |
 | `capability_media` | 7 | 图片结构信息、内嵌图去重与名额、音轨参数 |
 | `capability_container` | 2 | 压缩包 / 安装包的条目清单 |
 | `capability_links` | 3 | 链接是否进交付文本、去重与上限 |
 | `capability_epub` | 8 | spine 顺序、章节标记、内部引用消歧、CSS 不进正文 |
 | `capability_degrade` | 18 | 降级码是不是那一个、HTTP 仍是 200 |
-| `capability_limits` | 8 | 命的哪条上界、文案是否来自同一模板 |
+| `capability_limits` | 10 | 命的哪条上界、文案是否来自同一模板 |
 | `capability_errors` | 14 | 码表白名单、`error` 对象、模型失败通道、`internal` 兜底 |
 | `capability_http` | 13 | 真实服务上的代表格式 + 契约形状（**只抽查代表，不重复进程内矩阵**） |
 | `capability_utils` | 25 | 解码顺序、峰谷计价、账本累计 |

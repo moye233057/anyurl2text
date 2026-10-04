@@ -269,7 +269,7 @@ def test_archive_family_lists_entries_without_extracting(name, entries, ctx, fix
 
 # 样例生成参数：三个样例都是 3 列，横向合并在第一行、纵向合并在第一列；
 # 合并文本是脚本阶段 13 写死的固定串（见 `scripts/make_fixtures.py`）。
-MERGED_FIXTURES = ("merged.docx", "merged.xlsx", "merged.pptx")
+MERGED_FIXTURES = ("merged.docx", "merged.xls", "merged.xlsx", "merged.pptx", "merged.ods", "merged_tail.docx")
 MERGED_COLUMNS = 3
 MERGED_TITLE = "合并标题"
 MERGED_VERTICAL = "纵向合并"
@@ -311,6 +311,41 @@ def test_merged_rows_keep_the_same_column_count(name, ctx, fixture_copy):
     assert widths == {MERGED_COLUMNS - 1}, f"表内行宽不一致（覆盖列被裁掉）：{sorted(widths)}，{lines!r}"
 
 
+@pytest.mark.capability_table
+def test_grid_invariant_holds_for_a_real_merged_docx(fixture_copy):
+    """
+    行为：真实样例（最后一行还有缺格）构造出的网格满足不变式——每个 origin 声明的每个位置都有
+          一个指回它的覆盖位。
+
+    来源：`01-表格格位建模.md` 的 D.1 把 `check_grid` 列为「必须抄的一件」；本条把它变成可核查判据。
+    预期值来源：样例生成参数（A1:B1 横向、A2:A3 纵向各一处）——网格若错，跨度就没有覆盖位背书。
+    """
+    from docx import Document
+
+    from pipelines.processors import docx as docx_processor
+    from pipelines.processors.grid import GridBuilder, check_grid, fill_from_specs
+
+    path, _ = fixture_copy("merged_tail.docx")
+    table = Document(str(path)).tables[0]
+    grid = fill_from_specs(GridBuilder(), [docx_processor._row_specs(row) for row in table.rows])
+    assert check_grid(grid) == [], f"网格不自洽：{check_grid(grid)}"
+
+
+@pytest.mark.capability_table
+def test_grid_invariant_checker_reports_a_contradictory_grid():
+    """
+    行为：手工造一个「跨度没有覆盖位背书」的矛盾网格，校验函数必须报出来。
+
+    来源：与 `test_structure.py` 的 `test_the_rules_are_looking_at_real_modules` 同一种自检手法——
+          校验函数自己假绿（永远返回空列表）就等于没加。
+    预期值来源：手搭的网格常量（一个声明 2 列跨度、却没有任何覆盖位的 origin）。
+    """
+    from pipelines.processors.grid import GridSpan, check_grid
+
+    contradictory = [[GridSpan(text="跨两列", col_span=2)]]
+    assert check_grid(contradictory), "跨度声明了 2 列却没有覆盖位，校验函数必须报出来"
+
+
 # ---------- 内嵌图：同一张图被引多次 ----------
 
 # 样例生成参数（`scripts/make_fixtures.py` 阶段 14）：photo.png 被引 3 次、screenshot.png 被引 1 次，
@@ -342,6 +377,23 @@ def test_repeated_image_is_saved_once_and_does_not_starve_others(name, asset_ctx
     assert result.images_used == REPEATED_DISTINCT
     blobs = {asset.path.read_bytes() for asset in result.assets}
     assert len(blobs) == REPEATED_DISTINCT, "落盘的素材得是 2 张不同的图，而不是同一张重复"
+
+
+@pytest.mark.capability_table
+def test_merge_rect_normalises_row_first_half_open_input():
+    """
+    行为：`grid.merge_rect` 把「行在前、开区间」的输入原样归一成半开矩形，起止写反时对调，
+          退化矩形返回 None。
+
+    来源：`01-表格格位建模.md` 的 D.2——openpyxl 是闭区间且列在前、xlrd 是开区间且行在前，
+          两条路径不能共用一个换算，所以统一到 `grid.merge_rect` 的半开形态。
+    预期值来源：手算常量（xlrd 的 `(rlo, rhi, clo, chi) = (1, 3, 0, 1)` 表示 A2:A3）。
+    """
+    from pipelines.processors.grid import merge_rect
+
+    assert merge_rect(1, 0, 3, 1) == (1, 0, 3, 1), "开区间、行在前的输入应原样通过"
+    assert merge_rect(3, 1, 1, 0) == (1, 0, 3, 1), "起止写反时应对调"
+    assert merge_rect(1, 0, 1, 1) is None, "退化的空矩形应返回 None，由调用方过滤"
 
 
 # ---------- ODT：按结构走，而不是把段落拉平 ----------
@@ -460,6 +512,36 @@ def test_pptx_reports_the_image_limit_instead_of_failing(monkeypatch, asset_ctx,
     assert "max_embedded_images" in result.limits_hit
     assert result.images_used == 1
     assert result.content.strip(), "命中上限不该影响正文"
+
+
+@pytest.mark.capability_limits
+def test_grid_expansion_limit_is_reported(monkeypatch, ctx, fixture_copy):
+    """
+    行为：格位展开超过上限时只停展开、把名字记进 `limits_hit`，抽取仍是正常结果（不降级）。
+
+    来源：`01-表格格位建模.md` 的 D.6-4（「把上限临时调成 1 跑一次」）+ ADR-0003（降级是能力边界，
+          网格超限不该让整条请求变成错误）。
+    预期值来源：样例 `merged.docx` 有横向与纵向各一处跨度（各多占一个覆盖位），上限压到 1 必然命中。
+    """
+    import configs.limits as limits
+
+    monkeypatch.setattr(limits, "MAX_GRID_EXPANSION", 1)
+    result = run("merged.docx", ctx, fixture_copy)
+    assert "max_grid_expansion" in result.limits_hit, result.limits_hit
+    assert result.degraded is False, result.degrade_reason
+    assert result.content.strip(), "命中上限不该把整张表丢掉"
+
+
+@pytest.mark.capability_limits
+def test_grid_expansion_limit_is_absent_when_not_hit(ctx, fixture_copy):
+    """
+    行为：上限没命中时它不出现在 `limits_hit` 里——免得这条上报退化成常量。
+
+    来源：同上；`limits_hit` 的语义是「本次真的命中了哪条上界」。
+    预期值来源：同一个样例在默认上限下跑一次（样例规模远小于上限）。
+    """
+    result = run("merged.docx", ctx, fixture_copy)
+    assert "max_grid_expansion" not in result.limits_hit, result.limits_hit
 
 
 # ---------- CSV 分隔符嗅探 ----------

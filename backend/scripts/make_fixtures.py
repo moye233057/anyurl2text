@@ -941,6 +941,125 @@ def step19_make_tsv() -> None:
     target.write_bytes(text.encode("utf-8"))
     print(f"[阶段19] 已写入 {target}（3 列 {len(TSV_ROWS)} 行；有一格含逗号与分号）")
 
+# ---------- 表格边界形状（阶段 20）----------
+# 这些形状在真实产出方那里很常见，但既有样例都没有——所以它们既是判据，也是「先造样例」的产物：
+# 行尾缺格是 OOXML 允许的（尾部 `w:tc` 省略），python-docx 用 `row.grid_cols_after` 暴露它。
+MERGED_TAIL_ROWS = (("", "", "c1"), ("", "b2", "c2"), ("", "b3", "c3"))
+
+
+ODS_SHEET_NAME = "合并表"
+
+
+def _ods_cell(text: str = "", col_span: int = 1, row_span: int = 1, repeat: int = 1):
+    """
+    一个 ODS 单元格：有文本时按 string 值类型写，跨度与重复次数按参数写。
+
+    注意：属性要**按需拼**——odfpy 把 `None` 当字面量写成 `attr="None"`，而 pyexcel-ods 读值时会
+    `int("None")` 直接抛 `ValueError`（实测踩过）。所以缺省属性一律不进 dict。
+    """
+    from odf.table import TableCell
+    from odf.text import P
+
+    attributes = {}
+    if text:
+        attributes["valuetype"] = "string"
+    if col_span > 1:
+        attributes["numbercolumnsspanned"] = col_span
+    if row_span > 1:
+        attributes["numberrowsspanned"] = row_span
+    if repeat > 1:
+        attributes["numbercolumnsrepeated"] = repeat
+    cell = TableCell(**attributes)
+    if text:
+        cell.addElement(P(text=text))
+    return cell
+
+
+def step20_make_table_edge_cases() -> None:
+    """
+    造「表格边界形状」样例，用于验证格位网格在缺格与不同容器上的行为。
+
+    功能：`merged_tail.docx`——3x3 表（A1:B1 横向合并、A2:A3 纵向合并），再把最后一行行尾的
+           `w:tc` 删掉，制造「这一行比网格少一格」的真实形状（OOXML 允许行提前结束）。
+           `merged.ods`——用 odfpy 写（pyexcel-ods 走的就是 odfpy 的解析器），首行用
+           `number-columns-repeated` 补三个空格位，随后是横向合并与跨两行的纵向合并。
+           `merged.xls`——用 xlwt 写（老版 .xls 没有别的可用写出器），横向与纵向合并各一处。
+    应用场景：验证行尾缺格补齐与 .xls / .ods 的合并区（判据：合并文本只出现一次 + 同一张表
+           每行制表符个数相同）。
+    输入：无（写 data/merged_tail.docx、data/merged.ods、data/merged.xls）。
+    输出：无返回值；文件路径打印到 stdout。
+    """
+    from docx import Document
+
+    document = Document()
+    table = document.add_table(rows=3, cols=MERGED_COLUMNS)
+    table.style = "Table Grid"
+    for row_index, values in enumerate(MERGED_TAIL_ROWS):
+        for column_index, value in enumerate(values):
+            table.cell(row_index, column_index).text = value
+    # 先填后并：合并会把非左上格的文本并进左上格（与阶段 13 同一个理由）
+    table.cell(0, 0).merge(table.cell(0, 1)).text = MERGED_TITLE
+    table.cell(1, 0).merge(table.cell(2, 0)).text = MERGED_VERTICAL
+    # 制造行尾缺格：删掉最后一行行尾的 w:tc
+    last_row = table.rows[2]
+    last_row._tr.remove(last_row._tr.tc_lst[-1])
+    target = DATA_DIR / "merged_tail.docx"
+    document.save(str(target))
+    print(f"[阶段20] 已写入 {target}（3x3，最后一行行尾少一个 w:tc）")
+
+    # merged.ods 用 odfpy 写：pyexcel-ods 走的是 odfpy 的解析器，手工拼的 XML 它读不动
+    # （实测 AttributeError: 'Text' object has no attribute 'getElementsByType'），而 odfpy
+    # 本来就是运行时依赖（requirements.txt），写出来的包与真实产出方同构。
+    from odf.opendocument import OpenDocumentSpreadsheet
+    from odf.table import CoveredTableCell, Table, TableRow
+
+    spreadsheet = OpenDocumentSpreadsheet()
+    sheet = Table(name=ODS_SHEET_NAME)
+    row = TableRow()
+    row.addElement(_ods_cell(repeat=3))  # 首行：repeated 补三个空格位（验证重复列参与列游标）
+    sheet.addElement(row)
+    row = TableRow()
+    row.addElement(_ods_cell(MERGED_TITLE, col_span=2))
+    row.addElement(CoveredTableCell())
+    row.addElement(_ods_cell("c1"))
+    sheet.addElement(row)
+    row = TableRow()
+    row.addElement(_ods_cell(MERGED_VERTICAL, row_span=2))
+    row.addElement(_ods_cell("b2"))
+    row.addElement(_ods_cell("c2"))
+    sheet.addElement(row)
+    row = TableRow()
+    row.addElement(CoveredTableCell())
+    row.addElement(_ods_cell("b3"))
+    row.addElement(_ods_cell("c3"))
+    sheet.addElement(row)
+    spreadsheet.spreadsheet.addElement(sheet)
+    target = DATA_DIR / "merged.ods"
+    spreadsheet.save(str(target))
+    print(f"[阶段20] 已写入 {target}（首行 repeated 补位 + 横纵合并各一处）")
+
+    import xlwt
+
+    book = xlwt.Workbook()
+    sheet = book.add_sheet(ODS_SHEET_NAME)
+    # xlwt 的 write_merge 边界是**闭区间**（与 OOXML 的 `<mergeCell ref>`、xlrd 的 merged_cells
+    # 相反——后者都是开区间，这正是 01 号专题说「坐标约定不能共用一份换算」的又一例），
+    # 而且**不许覆盖已写过的格**：所以先写合并区、再写其余格，被覆盖的两格不写。
+    sheet.write_merge(0, 0, 0, 1, MERGED_TITLE)  # A1:B1 横向
+    sheet.write_merge(1, 2, 0, 0, MERGED_VERTICAL)  # A2:A3 纵向
+    sheet.write(0, 2, "c1")
+    sheet.write(1, 1, "b2")
+    sheet.write(1, 2, "c2")
+    sheet.write(2, 1, "b3")
+    sheet.write(2, 2, "c3")
+    # 第二张表只有 A1:C1 一处合并、覆盖列没有任何别的值——**这一张才是判据**：合并矩形没读到，
+    # 列宽就从内容反推（整行塌成一列）；读到了才占满 3 列（与 merged.xlsx 第二张表同形）。
+    tail = book.add_sheet("尾部合并")
+    tail.write_merge(0, 0, 0, 2, MERGED_TAIL)
+    target = DATA_DIR / "merged.xls"
+    book.save(str(target))
+    print(f"[阶段20] 已写入 {target}（3x3 横纵合并 + 只有尾部合并的第二张表）")
+
 if __name__ == "__main__":
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     # 阶段1：先造图片（后续文档与演示要内嵌它们）→ screenshot.png / photo.png
@@ -981,4 +1100,6 @@ if __name__ == "__main__":
     step18_make_ofd()
     # 阶段19：制表符分隔的表格（一格含逗号与分号）→ sample.tsv
     step19_make_tsv()
+    # 阶段20：表格边界形状（行尾缺格）→ merged_tail.docx
+    step20_make_table_edge_cases()
     print(f"\n全部完成，输出目录：{DATA_DIR}")
