@@ -301,6 +301,51 @@ def test_repeated_image_is_saved_once_and_does_not_starve_others(name, asset_ctx
     assert len(blobs) == REPEATED_DISTINCT, "落盘的素材得是 2 张不同的图，而不是同一张重复"
 
 
+# ---------- ODT：按结构走，而不是把段落拉平 ----------
+
+# 样例生成参数（`scripts/make_fixtures.py` 阶段 15）：3 列 4 行的表（A1:B1 横向合并、
+# A2:A3 纵向合并、末行末尾是 `number-columns-repeated` 的空格补位）+ 一个两级列表；
+# 合并文本沿用阶段 13 那两个固定串。
+ODT_STRUCTURED_FIXTURE = "structured.odt"
+ODT_STRUCTURED_TABLE_ROWS = 4
+ODT_LIST_PARENT = "组别设置"
+ODT_LIST_CHILD = "十公里组"
+
+
+def test_odt_table_keeps_columns_instead_of_one_paragraph_per_line(ctx, fixture_copy):
+    """
+    行为：ODT 表格按行列渲成制表符分隔的行，合并区文本只出现一次。
+
+    来源：`docs/PIPELINES.md` 的 odt 行 + `借鉴设计/01-表格格位建模.md`「odf.py 将来怎么接」
+    （跨度 → `place(span)`、`covered-table-cell` → `covered()`、
+    `number-columns-repeated` → 循环落位并记账）。
+    实测（2026-10-04）：原来全局 `root.iter()` 收 `text:p`，每个单元格各自成一行、不含制表符，
+    列对应关系完全丢失；接上格位网格后同一张表每行都是 3 列。
+    """
+    result = run(ODT_STRUCTURED_FIXTURE, ctx, fixture_copy)
+    table_lines = [line for line in _table_lines(result.content) if "\t" in line]
+    assert len(table_lines) == ODT_STRUCTURED_TABLE_ROWS, (
+        f"表格应渲成 {ODT_STRUCTURED_TABLE_ROWS} 行制表符文本（单元格不该各自成行）：{table_lines!r}"
+    )
+    assert {line.count("\t") for line in table_lines} == {MERGED_COLUMNS - 1}, (
+        f"表内行宽不一致：{sorted(line.count(chr(9)) for line in table_lines)}"
+    )
+    assert result.content.count(MERGED_TITLE) == 1, "横向合并的文本重复了"
+    assert result.content.count(MERGED_VERTICAL) == 1, "纵向合并的文本重复了"
+
+
+def test_odt_nested_list_keeps_its_levels(ctx, fixture_copy):
+    """
+    行为：嵌套列表的子项比父项多一层缩进，层级不因抽取而消失。
+
+    来源：`CONTEXT.md`「交付文本」——层级是这份文档真实的结构信息，拉平就等于丢掉它。
+    实测（2026-10-04）：原来全局 `root.iter()` 把所有 `text:p` 拉平，父子项长得一模一样。
+    """
+    lines = _table_lines(run(ODT_STRUCTURED_FIXTURE, ctx, fixture_copy).content)
+    assert f"- {ODT_LIST_PARENT}" in lines, f"父项没按列表渲出来：{lines!r}"
+    assert f"  - {ODT_LIST_CHILD}" in lines, f"子项没有深一层：{lines!r}"
+
+
 # ---------- 降级路径 ----------
 
 def test_legacy_office_degrades_to_basic_file_info(ctx, fixture_copy):

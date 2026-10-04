@@ -165,7 +165,7 @@ RAG 抽取不走上表。`POST /rag/extract/file` 由 `pipelines/rag_extract.py`
 | docx | 段落 + 制表符表格 + 文本框节 | `iter_inner_content()` 按块级顺序 | 内嵌图批量识读 → `ocr_text` |
 | pptx | 逐页文本 + 表格 | 逐页递归展开形状 | 页内图片批量识读 → `ocr_text` |
 | 表格族 | 逐表制表符文本 | 各格式原生库读单元格 | 无素材，直接进摘要 |
-| odt / odp | 段落与标题 | 读 ZIP 内 `content.xml` | 无素材，直接进摘要 |
+| odt / odp | 段落 + 标题 + 表格（制表符）+ 嵌套列表 | 按结构递归读 ZIP 内 `content.xml` | 无素材，直接进摘要 |
 | 纯文本族 | 文本本身（json/xml 美化） | 解码直读；rtf 走控制字解析 | 无素材，直接进摘要 |
 | html / htm | 标题 + 摘要 + 正文 + 链接 | BeautifulSoup 剥标签取文本 | 无素材，直接进摘要 |
 | 图片 | 空串 | 只给尺寸 / 格式 / EXIF | 先判型：语义图给描述，文字图交本机 OCR → `ocr_text` |
@@ -233,10 +233,12 @@ ODS 与 CSV 也在这个文件里：这一族都按行列渲染成同一种文�
 `extract` 关键步骤：
 
 1. `zipfile` 取出容器内的 `content.xml`；容器损坏或条目缺失 → 降级。
-2. 标准库 `ElementTree` 按**文档顺序**遍历，只收 `text:p` 与 `text:h`；用 `itertext()` 把 `text:span` 等内联元素里的文字一并带出，正文不因分片丢字。
-3. `text:h` 按 `outline-level` 转成 Markdown 记号标题（上限 6 级），标题数写进 `notes`；段落之间空行分隔。
+2. 标准库 `ElementTree` 从 `office:body` **按文档结构递归**——不用全局 `root.iter()`，那个会把所有 `text:p` 拉平，表格因此坍成「一段一行」（列对应关系丢失）、嵌套列表的层级也没了。遇到 `table:table` 与 `text:list` 交给各自的渲染并**不再往下走**（否则单元格与列表项里的段落会被再收一遍），其余容器继续递归。
+3. `table:table` → 格位网格（`grid.py`），与 docx / pptx / xlsx 同一份渲染与不变式：`number-columns-spanned` / `number-rows-spanned` → `place(span)`、`covered-table-cell` → `covered()`、`number-columns-repeated` / `number-rows-repeated` 循环落位；超 `MAX_TABLE_ROWS=2000` 行截断并说明。
+4. `text:list` → Markdown 列表，每深一层多缩进两个空格（`LIST_INDENT`）；`text:list-header` 与 `text:list-item` 同等对待。
+5. `text:p` / `text:h` 取文本；`text:h` 按 `outline-level` 转成 Markdown 记号标题（上限 6 级），标题数写进 `notes`；行之间空行分隔。
 
-已知边界：只还原文字，不还原样式、分栏与列位置；ODT 表格与 ODP 幻灯片里每个单元格 / 段落各自成行，读起来是「一段一行」而不是表格。（`ods` 不在这里——表格必须按行列位置还原，走 `excel.py`。）
+已知边界：只还原文字，不还原样式、分栏与列宽；`number-*-repeated` 的重复次数有上限 `MAX_REPEATED_SLOTS=100`，防的是 ODF 拿它把一行补到上千列时把网格撑爆（尾部空格既不占可见列宽也不带内容，钳掉不影响渲染）。（`ods` 不在这里——表格必须按行列位置还原，走 `excel.py`。）
 
 `understand`：无素材，直接进摘要。
 
@@ -352,7 +354,8 @@ ODS 与 CSV 也在这个文件里：这一族都按行列渲染成同一种文�
 | `ASR_MAX_AUDIO_SECONDS` / `FFMPEG_TIMEOUT_SEC` | 600 秒 / 120 秒 | 转写与抽音轨 |
 | `MAX_ENTRIES`（模块内常量） | 500 条 | 压缩包条目清单 |
 | `MAX_ROWS_PER_SHEET` / `MAX_ROWS_TO_READ`（模块内常量） | 5000 / 5001 行 | 表格读取上限；后者比前者多一行，用来区分「还有后续行」与「这是最后一行」 |
-| `MAX_TABLE_ROWS`（模块内常量） | 2000 行 | docx 表格渲染上限 |
+| `MAX_TABLE_ROWS`（模块内常量） | 2000 行 | docx 与 odf 的表格渲染上限（两个文件各有一份同值常量） |
+| `MAX_REPEATED_SLOTS`（模块内常量） | 100 | odf：`number-*-repeated` 的重复次数上限，防尾部补位把网格撑爆 |
 | `MAX_LINKS`（模块内常量） | 100 条 | 网页链接清单 |
 | `TEXT_LAYER_MIN_CHARS`（模块内常量） | 30 字 | PDF 文字层判定 |
 | `MAX_TEXT_BYTES`（模块内常量） | 20MB | 文本类读取上限 |

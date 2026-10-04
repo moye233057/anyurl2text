@@ -20,6 +20,7 @@
     step12_make_video        把音频样本封成 mp4，验证视频要先抽音轨那条链
     step13_make_merged       含合并单元格的 docx / xlsx / pptx，验证表格格位建模
     step14_make_repeated_images  同一张图被引多次的 docx / pptx / pdf，验证内嵌图按来源部件去重
+    step15_make_structured_odt   带合并表格与两级列表的 odt，验证 ODT 按结构抽取
 
 运行方式：在 backend/ 下执行 python scripts/make_fixtures.py（无参数；`__main__` 只按序号调用各 step）
 使用前注意：
@@ -186,6 +187,58 @@ ODP_CONTENT_XML = """<?xml version="1.0" encoding="UTF-8"?>
     </draw:frame>
    </draw:page>
   </office:presentation>
+ </office:body>
+</office:document-content>
+"""
+
+# 结构化 ODT：一张带合并的表格 + 一个两级列表。
+# 表格三列四行：A1:B1 横向合并、A2:A3 纵向合并，末行末尾是一个 `number-columns-repeated`
+# 的空格补位（ODF 用它把一行补到固定列数，抽取时要照数落位才能保住列对应关系）。
+ODT_STRUCTURED_CONTENT_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" office:version="1.2">
+ <office:body>
+  <office:text>
+   <text:h text:outline-level="1">赛事手册</text:h>
+   <text:p>下面是一个两级列表。</text:p>
+   <text:list>
+    <text:list-item>
+     <text:p>组别设置</text:p>
+     <text:list>
+      <text:list-item>
+       <text:p>十公里组</text:p>
+      </text:list-item>
+      <text:list-item>
+       <text:p>二十一公里组</text:p>
+      </text:list-item>
+     </text:list>
+    </text:list-item>
+    <text:list-item>
+     <text:p>报名方式</text:p>
+    </text:list-item>
+   </text:list>
+   <text:p>下面是一张带合并的表格。</text:p>
+   <table:table table:name="组别表">
+    <table:table-row>
+     <table:table-cell table:number-columns-spanned="2" office:value-type="string"><text:p>合并标题</text:p></table:table-cell>
+     <table:covered-table-cell/>
+     <table:table-cell office:value-type="string"><text:p>c1</text:p></table:table-cell>
+    </table:table-row>
+    <table:table-row>
+     <table:table-cell table:number-rows-spanned="2" office:value-type="string"><text:p>纵向合并</text:p></table:table-cell>
+     <table:table-cell office:value-type="string"><text:p>b2</text:p></table:table-cell>
+     <table:table-cell office:value-type="string"><text:p>c2</text:p></table:table-cell>
+    </table:table-row>
+    <table:table-row>
+     <table:covered-table-cell/>
+     <table:table-cell office:value-type="string"><text:p>b3</text:p></table:table-cell>
+     <table:table-cell office:value-type="string"><text:p>c3</text:p></table:table-cell>
+    </table:table-row>
+    <table:table-row>
+     <table:table-cell office:value-type="string"><text:p>d1</text:p></table:table-cell>
+     <table:table-cell table:number-columns-repeated="3" office:value-type="string"><text:p></text:p></table:table-cell>
+    </table:table-row>
+   </table:table>
+  </office:text>
  </office:body>
 </office:document-content>
 """
@@ -600,6 +653,24 @@ def step14_make_repeated_images() -> None:
     document.close()
     print(f"[阶段14] 已写入 {DATA_DIR / 'repeated.pdf'}（前 {REPEATED_IMAGE_REPEATS} 页同一张图 + 第 {total_pages} 页另一张）")
 
+def step15_make_structured_odt() -> None:
+    """
+    造一个带合并表格与两级列表的 odt，用于验证 ODT 按文档结构抽取。
+
+    功能：写得与 sample.odt 同构（ZIP 里放 content.xml），但正文里有 `table:table` 与嵌套
+          `text:list`——这两样正是全局 `root.iter()` 会拉平的结构。
+    应用场景：验证表格按行列渲成制表符分隔、嵌套列表保住层级、合并区文本只出现一次。
+    输入：无（写 data/structured.odt）。
+    输出：无返回值；文件路径打印到 stdout。
+    """
+    target = DATA_DIR / "structured.odt"
+    with zipfile.ZipFile(target, "w") as archive:
+        archive.writestr(zipfile.ZipInfo("mimetype"), ODT_MIMETYPE, compress_type=zipfile.ZIP_STORED)
+        archive.writestr("META-INF/manifest.xml", ODF_MANIFEST.replace("{mimetype}", ODT_MIMETYPE))
+        archive.writestr("content.xml", ODT_STRUCTURED_CONTENT_XML)
+        archive.writestr("styles.xml", ODF_STYLES_XML)
+    print(f"[阶段15] 已写入 {target}（3 列 4 行合并表 + 两级列表）")
+
 if __name__ == "__main__":
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     # 阶段1：先造图片（后续文档与演示要内嵌它们）→ screenshot.png / photo.png
@@ -630,4 +701,6 @@ if __name__ == "__main__":
     step13_make_merged()
     # 阶段14：内嵌图重复引用样例（同一张图被引 3 次）→ repeated.docx / repeated.pptx / repeated.pdf
     step14_make_repeated_images()
+    # 阶段15：结构化 ODT（带合并的表格 + 两级列表）→ structured.odt
+    step15_make_structured_odt()
     print(f"\n全部完成，输出目录：{DATA_DIR}")
