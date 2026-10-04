@@ -26,6 +26,7 @@ HARD_FAILURE_CODES = frozenset({
     "download_stream_too_large",           # step1_download._stream_to_file：流式写入超限（413）
     "download_url_empty",                  # step1_download.download：URL 为空（422）
     "download_scheme_unsupported",         # step1_download._assert_safe_url：非 http/https（422）
+    "download_http_not_allowed",           # step1_download._assert_safe_url：ALLOW_HTTP_SOURCE=false 时拒 http（422）
     "download_host_missing",               # step1_download._assert_safe_url：缺主机名（422）
     "download_private_host",               # step1_download._assert_public_host：内网/保留地址（422）
     "download_dns_failed",                 # step1_download._assert_public_host：域名解析失败（502）
@@ -51,11 +52,13 @@ DEGRADE_CODES = frozenset({
     "ffmpeg_track_failed",                 # ffmpeg.extract_audio_track：源里没有音轨 / 容器损坏
     "media_track_read_failed",             # media.extract_media：抽出的音轨读不出参数
     "unsupported_type",                    # step4_extract：认不出的扩展名 / 没有解析路径
+    "temporary_lock_file",                 # step4_extract：Office 锁文件（~$）与 .DS_Store 噪音，不是文档本身
     "legacy_office_requires_converter",    # step4_extract：老版 Office 需要 LibreOffice 转换器
     "rar_dependency_missing",              # archive.extract_rar：没装 rarfile，列不出条目
     "archive_parse_failed",                # archive.extract_archive：压缩包解析抛异常
     "archive_unsupported",                 # archive.extract_archive：走到末尾的未支持格式
     "docx_parse_failed",                   # docx.extract_docx：python-docx 打不开
+    "epub_parse_failed",                   # epub.extract_epub：EPUB 容器 / OPF / spine 读不出来
     "excel_unsupported",                   # excel.extract_excel：未支持的表格格式
     "excel_parse_failed",                  # excel.extract_excel：表格解析抛异常
     "image_decode_failed",                 # image.extract_image：Pillow 解码失败
