@@ -576,6 +576,115 @@ def test_table_header_rows_come_from_the_source_markup(ctx, fixture_copy, work_d
     assert any("2 张表" in note for note in result.notes), result.notes
 
 
+@pytest.mark.capability_table
+def test_docx_header_rows_come_from_tbl_header(ctx, fixture_copy):
+    """
+    行为：docx 的 `w:trPr/w:tblHeader` 行算表头——`header.docx` 报 1，且这一行的文字照旧在正文里。
+
+    来源：`01-表格格位建模.md` §1.1 的剩余项（anydoc 的表是 `{grid, header_rows, kind}`，本仓只缺
+          「其余格式的源标表头」）；`routers/convert/schema.py` 的字段说明（只认源自己标的）。
+    预期值来源：`scripts/make_fixtures.py` 阶段 22 的生成参数——3 行表、只把首行标上 `w:tblHeader`。
+    """
+    path, ext = fixture_copy("header.docx")
+    result = dispatch(ext, path, ctx)
+    assert result.table_header_rows == 1, result.table_header_rows
+    assert "季度\t金额" in result.content, result.content
+
+
+@pytest.mark.capability_table
+def test_docx_without_a_marked_row_reports_zero(ctx, fixture_copy):
+    """
+    行为：docx 没标 `w:tblHeader` 时是 **0**（查过、源明确没标），而不是拿首行当表头。
+
+    来源：字段说明里 `0` 与 `null` 的区别（`routers/convert/schema.py`）；本仓取向「宁可回落也不猜」。
+    预期值来源：`report.docx`（阶段 2 生成）的表没有写行属性——python-docx 只写 `w:tc`，不写 `w:tblHeader`。
+    """
+    path, ext = fixture_copy("report.docx")
+    result = dispatch(ext, path, ctx)
+    assert result.table_header_rows == 0, "源没标表头就是 0，不能拿首行当表头"
+
+
+@pytest.mark.capability_table
+def test_odt_header_row_group_is_rendered_and_counted(ctx, fixture_copy):
+    """
+    行为：ODF 的表头是**行组**（`table:table-header-rows`）——那一组的文字进正文，且报成 1 行表头。
+
+    来源：`01-表格格位建模.md` §1.1 的剩余项。修前 `odf._render_table` 只取 `table:table` 的
+          **直属** `table:table-row`，整个表头行组连同文字一起消失（实测 `header.odt` 的
+          `项目\t数量` 一个字都没进正文，字段也恒为 null）。
+    预期值来源：阶段 22 的生成参数——3 行表、首行放进表头行组。
+    """
+    path, ext = fixture_copy("header.odt")
+    result = dispatch(ext, path, ctx)
+    assert result.table_header_rows == 1, result.table_header_rows
+    assert "项目\t数量" in result.content, f"表头行组的内容不能丢：{result.content!r}"
+    assert "甲\t3" in result.content, result.content
+
+
+@pytest.mark.capability_table
+def test_odf_row_group_wrapper_keeps_its_rows(ctx, work_dir):
+    """
+    行为：行被 `table:table-rows` 包一层时照样渲出来（ODF 允许把正文行再包一层）。
+
+    来源：`odf._table_rows` 的容器清单（`table:table-rows` / `table:table-row-group`）；
+          只取直属行的话这类文件会整表变空。
+    预期值来源：本用例用 odfpy 写的一张单列表——一行在 `table:table-rows` 里、一行在表下直属。
+    """
+    from odf.opendocument import OpenDocumentText
+    from odf.table import Table, TableCell, TableRow, TableRows
+    from odf.text import P
+
+    document = OpenDocumentText()
+    table = Table(name="行组样例")
+    group = TableRows()
+    for text in ("组里的行A", "组里的行B"):
+        row = TableRow()
+        cell = TableCell(valuetype="string")
+        cell.addElement(P(text=text))
+        row.addElement(cell)
+        group.addElement(row)
+    table.addElement(group)
+    row = TableRow()
+    cell = TableCell(valuetype="string")
+    cell.addElement(P(text="直属的行C"))
+    row.addElement(cell)
+    table.addElement(row)
+    document.text.addElement(table)
+    path = work_dir / "row_group.odt"
+    document.save(str(path))
+
+    content = dispatch("odt", path, ctx).content
+    for text in ("组里的行A", "组里的行B", "直属的行C"):
+        assert text in content, f"{text} 没进正文：{content!r}"
+
+
+@pytest.mark.capability_table
+def test_docx_with_two_tables_leaves_the_header_count_empty(ctx, work_dir):
+    """
+    行为：一份 docx 里有**两张**表时不给 `table_header_rows`，并在 `notes` 里说明有几张。
+
+    来源：字段说明（交付文本不止一张表时 `null`）+ 网页那一路同形的 `notes` 文案。
+    预期值来源：本用例写两张各一行的表（都标了 `w:tblHeader`），必然落到「不止一张表」这条分支。
+    """
+    from docx import Document
+    from docx.oxml.ns import qn
+
+    document = Document()
+    for label in ("甲表头", "乙表头"):
+        table = document.add_table(rows=1, cols=1)
+        table.cell(0, 0).text = label
+        tr_pr = table.rows[0]._tr.get_or_add_trPr()
+        marker = tr_pr.makeelement(qn("w:tblHeader"), {})
+        marker.set(qn("w:val"), "true")
+        tr_pr.append(marker)
+    path = work_dir / "two_tables.docx"
+    document.save(str(path))
+
+    result = dispatch("docx", path, ctx)
+    assert result.table_header_rows is None, "交付文本不止一张表时不给值"
+    assert any("2 张表" in note for note in result.notes), result.notes
+
+
 # ---------- 内嵌图：同一张图被引多次 ----------
 
 # 样例生成参数（`scripts/make_fixtures.py` 阶段 14）：photo.png 被引 3 次、screenshot.png 被引 1 次，

@@ -32,6 +32,10 @@ OFFICE_NS = "{urn:oasis:names:tc:opendocument:xmlns:office:1.0}"
 TEXT_ELEMENTS = (TEXT_NS + "p", TEXT_NS + "h")
 # 列表项与列表表头：ODF 用 text:list-header 放列表的第一项
 LIST_ITEMS = (TEXT_NS + "list-item", TEXT_NS + "list-header")
+# 行组容器：ODF 允许把行再包一层（`table:table-rows` 收正文行、`table:table-row-group` 两组都收）
+ROW_GROUPS = (TABLE_NS + "table-rows", TABLE_NS + "table-row-group")
+# 表头行组：里面的行既是**内容**（要照渲），也是「源自己标出的表头」（要计数）
+HEADER_ROWS_GROUP = TABLE_NS + "table-header-rows"
 
 # 单张 ODF 表格最多渲染的行数，与 docx 同源（值在 `configs/limits.py`）
 # 列表每深一层的缩进
@@ -63,18 +67,48 @@ def _cell_text(cell) -> str:
     """取单元格里的文字：把其中的段落（含嵌套列表项里的段落）拼成一行。"""
     return " ".join(part for part in (_text_of(p) for p in cell.iter(TEXT_NS + "p")) if part)
 
-def _render_table(table, hits: list) -> str:
+def _table_rows(table) -> tuple:
+    """
+    一张 ODF 表格里的行（文档顺序）+ 其中属于表头行组的行数。
+
+    功能：`table:table-row` **不只直接挂在** `table:table` 下——`table:table-header-rows`
+          （表头行组）、`table:table-rows`、`table:table-row-group` 都会再包一层，只取直属行的话
+          整组内容会凭空消失（实测：`table:table-header-rows` 里的两格文字一个字都没进正文）。
+          这里按容器递归收行；遇到嵌套表停住（它的行不属于外层，文字已由 `_cell_text` 收进格子里）。
+    应用场景：`_render_table` 取行时调用。
+    输入：table — `table:table` 元素（也可以是行组容器，递归用）。
+    输出：(行元素列表, 表头行组里的行数——含 `number-rows-repeated` 展开后的行数)。
+    """
+    rows = []
+    header_rows = 0
+    for child in table:
+        if child.tag == TABLE_NS + "table-row":
+            rows.append(child)
+        elif child.tag in ROW_GROUPS:
+            nested_rows, nested_headers = _table_rows(child)
+            rows.extend(nested_rows)
+            header_rows += nested_headers
+        elif child.tag == HEADER_ROWS_GROUP:
+            group = [row for row in child if row.tag == TABLE_NS + "table-row"]
+            rows.extend(group)
+            header_rows += sum(
+                _count(row, "number-rows-repeated", limits.MAX_REPEATED_SLOTS) for row in group
+            )
+    return rows, header_rows
+
+def _render_table(table, hits: list) -> tuple:
     """
     把 ODF 表格渲成制表符分隔的行。
 
     功能：按 `table:table-row` 逐行、按单元格自己写明的跨度与覆盖位落进格位网格——
            `number-columns-spanned` / `number-rows-spanned` → `place(span)`、
            `covered-table-cell` → `covered()`、两个 `number-*-repeated` → 循环落位。
+           表头行组里的行**照渲**（见 `_table_rows`），另把表头行数交回调用方。
     应用场景：`_body_lines` 遇到 `table:table` 时调用。
     输入：table — `table:table` 元素；hits — 命中的上界名收集到这一份列表里。
-    输出：制表符分隔的多行文本；超行数上限时末行说明还剩多少行。
+    输出：(制表符分隔的多行文本, 源标出的表头行数)；超行数上限时末行说明还剩多少行。
     """
-    rows = table.findall(TABLE_NS + "table-row")
+    rows, header_rows = _table_rows(table)
     repeats = [_count(row, "number-rows-repeated", limits.MAX_REPEATED_SLOTS) for row in rows]
     total_rows = sum(repeats)
     builder = GridBuilder()
@@ -102,7 +136,7 @@ def _render_table(table, hits: list) -> str:
         lines.append(f"... 其余 {total_rows - limits.MAX_TABLE_ROWS} 行未列出")
         hits.append("max_table_rows")
     hits.extend(builder.limit_hits)
-    return "\n".join(lines)
+    return "\n".join(lines), header_rows
 
 def _list_lines(list_element, depth: int) -> list:
     """
@@ -128,7 +162,7 @@ def _list_lines(list_element, depth: int) -> list:
                     lines.append(f"{indent}- {text}")
     return lines
 
-def _body_lines(element, hits: list) -> list:
+def _body_lines(element, hits: list, table_headers: list) -> list:
     """
     按文档结构递归收集正文行。
 
@@ -136,15 +170,17 @@ def _body_lines(element, hits: list) -> list:
            段落会被再收一遍），`text:p` / `text:h` 取文本，其余容器继续递归。
     应用场景：extract_odf 从 `office:body` 起调用。
     输入：element — 容器元素（body / text / presentation / draw:page / draw:text-box …）；
-          hits — 命中的上界名收集到这一份列表里。
+          hits — 命中的上界名收集到这一份列表里；
+          table_headers — 逐张表收集「源标出的表头行数」（与 hits 一样就地累加，省一层返回）。
     输出：行列表，顺序即文档顺序。
     """
     lines = []
     for child in element:
         if child.tag == TABLE_NS + "table":
-            rendered = _render_table(child, hits)
+            rendered, header_rows = _render_table(child, hits)
             if rendered:
                 lines.extend(rendered.splitlines())
+                table_headers.append(header_rows)
         elif child.tag == TEXT_NS + "list":
             lines.extend(_list_lines(child, 0))
         elif child.tag in TEXT_ELEMENTS:
@@ -153,7 +189,7 @@ def _body_lines(element, hits: list) -> list:
                 continue
             lines.append(_heading_line(child) if child.tag == TEXT_NS + "h" else text)
         else:
-            lines.extend(_body_lines(child, hits))
+            lines.extend(_body_lines(child, hits, table_headers))
     return lines
 
 def extract_odf(path: Path, ext: str) -> ExtractResult:
@@ -193,15 +229,24 @@ def extract_odf(path: Path, ext: str) -> ExtractResult:
 
     body = root.find(OFFICE_NS + "body")
     hits = []
-    lines = _body_lines(body if body is not None else root, hits)
+    table_headers = []
+    lines = _body_lines(body if body is not None else root, hits, table_headers)
     # 计数与渲染分开：这里只数标题个数（给 notes 用），不参与上面那次结构遍历
     heading_count = sum(1 for element in root.iter(TEXT_NS + "h") if _text_of(element))
 
     notes = []
+    if len(table_headers) > 1:
+        notes.append(
+            f"文档里有 {len(table_headers)} 张表，meta.table_header_rows 只在交付文本只有一张表时给值"
+        )
     if heading_count:
         notes.append(f"含 {heading_count} 个标题，已按层级标为 Markdown 记号")
     if not lines:
         notes.append("文档里没有可提取的文字段落")
     return ExtractResult(
-        content="\n\n".join(lines), engines=["ElementTree"], notes=notes, limits_hit=hits
+        content="\n\n".join(lines),
+        engines=["ElementTree"],
+        notes=notes,
+        limits_hit=hits,
+        table_header_rows=table_headers[0] if len(table_headers) == 1 else None,
     )

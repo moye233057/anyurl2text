@@ -28,7 +28,9 @@ import pytest
 BACKEND = Path(__file__).resolve().parent.parent
 MAX_FILE_LINES = 500
 MAX_CODE_LINES = 300
-NON_PRODUCTION = {"scripts", "tests"}
+# `data` 也在这里：AGENTS.md 让 AI 把一次性探针写进 `data/debug/`，那些 .py 不是生产模块——
+# 不排除的话判据 1 会拿它当「data 层」去查依赖白名单，直接 KeyError（2026-10-04 踩到）。
+NON_PRODUCTION = {"scripts", "tests", "data"}
 
 # 能力域见 AGENTS.md「测试用例怎么写」；按域跑：python -m pytest tests -m capability_structure
 pytestmark = pytest.mark.capability_structure

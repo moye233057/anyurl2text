@@ -128,7 +128,8 @@ class Meta(BaseModel):
     entry_count: Optional[int] = Field(None, description="压缩包或安装包内的条目数")
     table_header_rows: Optional[int] = Field(
         None,
-        description="交付文本里**唯一**一张表中，源自己标出的表头行数（网页 / EPUB 的 <th> 与 <thead>）。"
+        description="交付文本里**唯一**一张表中，源自己标出的表头行数（网页 / EPUB 的 <th> 与 <thead>、"
+        "docx 的 w:tblHeader、ODF 的 table:table-header-rows）。"
         "没有表、有多张表、或该格式的源不标表头时为 null——与 0 区别开：0 表示查过、源明确没标表头。"
         "不做「首行即表头」这类启发式（猜错会吃掉一行数据）。",
     )

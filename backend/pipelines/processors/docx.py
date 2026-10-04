@@ -56,6 +56,24 @@ def _row_specs(row) -> list:
         specs.append((text, tc.grid_span or 1, tc.vMerge not in (None, "restart")))
     return specs
 
+def _header_rows(table) -> int:
+    """
+    源自己标出的表头行数（`w:trPr/w:tblHeader`）。
+
+    功能：逐行看行属性里有没有 `w:tblHeader`——Word 用它声明「这一行是表头，跨页时重复出现」。
+    为什么不用「首行就是表头」这类启发式：导出件常常整表都没有表头行，猜错会吃掉一行数据，
+    与本仓「宁可回落也不猜」的取向相反（网页那一路的 `<th>` / `<thead>` 是同一条理由）。
+    应用场景：`_render_table` 随正文一起交回调用方，最终进 `meta.table_header_rows`。
+    输入：table — python-docx 的表格对象。
+    输出：标了表头的行数（可能是 0）。
+    """
+    count = 0
+    for row in table.rows:
+        tr_pr = row._tr.trPr
+        if tr_pr is not None and tr_pr.find(qn("w:tblHeader")) is not None:
+            count += 1
+    return count
+
 def _render_table(table) -> tuple:
     """
     把表格渲染成制表符分隔的行。
@@ -64,7 +82,7 @@ def _render_table(table) -> tuple:
           再交给格位网格填充与渲染——纵向合并的行跨度由网格从继续格数出来。
     应用场景：extract_docx 遇到表格时调用。
     输入：table — python-docx 的表格对象。
-    输出：(制表符分隔的多行文本, 命中的上界名列表)；合并区文本只出现一次、覆盖位占列位。
+    输出：(制表符分隔的多行文本, 命中的上界名列表, 源标出的表头行数)；合并区文本只出现一次、覆盖位占列位。
     """
     total_rows = len(table.rows)
     builder = GridBuilder()
@@ -75,7 +93,7 @@ def _render_table(table) -> tuple:
         lines.append(f"... 其余 {total_rows - limits.MAX_TABLE_ROWS} 行未列出")
         hits.append("max_table_rows")
     hits.extend(builder.limit_hits)
-    return "\n".join(lines), hits
+    return "\n".join(lines), hits, _header_rows(table)
 
 def _save_embedded_images(document: "Document", ctx: ExtractContext, result: ExtractResult) -> list:
     """
@@ -168,13 +186,15 @@ def extract_docx(path: Path, ctx: ExtractContext) -> ExtractResult:
 
     blocks = []
     hits = []
+    table_headers = []
     image_marker = 0
     for item in document.iter_inner_content():
         if isinstance(item, Table):
-            rendered, table_hits = _render_table(item)
+            rendered, table_hits, header_rows = _render_table(item)
             hits.extend(table_hits)
             if rendered:
                 blocks.append(rendered)
+                table_headers.append(header_rows)
             continue
         text = (item.text or "").strip()
         if not text:
@@ -193,7 +213,12 @@ def extract_docx(path: Path, ctx: ExtractContext) -> ExtractResult:
         images=_count_embedded_images(document),
         images_used=0,
         limits_hit=hits,
+        table_header_rows=table_headers[0] if len(table_headers) == 1 else None,
     )
+    if len(table_headers) > 1:
+        result.notes.append(
+            f"正文里有 {len(table_headers)} 张表，meta.table_header_rows 只在交付文本只有一张表时给值"
+        )
     if declared_pages:
         result.notes.append("页数取自文档自带的 docProps/app.xml，是保存时的缓存值，可能不精确")
 

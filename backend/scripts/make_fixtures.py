@@ -27,6 +27,7 @@
     step19_make_tsv              制表符分隔的表格（一格含逗号与分号），验证 .tsv 按制表符分列
     step20_make_table_edge_cases 行尾缺格的 3x3 表 + .ods / .xls 的合并区，验证格位网格的边界形状
     step21_make_hidden_fixtures  隐藏工作表与隐藏行列（xlsx / xls / ods），验证隐藏内容照抽 + notes 登记
+    step22_make_header_fixtures  源自己标出表头行的样例（docx 的 w:tblHeader / odt 的表头行组），验证 meta.table_header_rows
 
 运行方式：在 backend/ 下执行 python scripts/make_fixtures.py（无参数；`__main__` 只按序号调用各 step）
 使用前注意：
@@ -1165,6 +1166,64 @@ def step21_make_hidden_fixtures() -> None:
     spreadsheet.save(str(target))
     print(f"[阶段21] 已写入 {target}（隐藏表用 table:display=\"false\" 的样式）")
 
+# 源标表头样例（阶段 22）：两种容器各自的「这一行是表头」写法
+HEADER_DOCX_ROWS = (("季度", "金额"), ("一季度", "1200"), ("二季度", "1500"))
+HEADER_ODT_ROWS = (("项目", "数量"), ("甲", "3"), ("乙", "5"))
+HEADER_MARKED_ROWS = 1  # 两个样例都只把首行标成表头
+
+
+def step22_make_header_fixtures() -> None:
+    """
+    造「源自己标出表头行」的样例，用于验证 `meta.table_header_rows`。
+
+    功能：`header.docx`——把首行的 `w:trPr/w:tblHeader` 置上（Word 用这个属性声明「跨页重复的表头行」）；
+           `header.odt`——首行放进 `table:table-header-rows` 行组（ODF 的表头是**行组**，不是行属性；
+           实测该行组今天整组丢内容，是本轮要修的缺陷）。
+    应用场景：验证 `meta.table_header_rows` 在 docx / ODF 上也取「源自己标出的」表头行数——
+            判据是字段值为 1、且这两行文字确实进了正文。
+    输入：无（写 data/header.docx、data/header.odt）。
+    输出：无返回值；文件路径打印到 stdout。
+    """
+    from docx import Document
+    from docx.oxml.ns import qn
+
+    document = Document()
+    table = document.add_table(rows=len(HEADER_DOCX_ROWS), cols=len(HEADER_DOCX_ROWS[0]))
+    table.style = "Table Grid"
+    for row_index, values in enumerate(HEADER_DOCX_ROWS):
+        for column_index, value in enumerate(values):
+            table.cell(row_index, column_index).text = value
+    tr_pr = table.rows[0]._tr.get_or_add_trPr()
+    marker = tr_pr.makeelement(qn("w:tblHeader"), {})
+    marker.set(qn("w:val"), "true")
+    tr_pr.append(marker)
+    target = DATA_DIR / "header.docx"
+    document.save(str(target))
+    print(f"[阶段22] 已写入 {target}（首行带 w:tblHeader，共 {len(HEADER_DOCX_ROWS)} 行）")
+
+    from odf.opendocument import OpenDocumentText
+    from odf.table import Table, TableCell, TableHeaderRows, TableRow
+    from odf.text import P
+
+    text_document = OpenDocumentText()
+    odf_table = Table(name="表头样例")
+    header_group = TableHeaderRows()
+    for row_index, values in enumerate(HEADER_ODT_ROWS):
+        row = TableRow()
+        for value in values:
+            cell = TableCell(valuetype="string")
+            cell.addElement(P(text=value))
+            row.addElement(cell)
+        if row_index < HEADER_MARKED_ROWS:
+            header_group.addElement(row)
+        else:
+            odf_table.addElement(row)
+    odf_table.insertBefore(header_group, odf_table.firstChild)
+    text_document.text.addElement(odf_table)
+    target = DATA_DIR / "header.odt"
+    text_document.save(str(target))
+    print(f"[阶段22] 已写入 {target}（首行在 table:table-header-rows 里，共 {len(HEADER_ODT_ROWS)} 行）")
+
 if __name__ == "__main__":
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     # 阶段1：先造图片（后续文档与演示要内嵌它们）→ screenshot.png / photo.png
@@ -1209,4 +1268,6 @@ if __name__ == "__main__":
     step20_make_table_edge_cases()
     # 阶段21：隐藏工作表与隐藏行列 → hidden.xlsx / hidden.xls / hidden.ods
     step21_make_hidden_fixtures()
+    # 阶段22：源自己标出表头行的样例 → header.docx / header.odt
+    step22_make_header_fixtures()
     print(f"\n全部完成，输出目录：{DATA_DIR}")

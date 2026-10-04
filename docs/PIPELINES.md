@@ -200,7 +200,7 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 `extract` 关键步骤：
 
 1. `Document()`；失败降级。
-2. `iter_inner_content()` 按 body **块级顺序**遍历：表格走 `_render_table()`——按 `w:tc` 收成格位规格（**不用 `row.cells`**：合并区会被返回多次、文本因此重复），交给 `processors/grid.py` 的格位网格渲染（制表符分隔、合并区文本只出现一次、覆盖位占列位、超 `MAX_TABLE_ROWS=2000` 行截断并说明）；段落取文本，段落里含 `a:blip` 时在文本末追加中性占位符 `[图片 N]`。
+2. `iter_inner_content()` 按 body **块级顺序**遍历：表格走 `_render_table()`——按 `w:tc` 收成格位规格（**不用 `row.cells`**：合并区会被返回多次、文本因此重复），交给 `processors/grid.py` 的格位网格渲染（制表符分隔、合并区文本只出现一次、覆盖位占列位、超 `MAX_TABLE_ROWS=2000` 行截断并说明），并数出**源自己标出的**表头行数（`w:trPr/w:tblHeader`，Word 用它声明「跨页重复的表头行」）；段落取文本，段落里含 `a:blip` 时在文本末追加中性占位符 `[图片 N]`。
 3. 页数取 `docProps/app.xml` 里的 `<Pages>`——那是保存时的缓存渲染值，读到就在 `notes` 里注明来源，读不到置 `None`。
 4. 文本框（`w:txbxContent` / VML textbox / Word 2010 shape 三类容器）单独成节 `=== 文本框内容 ===`：它们通常锚定浮动位置，硬插进正文会给错阅读顺序，直接丢又会掉信息。
 5. 内嵌图总数由 `a:blip` 计数得到（记的是**引用次数**：同一张图被引 N 次算 N）；`prepare_assets=True` 时按来源关系 id（`r:embed` / `r:link`）去重，把前 `MAX_EMBEDDED_IMAGES` 张**不同的**图经 `related_parts` 取出、转 PNG 落盘成素材。
@@ -247,7 +247,7 @@ CSV 的分隔符嗅探规则（确定性，实现只在 `excel._sniff_delimiter`
 
 1. `zipfile` 取出容器内的 `content.xml`；容器损坏或条目缺失 → 降级。
 2. 标准库 `ElementTree` 从 `office:body` **按文档结构递归**——不用全局 `root.iter()`，那个会把所有 `text:p` 拉平，表格因此坍成「一段一行」（列对应关系丢失）、嵌套列表的层级也没了。遇到 `table:table` 与 `text:list` 交给各自的渲染并**不再往下走**（否则单元格与列表项里的段落会被再收一遍），其余容器继续递归。
-3. `table:table` → 格位网格（`grid.py`），与 docx / pptx / xlsx 同一份渲染与不变式：`number-columns-spanned` / `number-rows-spanned` → `place(span)`、`covered-table-cell` → `covered()`、`number-columns-repeated` / `number-rows-repeated` 循环落位；超 `MAX_TABLE_ROWS=2000` 行截断并说明。
+3. `table:table` → 格位网格（`grid.py`），与 docx / pptx / xlsx 同一份渲染与不变式：`number-columns-spanned` / `number-rows-spanned` → `place(span)`、`covered-table-cell` → `covered()`、`number-columns-repeated` / `number-rows-repeated` 循环落位；超 `MAX_TABLE_ROWS=2000` 行截断并说明。**收行要往里走一层**：`table:table-row` 不只直接挂在表下，`table:table-header-rows`（表头行组）、`table:table-rows`、`table:table-row-group` 都会再包一层——只取直属行的话整组内容凭空消失（实测表头行组里的文字一个字都没进正文）。表头行**照渲**，同时按 `table:table-header-rows` 里的行数（含 `number-rows-repeated`）报出「源自己标出的表头行数」。
 4. `text:list` → Markdown 列表，每深一层多缩进两个空格（`LIST_INDENT`）；`text:list-header` 与 `text:list-item` 同等对待。
 5. `text:p` / `text:h` 取文本；`text:h` 按 `outline-level` 转成 Markdown 记号标题（上限 6 级），标题数写进 `notes`；行之间空行分隔。
 
