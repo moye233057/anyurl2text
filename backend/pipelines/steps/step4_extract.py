@@ -33,6 +33,7 @@ from pipelines.processors import (
     install_package,
     media,
     odf,
+    ofd,
     pdf,
     plaintext,
     pptx,
@@ -130,12 +131,14 @@ def dispatch(ext: str, path: Path, ctx: ExtractContext, page_url: str = "", sour
         return docx.extract_docx(path, ctx)
     if ext == "pptx":
         return pptx.extract_pptx(path, ctx)
-    if ext in ("xlsx", "xlsm", "xls", "ods", "csv"):
+    if ext in ("xlsx", "xlsm", "xls", "ods", "csv", "tsv"):
         return excel.extract_excel(path, ext, ctx)
     if ext in ("odt", "odp"):
         return odf.extract_odf(path, ext)
     if ext == "epub":
         return epub.extract_epub(path, ctx)
+    if ext == "ofd":
+        return ofd.extract_ofd(path)
     if ext in ("txt", "md", "markdown", "json", "xml", "rtf"):
         return plaintext.extract_plaintext(path, ext)
 

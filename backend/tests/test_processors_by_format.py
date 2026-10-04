@@ -16,6 +16,8 @@ r"""
   bundle.zip 12 条目、demo.apk 6 条目、sample.epub 3 章（spine 顺序与 manifest / zip 顺序都不同）
 - `CONTEXT.md` 的术语：「基础文件信息」「交付文本」「降级」
 """
+import zipfile
+
 import pytest
 
 from configs import errors
@@ -28,6 +30,7 @@ DOCUMENT_FIXTURES = (
     "plain.txt",
     "notes.md",
     "table.csv",
+    "sample.tsv",
     "sample.json",
     "feed.xml",
     "sample.rtf",
@@ -37,6 +40,7 @@ DOCUMENT_FIXTURES = (
     "sample.odt",
     "sample.odp",
     "sample.epub",
+    "sample.ofd",
     "manual.pdf",
 )
 
@@ -520,6 +524,32 @@ def test_float_cells_use_fifteen_significant_digits(ctx, work_dir):
     assert dispatch("xlsx", path, ctx).content == "=== SHEET: 数值 ===\n0.3\t1\t1e+20\t3"
 
 
+# ---------- TSV：同一套表格方言，分列靠制表符 ----------
+
+TSV_FIXTURE = "sample.tsv"
+# 样例生成参数（`scripts/make_fixtures.py` 阶段 19）：3 列 4 行，其中一格含逗号与分号
+TSV_COLUMNS = 3
+TSV_HEADER = "名称\t数量\t备注"
+TSV_TRICKY_CELL = "含逗号,与分号;的备注"
+
+
+@pytest.mark.capability_table
+def test_tsv_is_split_by_tab_not_by_a_lookalike_delimiter(ctx, fixture_copy):
+    """
+    行为：`.tsv` 按制表符分列——每行都是 3 列，含逗号与分号的那一格不被切开。
+
+    来源：本仓「只有一套表格方言」（`docs/PIPELINES.md` §3.4）+ `excel._sniff_delimiter` 的候选顺序。
+    预期值来源：样例生成参数（阶段 19 写死 3 列，并在备注列放了逗号与分号）。
+    实测：嗅探若挑成逗号或分号，含它们的那一行会多出列，第二条断言立刻失败。
+    """
+    content = run(TSV_FIXTURE, ctx, fixture_copy).content
+    lines = [line for line in content.splitlines() if line.strip() and not line.startswith("=== SHEET:")]
+    rows = [line.split("\t") for line in lines]
+    assert rows[0] == TSV_HEADER.split("\t"), f"表头应是 3 列：{rows[0]}"
+    assert all(len(row) == TSV_COLUMNS for row in rows), f"每行都该是 {TSV_COLUMNS} 列：{rows}"
+    assert any(row[-1] == TSV_TRICKY_CELL for row in rows), "含逗号与分号的那一格应完整落在一列里"
+
+
 # ---------- docx 的超链接 ----------
 
 @pytest.mark.capability_links
@@ -832,6 +862,130 @@ def test_a_plain_zip_renamed_to_epub_degrades(ctx, work_dir):
     assert "container.xml" in result.degrade_reason, result.degrade_reason
 
 
+# ---------- OFD：页序取自文档根，逐页取正文 ----------
+
+OFD_FIXTURE = "sample.ofd"
+# 样例生成参数（`scripts/make_fixtures.py` 阶段 18）：2 页；zip 写入顺序与页序相反；
+# 第 1 页的正文拆成两个 TextCode 片段；第 2 页带 1 个图像对象。
+OFD_PAGE_MARKS = ("=== 第1页 ===", "=== 第2页 ===")
+OFD_JOINED_LINE = "第一页独有字样：两个文字块拼成一行"
+OFD_SECOND_LINE = "第一页第二行"
+OFD_PAGE2_LINE = "第二页独有字样：这是第二页"
+OFD_MINIMAL_ENTRY = "<OFD><DocRoot>Doc_0/Document.xml</DocRoot></OFD>"
+
+
+def _write_ofd(path, pages: dict, document: str = "") -> None:
+    """造一个最小 OFD 容器：页面路径（相对 Doc_0/，与规范的 BaseLoc 同形）→ 页面 XML。"""
+    names = {f"Doc_0/{name}": content for name, content in pages.items()}
+    if not document:
+        declared = "".join(
+            f'<Page ID="{index}" BaseLoc="{name}"/>' for index, name in enumerate(pages, start=1)
+        )
+        document = f"<Document><Pages>{declared}</Pages></Document>"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("OFD.xml", OFD_MINIMAL_ENTRY)
+        archive.writestr("Doc_0/Document.xml", document)
+        for name, content in names.items():
+            archive.writestr(name, content)
+
+
+@pytest.mark.capability_document
+def test_ofd_pages_follow_the_document_root_order(ctx, fixture_copy):
+    """
+    行为：页序取自文档根的 `Pages/Page` 声明——zip 的写入顺序说了不算；同一 `TextObject` 里的多个
+          `TextCode` 片段拼成一行。
+
+    来源：本仓 OFD 约定「文档根是页序的唯一依据」（`docs/PIPELINES.md` 的 OFD 段）
+     + ADR-0003（容器要往里看一层，读对了才算完整解析）。
+    预期值来源：样例生成参数（阶段 18 的 zip 写入顺序反着页序；第 1 页正文拆成两个片段）。
+    实测：按容器里的条目顺序拼会把第 2 页排到最前，两个页标记的先后立刻对不上。
+    """
+    content = run(OFD_FIXTURE, ctx, fixture_copy).content
+    assert content.index(OFD_PAGE_MARKS[0]) < content.index(OFD_PAGE_MARKS[1]), "页序不是文档根给出的顺序"
+    assert OFD_JOINED_LINE in content, "同一 TextObject 里的多个 TextCode 片段应拼成一行"
+    assert content.index(OFD_JOINED_LINE) < content.index(OFD_SECOND_LINE), "同一页内应保持文档顺序"
+    assert OFD_PAGE2_LINE in content
+
+
+@pytest.mark.capability_document
+def test_ofd_reports_pages_and_keeps_images_out_of_the_text(ctx, fixture_copy):
+    """
+    行为：报出声明的页数与真读到的页数，并把「图像对象只计数、图像内容不进交付文本」写进 notes。
+
+    来源：CONTEXT「交付文本」+ ADR-0004（`extract` 不内置 OCR，认字是 understand 的职责）。
+    预期值来源：样例生成参数（阶段 18：2 页、第 2 页 1 个图像对象）。
+    """
+    result = run(OFD_FIXTURE, ctx, fixture_copy)
+    assert (result.pages, result.pages_used) == (2, 2)
+    assert any("图像对象" in note for note in result.notes), f"notes 应说明图像未进正文：{result.notes}"
+
+
+@pytest.mark.capability_document
+def test_ofd_falls_back_to_entry_names_when_pages_have_no_baseloc(ctx, work_dir):
+    """
+    行为：导出件不写 `BaseLoc` 时退回容器里的页面条目，并按名字里的数字升序——Page_10 不排在 Page_2 前。
+
+    来源：`step2_detect` 立的同一条做法——判据不止一层，认不出就往下一层退，而不是空手返回。
+    预期值来源：本用例自己造的包（三页，条目名刻意让字典序与页序不一致）。
+    """
+    pages = {
+        "Pages/Page_10/Content.xml": "<Page><TextObject><TextCode>第十页</TextCode></TextObject></Page>",
+        "Pages/Page_2/Content.xml": "<Page><TextObject><TextCode>第二页</TextCode></TextObject></Page>",
+        "Pages/Page_0/Content.xml": "<Page><TextObject><TextCode>第零页</TextCode></TextObject></Page>",
+    }
+    path = work_dir / "no-baseloc.ofd"
+    _write_ofd(path, pages, document="<Document><Pages/></Document>")
+    result = dispatch("ofd", path, ctx)
+    order = [mark for mark in ("第零页", "第二页", "第十页") if mark in result.content]
+    assert order == ["第零页", "第二页", "第十页"], f"条目顺序应按数字升序：{result.content}"
+    assert result.pages == 3
+
+
+@pytest.mark.capability_degrade
+def test_ofd_broken_input_reports_the_right_degrade_code(ctx, work_dir):
+    """
+    行为：入口缺失（没有 `OFD.xml`）报 `ofd_parse_failed`，文档根 XML 非法报 `ofd_content_failed`，
+          两条都是降级结果而不是抛异常。
+
+    来源：ADR-0003 + `configs/errors.py` 的两个 OFD 码（与 odf 的两个码同形：容器坏 / 内容 XML 坏）。
+    预期值来源：本用例自己造的两种坏法——不依赖对实现的任何理解。
+    """
+    no_entry = work_dir / "no-entry.ofd"
+    with zipfile.ZipFile(no_entry, "w") as archive:
+        archive.writestr("Doc_0/Document.xml", "<Document/>")
+    result = dispatch("ofd", no_entry, ctx)
+    assert result.degraded is True and result.degrade_code == "ofd_parse_failed"
+    assert result.degrade_code in errors.DEGRADE_CODES
+
+    bad_root = work_dir / "bad-root.ofd"
+    with zipfile.ZipFile(bad_root, "w") as archive:
+        archive.writestr("OFD.xml", OFD_MINIMAL_ENTRY)
+        archive.writestr("Doc_0/Document.xml", "<Document><Pages>")
+    result = dispatch("ofd", bad_root, ctx)
+    assert result.degraded is True and result.degrade_code == "ofd_content_failed"
+
+
+@pytest.mark.capability_document
+def test_ofd_skips_one_broken_page_but_keeps_the_rest(ctx, work_dir):
+    """
+    行为：单页 XML 非法只跳过那一页并在 notes 里说明，其余页照常交付（不是整份降级）。
+
+    来源：EPUB 那一段立的同一条做法——一章坏只跳过该章，一章都读不出才整份降级。
+    预期值来源：本用例自己造的包（第 1 页正常、第 2 页 XML 非法）。
+    """
+    pages = {
+        "Pages/Page_0/Content.xml": "<Page><TextObject><TextCode>好页的文字</TextCode></TextObject></Page>",
+        "Pages/Page_1/Content.xml": "<Page><TextObject>",
+    }
+    path = work_dir / "one-bad-page.ofd"
+    _write_ofd(path, pages)
+    result = dispatch("ofd", path, ctx)
+    assert result.degraded is False
+    assert "好页的文字" in result.content
+    assert (result.pages, result.pages_used) == (2, 1)
+    assert any("第2页" in note for note in result.notes), result.notes
+
+
 # ---------- 降级路径 ----------
 
 @pytest.mark.capability_degrade
@@ -920,6 +1074,7 @@ BROKEN_INPUT_CODES = (
     ("pptx", "pptx_parse_failed"),
     ("xlsx", "excel_parse_failed"),
     ("odt", "odf_parse_failed"),
+    ("ofd", "ofd_parse_failed"),
     ("pdf", "pdf_parse_failed"),
     ("epub", "epub_parse_failed"),
     ("png", "image_decode_failed"),

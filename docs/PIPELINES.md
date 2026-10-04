@@ -97,9 +97,10 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 | 分组 | 扩展名 | 处理器 |
 |---|---|---|
 | 文档 | pdf / docx / pptx | `pdf.py` / `docx.py` / `pptx.py` |
-| 文档 | xlsx / xlsm / xls / ods / csv | `excel.py` |
+| 文档 | xlsx / xlsm / xls / ods / csv / tsv | `excel.py` |
 | 文档 | odt / odp | `odf.py` |
 | 文档 | epub | `epub.py` |
+| 文档 | ofd | `ofd.py` |
 | 文档 | txt / md / markdown / json / xml / rtf | `plaintext.py`（rtf 的解析器在 `rtf.py`） |
 | 网页 | html / htm | `html.py` |
 | 图片 | png / jpg / jpeg / gif / bmp / tif / tiff / webp / heic / heif / ico / svg | `image.py` |
@@ -220,7 +221,7 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 
 `understand`：`reading.enhance_assets()` 批量识读页内图片 → `meta.ocr_text`。
 
-### 3.4 表格族 xlsx / xlsm / xls / ods / csv（`excel.py`）
+### 3.4 表格族 xlsx / xlsm / xls / ods / csv / tsv（`excel.py`）
 
 `extract` 关键步骤：
 
@@ -356,7 +357,23 @@ EPUB 也是 ZIP 容器，真实身份写在容器里：识别那一步读 `META-
 
 `understand`：本类不产生素材，`_has_model_work()` 靠非空 `content` 放行，直接进步骤 5 摘要。
 
-### 3.13 降级（`extract_file_info()`）
+### 3.13 OFD（`ofd.py`）
+
+OFD 也是 ZIP 容器，真实身份写在容器里：识别那一步读**根级 `OFD.xml`**（`configs/formats.py` 的 `ZIP_ENTRY_FLAVORS` 最后一条）判到 `ofd`，优先于普通 `zip`。
+
+`extract` 关键步骤：
+
+1. 打开 ZIP → 读 `OFD.xml` 取 `DocRoot`（通常是 `Doc_0/Document.xml`）；容器损坏、缺 `OFD.xml` 或缺 `DocRoot` → 降级 `ofd_parse_failed`。
+2. 解析文档根取 `Pages/Page` 序列：**页序以这份声明为准**，`BaseLoc` 给出该页 `Content.xml` 的路径。规范说它相对文档根，但导出件也有按容器根写的，两种都认；一个都没写、或写出来的路径在容器里全不存在时，退回「容器里所有以 `Content.xml` 结尾的条目」，按名字里的数字升序（`Page_2` 排在 `Page_10` 前）。
+3. 每页取正文：按文档顺序遍历 `TextObject`，把它的 `TextCode` 片段拼成一行——版式文档里长行就是这么拆的，各片段带自己的 X 坐标。
+4. 页块形如 `=== 第N页 ===`（与 PDF 同形），页间空行分隔；`pages` 是声明的页数、`pages_used` 是真读到的页数。
+5. 单页 XML 非法**只跳过那一页**并在 `notes` 里点名原因，其余页照常交付；一页都读不出才整份降级（`ofd_content_failed`）。元素按 local-name 匹配：规范里前缀是 `ofd:`，各厂商导出时的前缀与命名空间声明并不统一。
+
+已知边界：只还原文字与页序，不还原版面坐标、字形与矢量图形；图像对象只计数（在 `notes` 里说明），图像内容不进交付文本——认字是 understand 的事（ADR-0004）。
+
+`understand`：本类不产生素材，`_has_model_work()` 靠非空 `content` 放行，直接进步骤 5 摘要。
+
+### 3.14 降级（`extract_file_info()`）
 
 触发条件四选一：文件名是 Office 锁文件 / 系统噪音文件（`~$` 前缀、`.DS_Store`、`Thumbs.db`，`degrade_code="temporary_lock_file"`）、扩展名为空（`Detector.UNKNOWN`）、命中老版 Office 集合（doc / ppt / wps，Linux 侧缺的是 LibreOffice 转换器）、`dispatch()` 里没有匹配的分支。
 

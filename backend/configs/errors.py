@@ -15,7 +15,7 @@ HTTP 状态码。每条只有一个码；同一触发点不得两个码；不同
 - 第 2 组（降级）→ `meta.degrade_code`，HTTP 200（ADR-0003：降级是能力边界而不是故障）；
 - 第 3 组（模型阶段失败）→ `meta.model_error.code`，HTTP 200（确定性抽取产出仍然交付）。
 
-**第 1、2、3 组已全落**：硬失败 16 个、降级 21 个（音轨 6 + 各格式解析降级 15）、
+**第 1、2、3 组已全落**：硬失败 17 个、降级 25 个（音轨与转码 6 + 类型与格式 19）、
 模型阶段失败 15 个。每个码后面注明它的触发点，就是为了防止「同一个码两处用」。
 """
 
@@ -39,7 +39,7 @@ HARD_FAILURE_CODES = frozenset({
     "internal",                            # 兜底：未预期的异常；文案不回显异常文本（500）
 })
 
-# 第 2 组：降级（进 meta.degrade_code，HTTP 200）。21 个：音轨 6 + 各格式解析降级 15。
+# 第 2 组：降级（进 meta.degrade_code，HTTP 200）。25 个：音轨与转码 6 + 类型与格式 19。
 # 与设计文档 `03-错误模型与限额.md` 的第 2 组（20 个）差一条：odf 那两处拆成
 # `odf_parse_failed` / `odf_content_failed`。理由是设计给它标的是「同码，param 区分」，
 # 而降级通道只有 code + reason 两个字段、没有 param；不拆的话「容器坏了」与
@@ -65,6 +65,8 @@ DEGRADE_CODES = frozenset({
     "install_package_parse_failed",        # install_package：安装包不是有效的 ZIP 容器
     "odf_parse_failed",                    # odf.extract_odf：ZIP 容器里读不出 content.xml
     "odf_content_failed",                  # odf.extract_odf：content.xml 不是合法 XML
+    "ofd_parse_failed",                    # ofd.extract_ofd：ZIP 容器 / OFD.xml / 文档根读不出来
+    "ofd_content_failed",                  # ofd.extract_ofd：文档根或页面 Content.xml 不是合法 XML
     "pdf_parse_failed",                    # pdf.extract_pdf：PyMuPDF 打不开
     "pdf_encrypted",                       # pdf.extract_pdf：受密码保护，authenticate 失败
     "pptx_parse_failed",                   # pptx.extract_pptx：python-pptx 打不开

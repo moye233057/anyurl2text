@@ -66,7 +66,7 @@ python scripts/make_fixtures.py   # 输出到 backend/data/
 
 | 类别 | 格式 | 处理 |
 |---|---|---|
-| 文档 | pdf、docx、pptx、xlsx、xlsm、xls、ods、odt、odp、epub、rtf、csv、txt、md、markdown、json、xml | 完整解析（版面顺序、表格、文本框、内嵌图位置、docx 超链接、EPUB 按 spine 拼章节） |
+| 文档 | pdf、docx、pptx、xlsx、xlsm、xls、ods、odt、odp、epub、ofd、rtf、csv、tsv、txt、md、markdown、json、xml | 完整解析（版面顺序、表格、文本框、内嵌图位置、docx 超链接、EPUB 按 spine 拼章节、OFD 按文档根声明的页序取正文） |
 | 网页 | html、htm | 标题 + 摘要 + 正文 + 去重链接 |
 | 图片 | png、jpg、jpeg、gif、bmp、tif、tiff、webp、heic、heif、ico、svg | 结构信息（尺寸 / 格式 / 色彩模式 / 帧数 / EXIF） |
 | 音频 | mp3、wav、aac、flac、ogg、wma、m4a | 结构信息（时长 / 采样率 / 声道 / 音轨格式） |

@@ -23,6 +23,8 @@
     step15_make_structured_odt   带合并表格与两级列表的 odt，验证 ODT 按结构抽取
     step16_make_docx_hyperlinks  含超链接的 docx，验证链接的文字与地址都进交付文本
     step17_make_epub             三章 EPUB（manifest 与 zip 顺序都反着 spine），验证按 spine 拼章节与文档级链接消歧
+    step18_make_ofd              两页 OFD（页序取自文档根、zip 写入顺序相反），验证按页序逐页取正文
+    step19_make_tsv              制表符分隔的表格（一格含逗号与分号），验证 .tsv 按制表符分列
 
 运行方式：在 backend/ 下执行 python scripts/make_fixtures.py（无参数；`__main__` 只按序号调用各 step）
 使用前注意：
@@ -835,6 +837,110 @@ def step17_make_epub() -> None:
             archive.writestr(name, content)
     print(f"[阶段17] 已写入 {target}（3 章按 spine 顺序；manifest 与 zip 写入顺序都反着）")
 
+# ---------- OFD 样例（阶段 18）----------
+# 页序刻意与 zip 的写入顺序错开：文档根声明第 1、2 页，而 zip 先写第 2 页的 Content.xml——
+# 这样「按文档根给出的页序拼」才是被测出来的，而不是碰巧对上。
+# 第 1 页的正文写成**两个 TextCode 片段**（版式文档里长行就是这么拆的），验「同一行要拼起来」；
+# 第 2 页带一个图像对象，验「图像只计数、不进交付文本」。
+OFD_ENTRY = """<?xml version="1.0" encoding="UTF-8"?>
+<ofd:OFD xmlns:ofd="http://www.ofdspec.org/2016" DocType="OFD" Version="1.0">
+ <ofd:DocBody>
+  <ofd:DocRoot>Doc_0/Document.xml</ofd:DocRoot>
+ </ofd:DocBody>
+</ofd:OFD>
+"""
+
+OFD_DOCUMENT = """<?xml version="1.0" encoding="UTF-8"?>
+<ofd:Document xmlns:ofd="http://www.ofdspec.org/2016">
+ <ofd:CommonData>
+  <ofd:PageArea><ofd:PhysicalBox>0 0 210 297</ofd:PhysicalBox></ofd:PageArea>
+ </ofd:CommonData>
+ <ofd:Pages>
+  <ofd:Page ID="1" BaseLoc="Pages/Page_0/Content.xml"/>
+  <ofd:Page ID="2" BaseLoc="Pages/Page_1/Content.xml"/>
+ </ofd:Pages>
+</ofd:Document>
+"""
+
+OFD_PAGE_0 = """<?xml version="1.0" encoding="UTF-8"?>
+<ofd:Page xmlns:ofd="http://www.ofdspec.org/2016">
+ <ofd:Content>
+  <ofd:Layer ID="1">
+   <ofd:TextObject ID="10" Font="2" Size="3">
+    <ofd:TextCode X="20" Y="30">第一页独有字样：</ofd:TextCode>
+    <ofd:TextCode X="95" Y="30">两个文字块拼成一行</ofd:TextCode>
+   </ofd:TextObject>
+   <ofd:TextObject ID="11" Font="2" Size="3">
+    <ofd:TextCode X="20" Y="45">第一页第二行</ofd:TextCode>
+   </ofd:TextObject>
+  </ofd:Layer>
+ </ofd:Content>
+</ofd:Page>
+"""
+
+OFD_PAGE_1 = """<?xml version="1.0" encoding="UTF-8"?>
+<ofd:Page xmlns:ofd="http://www.ofdspec.org/2016">
+ <ofd:Content>
+  <ofd:Layer ID="1">
+   <ofd:TextObject ID="20" Font="2" Size="3">
+    <ofd:TextCode X="20" Y="30">第二页独有字样：这是第二页</ofd:TextCode>
+   </ofd:TextObject>
+   <ofd:ImageObject ID="21" ResourceID="30" CTM="100 0 0 100 20 60"/>
+  </ofd:Layer>
+ </ofd:Content>
+</ofd:Page>
+"""
+
+
+def step18_make_ofd() -> None:
+    """
+    造一个两页的 OFD 样例，用于验证「按文档根给出的页序逐页取正文」。
+
+    功能：写一个结构合规的 OFD 包——根级 `OFD.xml` 指向 `Doc_0/Document.xml`，文档根里按第 1、2 页
+           声明 `BaseLoc`；zip 的写入顺序反过来（先写第 2 页）。第 1 页正文拆成两个 `TextCode` 片段，
+           第 2 页带一个图像对象。
+    应用场景：验证 ofd 的页序、同一行片段拼接与「图像不进交付文本」。
+    输入：无（写 data/sample.ofd）。
+    输出：无返回值；文件路径打印到 stdout。
+    """
+    target = DATA_DIR / "sample.ofd"
+    entries = (
+        ("Doc_0/Pages/Page_1/Content.xml", OFD_PAGE_1),
+        ("Doc_0/Document.xml", OFD_DOCUMENT),
+        ("OFD.xml", OFD_ENTRY),
+        ("Doc_0/Pages/Page_0/Content.xml", OFD_PAGE_0),
+    )
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, content in entries:
+            archive.writestr(name, content)
+    print(f"[阶段18] 已写入 {target}（2 页，页序取自文档根；zip 写入顺序反过来）")
+
+# ---------- TSV 样例（阶段 19）----------
+# 单元格里**故意**放逗号与分号：分隔符嗅探若挑错（挑成逗号或分号），这一行会被切成更多列，
+# 于是「按制表符分列」必须被测出来，而不能靠样例碰巧没有歧义。
+TSV_ROWS = (
+    ("名称", "数量", "备注"),
+    ("甲项", "1", "含逗号,与分号;的备注"),
+    ("乙项", "2", "第二行"),
+    ("丙项", "3", "第三行"),
+)
+
+
+def step19_make_tsv() -> None:
+    """
+    造一个用制表符分隔的表格样例，用于验证 `.tsv` 走表格族、并按制表符分列。
+
+    功能：写一个 3 列 4 行的 TSV；其中一格含逗号与分号，用来证明分列用的是制表符而不是别的候选分隔符。
+           按字节写、行尾用 `\\n`：Windows 上 `write_text` 会把行尾翻成 `\\r\\n`，那样验的就不是源文件本身。
+    应用场景：验证 tsv 的分列与列对齐（与 CSV 共用同一套渲染）。
+    输入：无（写 data/sample.tsv）。
+    输出：无返回值；文件路径打印到 stdout。
+    """
+    target = DATA_DIR / "sample.tsv"
+    text = "".join("\t".join(row) + "\n" for row in TSV_ROWS)
+    target.write_bytes(text.encode("utf-8"))
+    print(f"[阶段19] 已写入 {target}（3 列 {len(TSV_ROWS)} 行；有一格含逗号与分号）")
+
 if __name__ == "__main__":
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     # 阶段1：先造图片（后续文档与演示要内嵌它们）→ screenshot.png / photo.png
@@ -871,4 +977,8 @@ if __name__ == "__main__":
     step16_make_docx_hyperlinks()
     # 阶段17：三章 EPUB（manifest 与 zip 写入顺序都反着 spine）→ sample.epub
     step17_make_epub()
+    # 阶段18：两页 OFD（页序取自文档根，zip 写入顺序相反）→ sample.ofd
+    step18_make_ofd()
+    # 阶段19：制表符分隔的表格（一格含逗号与分号）→ sample.tsv
+    step19_make_tsv()
     print(f"\n全部完成，输出目录：{DATA_DIR}")

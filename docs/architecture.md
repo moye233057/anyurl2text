@@ -46,10 +46,11 @@
 | 处理流程六步 | `backend/pipelines/steps/step1_download.py` … `step6_assemble.py` | 已实现 |
 | OLE 复合文档的目录流名读取（判 doc / xls / ppt 的第二层依据） | `backend/pipelines/steps/ole_directory.py` | 已实现 |
 | 处理器输入产出结构 + 各格式共用的读素材实现 | `backend/pipelines/processors/schema.py`、`processors/reading.py` | 已实现 |
-| 一格式一个文件的处理器 | `backend/pipelines/processors/{pdf,docx,pptx,excel,odf,plaintext,rtf,html,image,media,archive,install_package}.py` | 已实现 |
+| 一格式一个文件的处理器 | `backend/pipelines/processors/{pdf,docx,pptx,excel,odf,ofd,plaintext,rtf,html,image,media,archive,install_package}.py` | 已实现 |
 | 表格格位建模：合并单元格的唯一表示与唯一渲染 | `backend/pipelines/processors/grid.py`、`processors/xlsx_merges.py`（xlsx 合并区从包内 XML 读） | 已实现 |
 | DOCX 超链接的收集（叶子模块：`docx.py` 贴着单文件预算，把它拆出来） | `backend/pipelines/processors/docx_links.py` | 已实现 |
 | EPUB 抽取：容器 → OPF → 按 spine 拼章节 + 内部引用提升成文档级目标 | `backend/pipelines/processors/epub.py` | 已实现 |
+| OFD 抽取：容器 → `OFD.xml` → 文档根 → 按 `Pages/Page` 声明的页序逐页取正文 | `backend/pipelines/processors/ofd.py` | 已实现 |
 | 限额的单一定义处：值 + 命中行为 + 强制点 + 命中文案模板 | `backend/configs/limits.py` | 已实现 |
 | 稳定错误码表（机器名白名单：硬失败 / 降级 / 模型三组） | `backend/configs/errors.py` | 已实现（三组全覆盖） |
 | RAG 分页与印刷目录规则 | `backend/pipelines/processors/pdf_pages.py`、`processors/catalogue.py` | 已实现 |

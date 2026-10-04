@@ -159,11 +159,12 @@ def test_detect_magic_returns_none_when_nothing_matches(head):
         (["AndroidManifest.xml"], "apk"),
         (["Payload/Demo.app/Info.plist"], "ipa"),
         (["META-INF/container.xml"], "epub"),
+        (["OFD.xml"], "ofd"),
         (["readme.txt", "data/whatever.bin"], None),
     ],
 )
 def test_detect_zip_flavor_reads_root_level_markers(entries, expected, work_dir):
-    """行为：ZIP 头分不出家族，靠容器内固定部件指纹定 docx / xlsx / pptx / apk / ipa / epub；认不出返回 None。"""
+    """行为：ZIP 头分不出家族，靠容器内固定部件指纹定 docx / xlsx / pptx / apk / ipa / epub / ofd；认不出返回 None。"""
     assert detect_zip_flavor(make_zip(work_dir, "probe.zip", entries)) == expected
 
 
@@ -219,7 +220,9 @@ def test_epub_fingerprint_does_not_swallow_the_archive_family(work_dir):
         ("application/pdf; charset=utf-8", "pdf"),
         ("APPLICATION/PDF", "pdf"),
         ("text/plain", "txt"),
+        ("text/tab-separated-values", "tsv"),
         ("application/epub+zip", "epub"),
+        ("application/ofd", "ofd"),
         ("application/octet-stream", ""),
         ("", ""),
         (None, ""),
@@ -428,7 +431,7 @@ def test_the_repo_legacy_doc_sample_is_still_judged_doc(fixture_copy):
 
 @pytest.mark.parametrize(
     ("entries", "expected"),
-    [(["word/document.xml"], "docx"), (["META-INF/container.xml"], "epub"), (["readme.txt"], "zip")],
+    [(["word/document.xml"], "docx"), (["META-INF/container.xml"], "epub"), (["OFD.xml"], "ofd"), (["readme.txt"], "zip")],
 )
 def test_zip_head_looks_one_level_inside_the_container(entries, expected, work_dir):
     """行为：ZIP 头一律往里看一层；认不出家族才维持「这是个 ZIP」，此时名字说了不算。"""
@@ -445,7 +448,9 @@ def test_zip_head_looks_one_level_inside_the_container(entries, expected, work_d
         ("pdf", Modality.DOCUMENT),
         ("docx", Modality.DOCUMENT),
         ("csv", Modality.DOCUMENT),
+        ("tsv", Modality.DOCUMENT),
         ("epub", Modality.DOCUMENT),
+        ("ofd", Modality.DOCUMENT),
         ("html", Modality.WEBPAGE),
         ("png", Modality.IMAGE),
         ("svg", Modality.IMAGE),

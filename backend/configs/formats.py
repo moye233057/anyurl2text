@@ -9,8 +9,8 @@
 # ---------- 扩展名 → 模态 ----------
 
 DOCUMENT_EXTENSIONS = frozenset({
-    "pdf", "docx", "pptx", "xlsx", "xlsm", "xls", "csv", "ods", "odt", "odp",
-    "epub", "rtf", "txt", "md", "markdown", "json", "xml",
+    "pdf", "docx", "pptx", "xlsx", "xlsm", "xls", "csv", "tsv", "ods", "odt", "odp",
+    "epub", "ofd", "rtf", "txt", "md", "markdown", "json", "xml",
 })
 WEBPAGE_EXTENSIONS = frozenset({"html", "htm"})
 IMAGE_EXTENSIONS = frozenset({
@@ -43,6 +43,7 @@ EXTENSION_BY_MIME = {
     "text/plain": "txt",
     "text/markdown": "md",
     "text/csv": "csv",
+    "text/tab-separated-values": "tsv",
     "text/html": "html",
     "application/json": "json",
     "application/xml": "xml",
@@ -62,6 +63,7 @@ EXTENSION_BY_MIME = {
     "application/vnd.oasis.opendocument.spreadsheet": "ods",
     "application/vnd.oasis.opendocument.presentation": "odp",
     "application/epub+zip": "epub",
+    "application/ofd": "ofd",
     "image/jpeg": "jpg",
     "image/png": "png",
     "image/gif": "gif",
@@ -133,6 +135,8 @@ ZIP_ENTRY_FLAVORS = (
     ("AndroidManifest.xml", "apk"),
     # EPUB 规范强制每个 EPUB 都带 container.xml（里面指向 OPF），普通 ZIP 不会有这个路径
     ("META-INF/container.xml", "epub"),
+    # OFD 规范强制根级 OFD.xml（入口，里面指向文档根），同样是普通 ZIP 不会有的路径
+    ("OFD.xml", "ofd"),
 )
 # 带这个部件说明工作簿启用了宏，与 xlsx 同为 ZIP，只能靠容器内容区分
 ZIP_MACRO_ENTRY = "xl/vbaProject.bin"

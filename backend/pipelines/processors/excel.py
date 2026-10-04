@@ -3,7 +3,7 @@
 表格族的处理器：xlsx / xlsm / xls / ods / csv。
 
 文件名按「一看就懂」取成 excel：这一族在本项目里统一按行列渲染成制表符表格，所以放在同一个文件里；
-ODS 与 CSV 也在这里，不必为了名字精确把它再拆开。
+ODS 与 CSV / TSV 也在这里，不必为了名字精确把它再拆开。
 
 设计要点：
 - **只有一套表格方言**：`=== SHEET: 名 ===` 加制表符分隔的行。给不同容器各造一套标记
@@ -169,7 +169,7 @@ def _sniff_delimiter(text: str) -> str:
     return best
 
 def _read_csv(path: Path) -> list:
-    """读 CSV：先按编码探测解码，再嗅探分隔符，最后交给 csv 解析一次（不二次拼接）。"""
+    """读 CSV / TSV：先按编码探测解码，再嗅探分隔符（.tsv 会在这一步选中制表符），最后交给 csv 解析一次。"""
     text, hits = read_text_file(path)
     rows = list(islice(csv.reader(io.StringIO(text), delimiter=_sniff_delimiter(text)), limits.MAX_ROWS_TO_READ))
     return [(path.stem or "csv", rows, tuple(hits))]
@@ -191,7 +191,7 @@ def extract_excel(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:
             sheets, engine = _read_xls(path), "xlrd"
         elif ext == "ods":
             sheets, engine = _read_ods(path), "pyexcel-ods"
-        elif ext == "csv":
+        elif ext in ("csv", "tsv"):
             sheets, engine = _read_csv(path), "csv"
         else:
             return ExtractResult(

@@ -104,7 +104,7 @@ python scripts/make_fixtures.py
 
 输出到 `backend/data/`，与随仓库提供的文本类样例同级：`plain.txt`、`table.csv`、`sample.json`、`feed.xml`、`page.html`、`sample.rtf`、`notes.md` 这 7 个是**仓库自带的手写样例**，脚本既不生成也不覆盖它们（`notes.md` 还是 `/extract` 验收用例的必需样例）。需要后端依赖已安装（脚本用到 python-docx / python-pptx / openpyxl / pymupdf / pillow）。
 
-生成的东西：带表格与内嵌图的 docx、含空单元格的 xlsx、六页 pptx、**含合并单元格的 docx / xlsx / pptx（`merged.*`，横向与纵向各一处）**、**同一张图被引 3 次的 docx / pptx / pdf（`repeated.*`，另有一张只引 1 次）**、**带合并表格与两级列表的 `structured.odt`**、**含超链接的 `hyperlink.docx`（同一地址写两次 + 一条没有文字的链接，验证链接去重与截断）**、**三章的 `sample.epub`（spine 顺序与 manifest / zip 顺序都故意不同，另带跨章与章内引用、样式表）**、十页有文字层的 PDF、**三页无文字层的扫描件**、odt、odp、压缩包、APK 结构样本、老版 `.doc` 头样本、16kHz 单声道 wav、由它封装的 mp4。
+生成的东西：带表格与内嵌图的 docx、含空单元格的 xlsx、六页 pptx、**含合并单元格的 docx / xlsx / pptx（`merged.*`，横向与纵向各一处）**、**同一张图被引 3 次的 docx / pptx / pdf（`repeated.*`，另有一张只引 1 次）**、**带合并表格与两级列表的 `structured.odt`**、**含超链接的 `hyperlink.docx`（同一地址写两次 + 一条没有文字的链接，验证链接去重与截断）**、**三章的 `sample.epub`（spine 顺序与 manifest / zip 顺序都故意不同，另带跨章与章内引用、样式表）**、十页有文字层的 PDF、**三页无文字层的扫描件**、odt、odp、**两页的 `sample.ofd`（页序取自文档根、zip 写入顺序相反，第 2 页带一个图像对象）**、**制表符分隔的 `sample.tsv`（一格含逗号与分号）**、压缩包、APK 结构样本、老版 `.doc` 头样本、16kHz 单声道 wav、由它封装的 mp4。
 
 `.apk` 与 `.doc` 只是**结构样本**，用来验证类型识别与降级分支，不是真的安装包与 Word 文档。
 音视频样例是一段**正弦音、没有说话声**，只用于验证结构信息与「抽音轨 → 送本机 ASR」这条链；要验收转写质量请自备一段真实录音。
@@ -131,7 +131,7 @@ mp4 那一份需要 `imageio-ffmpeg`（可选依赖），没装时脚本跳过�
 
 | # | 做什么 | 判据 |
 |---|---|---|
-| 0a | 后端在跑时 `cd backend && python -m pytest tests -q` | 自检缝全过：五条结构判据（`tests/test_structure.py`）+ 各格式抽取 + 判型 + 通用件（不联网下载、不调模型、不花钱）。**这一条里有 26 条 HTTP 用例（`tests/test_extract_contract.py`），所以后端必须在跑** |
+| 0a | 后端在跑时 `cd backend && python -m pytest tests -q` | 自检缝全过：五条结构判据（`tests/test_structure.py`）+ 各格式抽取 + 判型 + 通用件（不联网下载、不调模型、不花钱）。**这一条里有 13 条 HTTP 用例（`tests/test_extract_contract.py`），所以后端必须在跑** |
 | 0b | 起服务后 `cd backend && python -m pytest tests -m model -q` | 贵缝全过：两条路 `content` 逐字节一致、模型增强产出、独立图片判型分流、音视频转写（真调模型，且本机 OCR（8021）/ ASR（8022）在跑） |
 
 **别为了跑测试另起一个后端**：端口只有一个，第二个起不来（`10048`）或者两个互相抢端口。改完后端代码时，开着自动重载的那个服务会自己加载新代码（见第 6 节），直接在它上面跑 0a/0b 就行；服务没开就先按第 2 节起一个，再跑。
@@ -154,14 +154,14 @@ pytest 的缓存是关掉的（`backend/pytest.ini` 里的 `-p no:cacheprovider`
 
 | 能力域（`-m` 直接用） | 覆盖项 | 观测信号（断言的是什么，不是状态码） |
 |---|---|---|
-| `capability_detect` | 99 | `(扩展名, 判据来源, 模态)`——决定这个文件送哪个处理器、响应的 `type` |
-| `capability_document` | 20 | 正文内容 / 页数 / 内嵌图数 / 文本框节 |
-| `capability_table` | 14 | 合并单元格不重复、行宽一致、分隔符、数值格式 |
+| `capability_detect` | 105 | `(扩展名, 判据来源, 模态)`——决定这个文件送哪个处理器、响应的 `type` |
+| `capability_document` | 26 | 正文内容 / 页数 / 内嵌图数 / 文本框节 |
+| `capability_table` | 15 | 合并单元格不重复、行宽一致、分隔符、数值格式 |
 | `capability_media` | 7 | 图片结构信息、内嵌图去重与名额、音轨参数 |
 | `capability_container` | 2 | 压缩包 / 安装包的条目清单 |
 | `capability_links` | 3 | 链接是否进交付文本、去重与上限 |
 | `capability_epub` | 8 | spine 顺序、章节标记、内部引用消歧、CSS 不进正文 |
-| `capability_degrade` | 16 | 降级码是不是那一个、HTTP 仍是 200 |
+| `capability_degrade` | 18 | 降级码是不是那一个、HTTP 仍是 200 |
 | `capability_limits` | 7 | 命的哪条上界、文案是否来自同一模板 |
 | `capability_errors` | 14 | 码表白名单、`error` 对象、模型失败通道、`internal` 兜底 |
 | `capability_http` | 13 | 真实服务上的代表格式 + 契约形状（**只抽查代表，不重复进程内矩阵**） |
@@ -174,7 +174,7 @@ E:\miniconda\envs\multimodal\python.exe -m pytest tests -m capability_epub -v   
 E:\miniconda\envs\multimodal\python.exe -m pytest tests -m "capability_table or capability_limits" -v
 ```
 
-**别只报条数**：13 种格式各一条是**清单驱动的覆盖**，它算 1 个能力点里的 13 个覆盖项。汇报与验收按「**能力域 × 覆盖项**」说（跑完的汇总就是按域给的）。加能力域要同时登记进 `backend/pytest.ini` 的 `markers`，否则 `--strict-markers` 会挡下。
+**别只报条数**：15 种格式各一条是**清单驱动的覆盖**，它算 1 个能力点里的 15 个覆盖项。汇报与验收按「**能力域 × 覆盖项**」说（跑完的汇总就是按域给的）。加能力域要同时登记进 `backend/pytest.ini` 的 `markers`，否则 `--strict-markers` 会挡下。
 
 **跑完一次会留三份东西给人看**（不是只有 `passed` 的数量）：
 
