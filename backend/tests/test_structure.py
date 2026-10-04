@@ -19,6 +19,7 @@ r"""
 前者是一次性生成脚本，后者是测试自身。
 """
 import ast
+import re
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
@@ -291,6 +292,43 @@ def test_limit_values_live_only_in_the_registry():
                     "（读 configs/limits.py 里的那一条）"
                 )
     assert not problems, "上界的值只能在 configs/limits.py 里写：\n" + "\n".join(problems)
+
+
+# ---------- 判据 7：前端契约镜像不缺字段 ----------
+
+FRONTEND_TYPES = BACKEND.parent / "frontend" / "src" / "types.ts"
+
+
+def ts_interface_fields(source: str, name: str) -> Set[str]:
+    """从 TS 源里取 `export interface <name> { … }` 的字段名（只处理平铺字段）。"""
+    # 非贪婪匹配到第一个行首的 `}`：契约里的这几个 interface 都是平铺字段，没有嵌套大括号
+    match = re.search(rf"export interface {name} \{{(.*?)^\}}", source, re.S | re.M)
+    if not match:
+        return set()
+    return set(re.findall(r"^\s*(\w+)\??:", match.group(1), re.M))
+
+
+def test_frontend_meta_mirror_has_every_contract_field():
+    """
+    行为：`frontend/src/types.ts` 的 `Meta` 与后端 `routers/convert/schema.py` 的 `Meta`
+    字段**一一对应**——少一个就是契约漂移，多一个就是前端凭空造字段。
+
+    来源：`docs/architecture.md`「改 `meta` 是跨前后端的：`frontend/src/types.ts` 是契约镜像」。
+    为什么需要这条门禁：这一层没有编译器兜底，漏字段不会报错，只会在界面上悄悄少显示一项——
+    2026-10-04 这一轮就发现后端已落、镜像没跟的两个（`degrade_code` / `limits_hit`）。
+    """
+    from routers.convert.schema import Meta
+
+    if not FRONTEND_TYPES.exists():
+        pytest.skip(f"前端类型文件不存在：{FRONTEND_TYPES}")
+
+    mirrored = ts_interface_fields(FRONTEND_TYPES.read_text(encoding="utf-8"), "Meta")
+    # 没有这条自检，正则一旦失配就会两边都空、判据假绿
+    assert len(mirrored) > 15, f"只从 types.ts 解析出 {len(mirrored)} 个 Meta 字段，正则大概率写错了"
+    missing = sorted(set(Meta.model_fields) - mirrored)
+    extra = sorted(mirrored - set(Meta.model_fields))
+    assert not missing, "前端 Meta 缺这些后端字段：" + "、".join(missing)
+    assert not extra, "前端 Meta 有后端没有的字段：" + "、".join(extra)
 
 
 # ---------- 判据本身的自检 ----------
