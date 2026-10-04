@@ -40,6 +40,9 @@ class GridBuilder:
         self._expansion = 0
         self._slots = 0
         self._text_chars = 0
+        # 两件要登记的事（`grid_notes` 把它们翻成 notes）：没人认领的覆盖位、并回 origin 的续格文字
+        self.orphan_covered = 0
+        self.merged_residue = 0
         # 三条预算都在**调用时**读，不用默认参数：默认参数在 import 期就绑定，用例没法 monkeypatch。
         # `configs/limits.py` 仍是唯一事实源，改值只改那一处。
         self._limit = limits.MAX_GRID_EXPANSION if limit is None else limit
@@ -107,16 +110,49 @@ class GridBuilder:
                 if (row_offset, col_offset) != (0, 0):
                     self._pending[(row + row_offset, col + col_offset)] = (row, col)
 
-    def covered(self) -> bool:
-        """消费一个显式覆盖位；无人认领时退化成空格并返回 False（产出方少写了格子）。"""
+    def covered(self, text: str = ""):
+        """
+        消费一个显式覆盖位，返回**认领到的 origin 格位**（认领不到返回 None）。
+
+        功能：认领成功就把这一位换成指回 origin 的 `CoveredSlot`；没人认领时退化成空格位（列位不串、
+              内容该空还是空），并把这件事记一笔 `orphan_covered`——它是**唯一一处静默退化**，
+              登记出来才能把「文件本来就没内容」与「我们没解析对」分开。
+              `text` 是产出方写在**续格**里的文字（PPTX 的残留文字、docx 的 vMerge 继续格）：
+              非空时并回 origin（见 `merge_residue`），不丢字、也不改列位。
+        应用场景：`fill_from_specs` 与各处理器的格位循环（odf / excel / pptx）。
+        输入：text — 续格自带的文字（可空）。
+        输出：认领到的 `GridSpan`，或 None（没人认领）。
+        """
         row = len(self.grid) - 1
         origin = self._pending.pop((row, len(self.grid[row])), None)
         if not self._charge("max_grid_slots", 1, self._slot_limit):
-            return origin is not None
+            return origin
         if origin is None:
+            self.orphan_covered += 1
             self.grid[row].append(GridSpan())
-            return False
+            return None
         self.grid[row].append(CoveredSlot(origin_row=origin[0], origin_col=origin[1]))
+        claimed = self.grid[origin[0]][origin[1]]
+        if text:
+            self.merge_residue(claimed, text)
+        return claimed
+
+    def merge_residue(self, origin, text: str) -> bool:
+        """
+        把续格里的文字并回它的 origin，返回是否真的并了。
+
+        为什么要并：合并区的非左上格只是「继续格」，但产出方（WPS / LibreOffice / 手工改过的文件）
+        有时把文字留在续格里。anydoc 直接丢，本仓取向是「尽量抽出来」——并进 origin 的文本末尾
+        （空格分隔），既不丢字、也不动列位。
+        去重：`python-docx` 的 `merge()` 会把续格文字搬进 origin，两边都有的不并第二次。
+        应用场景：`covered(text)` 内部调用；处理器不必自己判。
+        输入：origin — `GridSpan`；text — 续格文字。
+        输出：True 表示这次真的并入了一段。
+        """
+        if not text or origin is None or text in origin.text:
+            return False
+        origin.text = f"{origin.text} {text}".strip()
+        self.merged_residue += 1
         return True
 
     def finish(self) -> TableGrid:
@@ -188,8 +224,12 @@ def fill_from_specs(builder: GridBuilder, specs_by_row: list) -> TableGrid:
         column = 0
         for text, col_span, is_continue in specs:
             if is_continue:
+                claimed = None
                 for _ in range(col_span):
-                    builder.covered()
+                    claimed = builder.covered() or claimed
+                if text:
+                    # 续格自带的文字并回 origin（不丢字、不改列位；认领不到时无处可并，只剩孤儿计数）
+                    builder.merge_residue(claimed, text)
             else:
                 row_span = 1
                 while row_index + row_span < len(continues) and column in continues[row_index + row_span]:
@@ -197,6 +237,28 @@ def fill_from_specs(builder: GridBuilder, specs_by_row: list) -> TableGrid:
                 builder.place(text, col_span, row_span)
             column += col_span
     return builder.finish()
+
+def grid_notes(builder: "GridBuilder") -> List[str]:
+    """
+    网格构造过程中两件要登记的事，翻成 `notes` 文案。
+
+    功能：把 `builder.orphan_covered`（没人认领的覆盖位）与 `builder.merged_residue`
+          （并回 origin 的续格文字）写成句子——文案只有这一处定义，四条表格路径口径一致。
+    为什么值得登记：孤儿覆盖位是**全仓唯一一处静默退化**，它往往意味着产出方的合并标记不成对，
+          或者我们自己的合并解析有洞（ODF 表头行组、RTF 竖链都是这类），登记出来才能把
+          「文件本来就没内容」与「我们没解析对」分开。
+    应用场景：docx / odf / excel / pptx / rtf 收尾时各调一次，把结果并进 `notes`。
+    输入：builder — 造完网格的构造器。
+    输出：note 列表（没有要登记的事时是空列表）。
+    """
+    notes = []
+    if builder.orphan_covered:
+        notes.append(
+            f"有 {builder.orphan_covered} 个覆盖位没有对应的合并起点，已按空格处理（列位不受影响）"
+        )
+    if builder.merged_residue:
+        notes.append(f"覆盖格里的残留文字已并入合并单元格（{builder.merged_residue} 处）")
+    return notes
 
 def merge_rect(row_start: int, col_start: int, row_end: int, col_end: int):
     """

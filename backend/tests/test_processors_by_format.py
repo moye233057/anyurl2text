@@ -21,7 +21,7 @@ import zipfile
 import pytest
 
 from configs import errors
-from pipelines.processors.grid import CoveredSlot, GridBuilder, check_grid, render_tsv
+from pipelines.processors.grid import CoveredSlot, GridBuilder, check_grid, grid_notes, render_tsv
 from pipelines.processors.schema import ExtractContext
 from pipelines.steps.step2_detect import extension_from_name
 from pipelines.steps.step4_extract import dispatch
@@ -381,10 +381,11 @@ def test_late_span_is_clamped_to_positions_it_can_own():
 def test_nested_spans_and_a_stray_covered_marker_stay_consistent():
     """
     行为：横向跨度与纵向跨度交织、且出现一个「没有跨度认领的覆盖位」时，网格仍自洽——孤立的覆盖位
-          退化成空格而不是报错。
+          退化成空格而不是报错，并把这件事记一笔（`orphan_covered`，由 `grid_notes` 翻成 notes）。
 
     来源：anydoc 的 `covered()` 语义（`src/model/table.rs:216-232`）：`false` 表示「没有跨度认领这个
-          位置，孤立的标记就变成空格子」；本仓 `GridBuilder.covered()` 同构。
+          位置，孤立的标记就变成空格子」；本仓 `GridBuilder.covered()` 同构，返回值改成**认领到的
+          origin**（None = 没人认领），并多记一个计数。
     预期值来源：手搭的格位序列（第 1 行的第 0 列无人认领、第 2 列被上方的纵向跨度认领）。
     """
     builder = GridBuilder()
@@ -392,7 +393,7 @@ def test_nested_spans_and_a_stray_covered_marker_stay_consistent():
     builder.place("横跨两列", 2, 1)
     builder.place("纵跨两行", 1, 2)  # 认领 (1,2)
     builder.next_row()
-    assert builder.covered() is False, "第 1 行第 0 列没有跨度认领，应退化成空格"
+    assert builder.covered() is None, "第 1 行第 0 列没有跨度认领，应退化成空格"
     builder.place("晚到", 2, 1)  # 第 2 列被认领 → 钳成 1 列
     builder.covered()  # 消费 (1,2)
     grid = builder.finish()
@@ -402,6 +403,8 @@ def test_nested_spans_and_a_stray_covered_marker_stay_consistent():
     assert isinstance(grid[1][2], CoveredSlot), "被纵向跨度认领的位应是覆盖位"
     assert (grid[1][2].origin_row, grid[1][2].origin_col) == (0, 2)
     assert check_grid(grid) == [], f"网格不自洽：{check_grid(grid)}"
+    assert builder.orphan_covered == 1, builder.orphan_covered
+    assert grid_notes(builder) == ["有 1 个覆盖位没有对应的合并起点，已按空格处理（列位不受影响）"]
 
 
 @pytest.mark.capability_table
@@ -1258,6 +1261,97 @@ def test_web_cell_line_break_survives_as_a_marker(ctx, work_dir):
 
     lines = [line for line in dispatch("html", path, ctx).content.splitlines() if "\t" in line]
     assert lines[0] == "上半<br>下半\t右格", lines
+
+
+# ---------- 网格的两条兜底：孤儿覆盖位登记 / 续格文字并回 ----------
+
+@pytest.mark.capability_table
+def test_docx_continuation_cell_text_is_merged_back(ctx, work_dir):
+    """
+    行为：纵向合并的**继续格**自带文字时，文字并回合并起点并在 `notes` 报处数（不再静默丢掉）。
+
+    来源：`01-表格格位建模.md` §2.1 的决定（用户 2026-10-04：直接改代码兜底）——产出方
+          （WPS / LibreOffice）有时把文字留在续格里；PPTX 那条早已改成并回，这里把 docx 对齐。
+    预期值来源：本用例写 2 行 2 列、左列纵向合并（起点在第一行），再往第二行（继续格）单独写
+          「写在继续格里的字」——所以它必须出现在第一行那一格里，且 notes 报「1 处」。
+    """
+    from docx import Document
+    from docx.oxml.ns import qn
+    from docx.table import _Cell
+
+    path = work_dir / "continue_text.docx"
+    document = Document()
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 1).text = "选手甲"
+    table.cell(1, 1).text = "选手乙"
+    table.cell(0, 0).merge(table.cell(1, 0))
+    rows = table._tbl.findall(qn("w:tr"))
+    _Cell(rows[1].findall(qn("w:tc"))[0], table).text = "写在继续格里的字"
+    document.save(str(path))
+
+    result = dispatch("docx", path, ctx)
+    lines = [line for line in result.content.splitlines() if "\t" in line]
+    assert lines[0] == "写在继续格里的字\t选手甲", lines
+    assert any("残留文字已并入合并单元格（1 处）" in note for note in result.notes), result.notes
+
+
+@pytest.mark.capability_table
+def test_docx_merge_without_its_origin_is_reported(ctx, work_dir):
+    """
+    行为：纵向合并块**起点行不在文件里**时（继续格没有 origin），列位照旧、并在 `notes` 报出孤儿数。
+
+    来源：同 §2.1——Word 删掉合并块首行 / 部分复制粘贴 / 我们自己的预算裁跨度都会留下这种形状；
+          今天以前它是**全仓唯一一处静默退化**，调用方分不清「文件本来没内容」与「我们没解析对」。
+    预期值来源：本用例先正常合并再用 XML 删掉首个 `w:tr`，所以剩两行的左列都是无主继续格
+          → 孤儿 2 个；右列两格文字照旧在。
+    """
+    from docx import Document
+    from docx.oxml.ns import qn
+
+    path = work_dir / "orphan_merge.docx"
+    document = Document()
+    table = document.add_table(rows=3, cols=2)
+    for row_index, (left, right) in enumerate((("组别 A", "选手甲"), ("", "选手乙"), ("", "选手丙"))):
+        if left:
+            table.cell(row_index, 0).text = left
+        table.cell(row_index, 1).text = right
+    table.cell(0, 0).merge(table.cell(2, 0))
+    table._tbl.remove(table._tbl.findall(qn("w:tr"))[0])
+    document.save(str(path))
+
+    result = dispatch("docx", path, ctx)
+    lines = [line for line in result.content.splitlines() if "\t" in line]
+    assert lines == ["\t选手乙", "\t选手丙"], lines
+    assert any("有 2 个覆盖位没有对应的合并起点" in note for note in result.notes), result.notes
+
+
+@pytest.mark.capability_table
+def test_odf_covered_cell_without_a_span_is_reported(ctx, work_dir):
+    """
+    行为：ODS / ODT 里出现「没有跨度认领的 `covered-table-cell`」时同样登记（同一份网格逻辑）。
+
+    来源：同 §2.1——孤儿计数在 `GridBuilder` 上，四条表格路径共用，所以 ODF 侧也报得出来。
+    预期值来源：本用例写一张单列表，第一格直接是 `table:covered-table-cell`（没有起点），所以
+          第一行第一列是空格位、notes 报 1 个孤儿。
+    """
+    from odf.opendocument import OpenDocumentText
+    from odf.table import CoveredTableCell, Table, TableCell, TableRow
+    from odf.text import P
+
+    document = OpenDocumentText()
+    table = Table(name="孤儿覆盖位")
+    row = TableRow()
+    row.addElement(CoveredTableCell())
+    cell = TableCell(valuetype="string")
+    cell.addElement(P(text="右格"))
+    row.addElement(cell)
+    table.addElement(row)
+    document.text.addElement(table)
+    path = work_dir / "orphan_covered.odt"
+    document.save(str(path))
+
+    result = dispatch("odt", path, ctx)
+    assert any("有 1 个覆盖位没有对应的合并起点" in note for note in result.notes), result.notes
 
 
 # ---------- 内嵌图：同一张图被引多次 ----------

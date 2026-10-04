@@ -41,11 +41,13 @@ class RtfTable(NamedTuple):
         lines — 制表符分隔的行（已按 `max_table_rows` 截断）。
         limits_hit — 这张表命中的上界名。
         header_rows — 源自己标出的表头行数（`\\trhdr`）。
+        notes — 网格登记的 notes（孤儿覆盖位 / 并回的续格文字）。
     """
 
     lines: List[str]
     limits_hit: List[str]
     header_rows: int
+    notes: List[str]
 
 def _rtf_at_group_start(source: str, backslash_pos: int) -> bool:
     """判断某个控制字是不是「某个组的第一个控制字」——可忽略目的地都是这种形态。"""
@@ -96,8 +98,8 @@ def _row_cells(defs: List[CellSpec], texts: List[str]) -> List[CellSpec]:
 
 def _table_block(rows: List[RtfRow]) -> RtfTable:
     """一行规格交给 `rtf_tables` 渲成表格段。"""
-    text, hits, header_rows = build_lines(rows)
-    return RtfTable(text.splitlines() if text else [], hits, header_rows)
+    text, hits, header_rows, notes = build_lines(rows)
+    return RtfTable(text.splitlines() if text else [], hits, header_rows, notes)
 
 def _assemble(blocks: List[Union[str, RtfTable]]) -> str:
     """
@@ -444,9 +446,10 @@ def extract_rtf(path: Path) -> ExtractResult:
     blocks = _rtf_blocks(text)
     tables = [block for block in blocks if isinstance(block, RtfTable) and block.lines]
     limits_hit = list(hits)
+    notes: list = []
     for table in tables:
         limits_hit.extend(table.limits_hit)
-    notes = []
+        notes.extend(table.notes)
     if len(tables) > 1:
         notes.append(
             f"正文里有 {len(tables)} 张表，meta.table_header_rows 只在交付文本只有一张表时给值"

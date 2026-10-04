@@ -26,7 +26,7 @@ import configs.limits as limits
 import configs.settings as settings
 from pipelines.processors import cell_text, table_kind
 from pipelines.processors.docx_links import hyperlink_lines
-from pipelines.processors.grid import GridBuilder, fill_from_specs, render_tsv
+from pipelines.processors.grid import GridBuilder, fill_from_specs, grid_notes, render_tsv
 from pipelines.processors.schema import EmbeddedAsset, ExtractContext, ExtractResult
 from pipelines.processors import table_kind
 
@@ -189,7 +189,7 @@ def _render_table(table) -> tuple:
         hits.append("max_table_rows")
     hits.extend(builder.limit_hits)
     kind = table_kind.classify(lines)
-    return "\n".join(lines), hits, _header_rows(table), kind
+    return "\n".join(lines), hits, _header_rows(table), kind, grid_notes(builder)
 
 def _save_embedded_images(document: "Document", ctx: ExtractContext, result: ExtractResult) -> list:
     """
@@ -310,11 +310,13 @@ def extract_docx(path: Path, ctx: ExtractContext) -> ExtractResult:
     hits = []
     table_headers = []
     table_kinds = []
+    notes: list = []
     image_marker = 0
     for item in document.iter_inner_content():
         if isinstance(item, Table):
-            rendered, table_hits, header_rows, kind = _render_table(item)
+            rendered, table_hits, header_rows, kind, table_notes = _render_table(item)
             hits.extend(table_hits)
+            notes.extend(table_notes)
             if rendered:
                 blocks.append(rendered)
                 table_headers.append(header_rows)
@@ -337,6 +339,7 @@ def extract_docx(path: Path, ctx: ExtractContext) -> ExtractResult:
         images=_count_embedded_images(document),
         images_used=0,
         limits_hit=hits,
+        notes=notes,
         table_header_rows=table_headers[0] if len(table_headers) == 1 else None,
         table_kind=table_kinds[0] if len(table_kinds) == 1 else None,
     )

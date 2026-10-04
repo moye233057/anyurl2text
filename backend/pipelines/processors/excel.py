@@ -20,7 +20,7 @@ from pathlib import Path
 
 import configs.limits as limits
 from pipelines.processors import cell_text, table_kind
-from pipelines.processors.grid import GridBuilder, merge_rect, render_tsv
+from pipelines.processors.grid import GridBuilder, grid_notes, merge_rect, render_tsv
 from pipelines.processors.index_runs import column_letters, to_runs
 from pipelines.processors.ods_merges import align_values as align_ods_values
 from pipelines.processors.ods_merges import read_merge_rects as read_ods_merge_rects
@@ -42,21 +42,24 @@ def _render_rows(sheets: list, pad_short_rows: bool = True) -> tuple:
     应用场景：xlsx / xls / ods / csv 四条路径共用，避免各写一份渲染规则。
     输入：sheets — [(表名, [[单元格文本, ...], ...], [(行起, 列起, 行止, 列止), ...]), ...]；
           pad_short_rows — 见 `grid.render_tsv`：结构化表格补行尾缺格，CSV / TSV 传 False。
-    输出：(拼接后的文本, 命中的上界名列表, 每张非空表的渲染行)——行另交回是为了判表类型。
+    输出：(拼接后的文本, 命中的上界名列表, 每张非空表的渲染行, 网格登记的 notes)——
+          行另交回是为了判表类型，notes 交回是为了孤儿覆盖位 / 续格文字这两条登记。
     """
     blocks = []
     hits = []
     tables = []
+    notes: list = []
     for name, rows, merges in sheets:
-        grid, grid_hits = _sheet_grid(rows, merges)
+        grid, grid_hits, sheet_notes = _sheet_grid(rows, merges)
         lines = render_tsv(grid, limits.MAX_ROWS_PER_SHEET, pad_short_rows=pad_short_rows)
         hits.extend(grid_hits)
+        notes.extend(sheet_notes)
         if len(rows) > limits.MAX_ROWS_PER_SHEET and "max_rows_per_sheet" not in hits:
             hits.append("max_rows_per_sheet")
         if lines:
             blocks.append(f"=== SHEET: {name} ===\n" + "\n".join(lines))
             tables.append(lines)
-    return "\n\n".join(blocks), hits, tables
+    return "\n\n".join(blocks), hits, tables, notes
 
 def _cell_text(cell) -> str:
     """
@@ -109,7 +112,7 @@ def _sheet_grid(rows: list, merges: list) -> tuple:
                 continue
             col_span, row_span = spans.get((row_index, col_index), (1, 1))
             builder.place(_cell_text(row[col_index]), col_span, row_span)
-    return builder.finish(), list(builder.limit_hits)
+    return builder.finish(), list(builder.limit_hits), grid_notes(builder)
 
 def _read_xlsx(path: Path) -> tuple:
     """
@@ -331,9 +334,10 @@ def extract_excel(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:
             engines=["基础文件信息"],
         )
 
-    content, hits, tables = _render_rows(sheets, pad_short_rows=ext not in ("csv", "tsv"))
+    content, hits, tables, table_notes = _render_rows(sheets, pad_short_rows=ext not in ("csv", "tsv"))
     notes, visibility_hits = _visibility_notes(visibility)
     hits.extend(visibility_hits)
+    notes = list(table_notes) + notes
     if not content:
         notes.append("表内没有单元格内容（空表，或所有格子都是空的）")
     return ExtractResult(

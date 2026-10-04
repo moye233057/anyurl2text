@@ -21,7 +21,7 @@ from bisect import bisect_left
 from typing import List, NamedTuple, Set, Tuple
 
 import configs.limits as limits
-from pipelines.processors.grid import GridBuilder, fill_from_specs, render_tsv
+from pipelines.processors.grid import GridBuilder, fill_from_specs, grid_notes, render_tsv
 
 # 边界聚类的容差：10 twips ≈ 0.5pt，同一列的两格边界只差一两个 twip 时仍算同一列。
 # 带类型标注是有意的：`tests/test_structure.py` 判据 6 按**值**比对模块级的裸赋值，10 与
@@ -159,7 +159,7 @@ def _specs(cells_by_row: List[List[CellSpec]], clusters: List[int]) -> List[list
         active = next_active
     return specs_by_row
 
-def build_lines(rows: List[RtfRow]) -> Tuple[str, List[str], int]:
+def build_lines(rows: List[RtfRow]) -> Tuple[str, List[str], int, List[str]]:
     """
     把一张表的行规格渲成制表符块。
 
@@ -167,7 +167,8 @@ def build_lines(rows: List[RtfRow]) -> Tuple[str, List[str], int]:
           行数超 `limits.MAX_TABLE_ROWS` 时只渲前若干行，并在末行说明还剩多少行。
     应用场景：`rtf.py` 收完一张表的**全部**行后调用一次（聚类要看到全表边界，不能一行一行渲）。
     输入：rows — 每行是 RtfRow（格规格 + 源标的表头标记）。
-    输出：(制表符分隔的多行文本, 命中的上界名列表, 源标出的表头行数)；没有可渲染内容时文本为空串。
+    输出：(制表符分隔的多行文本, 命中的上界名列表, 源标出的表头行数, 网格登记的 notes)；
+          没有可渲染内容时文本为空串。
     """
     # 表头行数按**全部**行数出来：它是源标出来的事实，行数截断只影响渲染多少行
     header_rows = sum(1 for row in rows if row.header)
@@ -180,4 +181,4 @@ def build_lines(rows: List[RtfRow]) -> Tuple[str, List[str], int]:
     if len(rows) > limits.MAX_TABLE_ROWS:
         lines.append(f"... 其余 {len(rows) - limits.MAX_TABLE_ROWS} 行未列出")
         hits.append("max_table_rows")
-    return "\n".join(lines), hits, header_rows
+    return "\n".join(lines), hits, header_rows, grid_notes(builder)

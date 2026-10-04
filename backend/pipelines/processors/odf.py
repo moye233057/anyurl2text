@@ -23,7 +23,7 @@ from pathlib import Path
 
 import configs.limits as limits
 from pipelines.processors import cell_text, odf_table_rows, table_kind
-from pipelines.processors.grid import GridBuilder, render_tsv
+from pipelines.processors.grid import GridBuilder, grid_notes, render_tsv
 from pipelines.processors.schema import ExtractResult
 
 TEXT_NS = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}"
@@ -120,10 +120,13 @@ def _render_table(table, hits: list) -> tuple:
             pending = 0
             for cell in row:
                 if cell.tag == TABLE_NS + "covered-table-cell":
-                    # 结构格优先：它是某个跨度的覆盖位，不能被当成「可省的空格」
+                    # 结构格优先：它是某个跨度的覆盖位，不能被当成「可省的空格」；
+                    # 续格自带的文字（产出方怪癖）并回 origin，认领不到时只剩孤儿计数
                     pending = _flush_gap(builder, pending)
+                    claimed = None
                     for _ in range(_count(cell, "number-columns-repeated", limits.MAX_REPEATED_SLOTS)):
-                        builder.covered()
+                        claimed = builder.covered() or claimed
+                    builder.merge_residue(claimed, _cell_text(cell))
                     continue
                 if cell.tag != TABLE_NS + "table-cell":
                     continue
@@ -143,7 +146,7 @@ def _render_table(table, hits: list) -> tuple:
         lines.append(f"... 其余 {total_rows - limits.MAX_TABLE_ROWS} 行未列出")
         hits.append("max_table_rows")
     hits.extend(builder.limit_hits)
-    return "\n".join(lines), header_rows, table_kind.classify(lines)
+    return "\n".join(lines), header_rows, table_kind.classify(lines), grid_notes(builder)
 
 def _list_lines(list_element, depth: int) -> list:
     """
@@ -169,7 +172,7 @@ def _list_lines(list_element, depth: int) -> list:
                     lines.append(f"{indent}- {text}")
     return lines
 
-def _body_lines(element, hits: list, table_headers: list, table_kinds: list) -> list:
+def _body_lines(element, hits: list, table_headers: list, table_kinds: list, table_notes: list) -> list:
     """
     按文档结构递归收集正文行。
 
@@ -184,11 +187,12 @@ def _body_lines(element, hits: list, table_headers: list, table_kinds: list) -> 
     lines = []
     for child in element:
         if child.tag == TABLE_NS + "table":
-            rendered, header_rows, kind = _render_table(child, hits)
+            rendered, header_rows, kind, notes = _render_table(child, hits)
             if rendered:
                 lines.extend(rendered.splitlines())
                 table_headers.append(header_rows)
                 table_kinds.append(kind)
+                table_notes.extend(notes)
         elif child.tag == TEXT_NS + "list":
             lines.extend(_list_lines(child, 0))
         elif child.tag in TEXT_ELEMENTS:
@@ -197,7 +201,7 @@ def _body_lines(element, hits: list, table_headers: list, table_kinds: list) -> 
                 continue
             lines.append(_heading_line(child) if child.tag == TEXT_NS + "h" else text)
         else:
-            lines.extend(_body_lines(child, hits, table_headers, table_kinds))
+            lines.extend(_body_lines(child, hits, table_headers, table_kinds, table_notes))
     return lines
 
 def extract_odf(path: Path, ext: str) -> ExtractResult:
@@ -239,11 +243,12 @@ def extract_odf(path: Path, ext: str) -> ExtractResult:
     hits = []
     table_headers = []
     table_kinds = []
-    lines = _body_lines(body if body is not None else root, hits, table_headers, table_kinds)
+    table_notes: list = []
+    lines = _body_lines(body if body is not None else root, hits, table_headers, table_kinds, table_notes)
     # 计数与渲染分开：这里只数标题个数（给 notes 用），不参与上面那次结构遍历
     heading_count = sum(1 for element in root.iter(TEXT_NS + "h") if _text_of(element))
 
-    notes = []
+    notes = list(table_notes)
     if len(table_headers) > 1:
         notes.append(
             f"文档里有 {len(table_headers)} 张表，meta.table_header_rows 只在交付文本只有一张表时给值"
