@@ -8,6 +8,7 @@
 """
 from typing import Any, NamedTuple, Optional
 
+import configs.limits as limits
 import configs.settings as settings
 from pipelines.steps.step2_detect import modality_from_extension
 from pipelines.processors.schema import ExtractResult, PreparedSource
@@ -52,9 +53,11 @@ def build_response(
     if error:
         modality = Modality.ERROR
 
+    # 命中集合 = 处理器报上来的名字 + 本层自己判定的 content 截断（派生量，不两处独立计算）
+    limits_hit = sorted(set(result.limits_hit) | ({"max_content_chars"} if truncated else set()))
     notes = list(result.notes)
-    if truncated:
-        notes.append(f"content 超过 {settings.MAX_CONTENT_CHARS} 字符已截断")
+    # 命中文案只有 configs/limits.py 一处模板：处理器与本节都只报名字
+    notes.extend(limits.note_for(name) for name in limits_hit)
 
     meta = Meta(
         source=prepared.source,
@@ -65,6 +68,7 @@ def build_response(
         degraded=result.degraded,
         degrade_reason=result.degrade_reason,
         truncated=truncated,
+        limits_hit=limits_hit,
         pages=result.pages,
         pages_used=result.pages_used,
         images=result.images,

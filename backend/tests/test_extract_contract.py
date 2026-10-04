@@ -88,6 +88,18 @@ def test_declared_document_formats_extract_text(name):
     assert body["meta"]["degraded"] is False
     assert body["content"].strip(), f"{name} 应抽出非空正文"
 
+def test_meta_reports_no_limit_hits_for_a_small_input():
+    """
+    行为：普通输入不谎报命中——`meta.limits_hit` 恒存在且为空列表。
+
+    来源：ADR-0001「响应形状只有一份定义」+ `configs/limits.py`：只有真的少读了用户的
+    字节 / 行 / 页 / 张才记名字，形状对每个成功响应都在。
+    """
+    status, body = extract("plain.txt")
+    assert status == 200
+    assert body["meta"]["limits_hit"] == []
+
+
 def test_plain_text_is_delivered_verbatim():
     """
     行为：交付文本就是源文本本身，不被加工、不被加前缀。

@@ -17,18 +17,13 @@ import io
 from itertools import islice
 from pathlib import Path
 
+import configs.limits as limits
 from pipelines.processors.grid import GridBuilder, render_tsv
 from pipelines.processors.schema import ExtractContext, ExtractResult, TableGrid
 from pipelines.processors.xlsx_merges import read_merge_rects
 from utils.textfile import read_text_file
 
-# 单表最多渲染的行数上限
-MAX_ROWS_PER_SHEET = 5000
-# 读取上限比渲染上限多一行：多出来的那一行是给渲染层看的信号——
-# 「还有后续行没读」和「这就是最后一行」必须能区分开。
-MAX_ROWS_TO_READ = MAX_ROWS_PER_SHEET + 1
-
-def _render_rows(sheets: list) -> str:
+def _render_rows(sheets: list) -> tuple:
     """
     把「(表名, 行列表, 合并矩形)」渲染成统一的文本表格。
 
@@ -36,14 +31,17 @@ def _render_rows(sheets: list) -> str:
           合并区覆盖的空列不被裁掉、合并文本只出现一次；跳过整行全空的行；超行数上限时截断并说明。
     应用场景：xlsx / xls / ods / csv 四条路径共用，避免各写一份渲染规则。
     输入：sheets — [(表名, [[单元格文本, ...], ...], [(行起, 列起, 行止, 列止), ...]), ...]。
-    输出：拼接后的文本。
+    输出：(拼接后的文本, 命中的上界名列表)。
     """
     blocks = []
+    hits = []
     for name, rows, merges in sheets:
-        lines = render_tsv(_sheet_grid(rows, merges), MAX_ROWS_PER_SHEET)
+        lines = render_tsv(_sheet_grid(rows, merges), limits.MAX_ROWS_PER_SHEET)
+        if len(rows) > limits.MAX_ROWS_PER_SHEET and "max_rows_per_sheet" not in hits:
+            hits.append("max_rows_per_sheet")
         if lines:
             blocks.append(f"=== SHEET: {name} ===\n" + "\n".join(lines))
-    return "\n\n".join(blocks)
+    return "\n\n".join(blocks), hits
 
 def _cell_text(cell) -> str:
     """
@@ -112,7 +110,7 @@ def _read_xlsx(path: Path) -> list:
             rows = []
             for row in sheet.iter_rows(values_only=True):
                 rows.append(list(row))
-                if len(rows) >= MAX_ROWS_TO_READ:
+                if len(rows) >= limits.MAX_ROWS_TO_READ:
                     break
             sheets.append((sheet.title, rows, merges[index] if index < len(merges) else []))
         return sheets
@@ -126,7 +124,7 @@ def _read_xls(path: Path) -> list:
     book = xlrd.open_workbook(str(path))
     sheets = []
     for sheet in book.sheets():
-        rows = [sheet.row_values(index) for index in range(min(sheet.nrows, MAX_ROWS_TO_READ))]
+        rows = [sheet.row_values(index) for index in range(min(sheet.nrows, limits.MAX_ROWS_TO_READ))]
         sheets.append((sheet.name, rows, ()))
     return sheets
 
@@ -138,12 +136,12 @@ def _read_ods(path: Path) -> list:
     # （表名另有用途，不能丢）。
     # pyexcel-ods 没有流式接口，只能读完后立刻截断。
     data = get_data(str(path))
-    return [(name, rows[:MAX_ROWS_TO_READ], ()) for name, rows in data.items()]
+    return [(name, rows[: limits.MAX_ROWS_TO_READ], ()) for name, rows in data.items()]
 
 def _read_csv(path: Path) -> list:
     """读 CSV：先按编码探测解码，再交给 csv 解析一次（不二次拼接）。"""
     text = read_text_file(path)
-    rows = list(islice(csv.reader(io.StringIO(text)), MAX_ROWS_TO_READ))
+    rows = list(islice(csv.reader(io.StringIO(text)), limits.MAX_ROWS_TO_READ))
     return [(path.stem or "csv", rows, ())]
 
 def extract_excel(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:
@@ -178,7 +176,7 @@ def extract_excel(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:
             engines=["基础文件信息"],
         )
 
-    content = _render_rows(sheets)
+    content, hits = _render_rows(sheets)
     notes = []
     if not content:
         notes.append("表内没有可见单元格内容（可能是空表或整表被隐藏）")
@@ -188,4 +186,5 @@ def extract_excel(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:
         notes=notes,
         pages=len(sheets),
         pages_used=len(sheets),
+        limits_hit=hits,
     )

@@ -64,17 +64,23 @@
 
 ### 模块内常量（不是 `.env` 变量）
 
-下面这些是模块内常量，改代码才变；列在这里是为了让上限类数字都有出处，别再当成 `.env` 项去找。
+写死的上界现在**只有一处定义**：`backend/configs/limits.py`。改代码才变；列在这里是为了让上限类
+数字都有出处，别再当成 `.env` 项去找。同一张表还登记了可配置的那些（值读 `settings`），
+并规定命中时处理器只报名字、文案由表里的模板生成。
 
 | 常量 | 取值 | 所在文件 | 作用 |
 |---|---|---|---|
-| `MAX_ENTRIES` | 500 | `backend/pipelines/processors/archive.py` | `content` 里最多列出的压缩包条目数，超出只报数量 |
-| `MAX_LINKS` | 100 | `backend/pipelines/processors/html.py` | 网页链接清单上限，防止导航区把正文淹掉 |
-| `MAX_ROWS_PER_SHEET` | 5000 | `backend/pipelines/processors/excel.py` | 单张表最多渲染的行数 |
-| `MAX_ROWS_TO_READ` | 5001（`MAX_ROWS_PER_SHEET + 1`） | `backend/pipelines/processors/excel.py` | 读取上限比渲染上限多一行，用来区分「还有后续行」与「这就是最后一行」 |
-| `MAX_TABLE_ROWS` | 2000 | `backend/pipelines/processors/docx.py` | 单个表格最多渲染的行数 |
-| `TEXT_LAYER_MIN_CHARS` | 30 | `backend/pipelines/processors/pdf.py` | 判定「这份 PDF 没有文字层」的字符数下限，低于它走页面渲染 |
-| `MAX_TEXT_BYTES` | 20971520（20 MB） | `backend/utils/textfile.py` | 文本类文件的体积上限，超过则只读头部，避免超级大的日志整份进内存 |
+| `MAX_ENTRIES` | 500 | `backend/configs/limits.py` | `content` 里最多列出的压缩包条目数，超出只报数量 |
+| `MAX_LINKS` | 100 | `backend/configs/limits.py` | 网页链接清单上限，防止导航区把正文淹掉 |
+| `MAX_ROWS_PER_SHEET` | 5000 | `backend/configs/limits.py` | 单张表最多渲染的行数 |
+| `MAX_ROWS_TO_READ` | 5001（`MAX_ROWS_PER_SHEET + 1`） | `backend/configs/limits.py` | 读取上限比渲染上限多一行，用来区分「还有后续行」与「这是最后一行」 |
+| `MAX_TABLE_ROWS` | 2000 | `backend/configs/limits.py` | 单个表格最多渲染的行数（docx 与 odf 共用这一处，不再各写一份） |
+| `MAX_GRID_EXPANSION` | 200000 | `backend/configs/limits.py` | 表格跨度展开的格位总量上限 |
+| `MAX_REPEATED_SLOTS` | 100 | `backend/configs/limits.py` | odf 的 `number-*-repeated` 重复次数上限 |
+| `MAX_TEXT_BYTES` | 20971520（20 MB） | `backend/configs/limits.py` | 文本类文件的体积上限，超过则只读头部，避免超级大的日志整份进内存 |
+| `MAX_LONG_EDGE` | 1600 | `backend/configs/limits.py` | 送模型前图片长边缩到多少像素 |
+| `PREVIEW_FIRST_PAGES` | 15 | `backend/configs/limits.py` | RAG 预览取前几页 |
+| `TEXT_LAYER_MIN_CHARS` | 30 | `backend/pipelines/processors/pdf.py` | **阈值不是上界**：判定「这份 PDF 没有文字层」的字符数下限，低于它走页面渲染 |
 
 ## 2. 启动服务
 

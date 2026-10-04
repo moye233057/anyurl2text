@@ -346,6 +346,102 @@ def test_odt_nested_list_keeps_its_levels(ctx, fixture_copy):
     assert f"  - {ODT_LIST_CHILD}" in lines, f"子项没有深一层：{lines!r}"
 
 
+# ---------- 上界命中：名字进 limits_hit，文案只有一处模板 ----------
+
+def test_html_reports_the_link_limit(ctx, work_dir):
+    """
+    行为：链接数超上限时，命中的上界名进 `limits_hit`。
+
+    来源：`configs/limits.py` 的 `max_links`（100，强制点 `html.extract_html`）。
+    预期值来源：本用例自己写的 HTML——150 条互不相同的链接，不依赖对实现的任何理解。
+    """
+    anchors = "".join(f'<a href="https://example.com/{index}">链接{index}</a>' for index in range(150))
+    path = work_dir / "many_links.html"
+    path.write_text(f"<html><body>{anchors}</body></html>", encoding="utf-8")
+    assert dispatch("html", path, ctx).limits_hit == ["max_links"]
+
+
+def test_archive_reports_the_entry_limit(ctx, work_dir):
+    """
+    行为：条目数超上限时名字进 `limits_hit`，条目总数照报。
+
+    来源：`configs/limits.py` 的 `max_entries`（500，强制点 `archive.entries_to_content`）。
+    预期值来源：本用例自己写的 ZIP——600 个条目。
+    """
+    import zipfile
+
+    path = work_dir / "many_entries.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        for index in range(600):
+            archive.writestr(f"entry_{index:04d}.txt", "x")
+    result = dispatch("zip", path, ctx)
+    assert result.limits_hit == ["max_entries"]
+    assert result.entry_count == 600
+
+
+def test_spreadsheet_reports_the_row_limit(ctx, work_dir):
+    """
+    行为：单表行数超上限时名字进 `limits_hit`。
+
+    来源：`configs/limits.py` 的 `max_rows_per_sheet`（5000，强制点 `excel._render_rows`）。
+    预期值来源：本用例自己写的 CSV——6000 行；读取层多读一行（`MAX_ROWS_TO_READ=5001`），
+    所以渲染层看到的行数确实超过上限。
+    """
+    rows = "\n".join(f"{index},值{index}" for index in range(6000))
+    path = work_dir / "many_rows.csv"
+    path.write_text("序号,值\n" + rows + "\n", encoding="utf-8")
+    assert dispatch("csv", path, ctx).limits_hit == ["max_rows_per_sheet"]
+
+
+def test_the_limit_registry_is_self_consistent():
+    """
+    行为：`configs/limits.py` 的表自洽——值是正数、行为是三种之一、每条模板都能格式化出文案。
+
+    没有这条，名字少打一个字只会在 `meta.limits_hit` 里悄悄漂移，或到生成文案时才炸。
+    """
+    from configs import limits
+
+    assert limits.LIMIT_NAMES == frozenset(limits.LIMITS)
+    # 未接进 limits_hit 的那几个必须是表里的条目，不能是想当然写下的名字
+    assert limits.NOT_REPORTED_YET <= limits.LIMIT_NAMES
+    for name, limit in limits.LIMITS.items():
+        assert limit.value > 0, name
+        assert limit.behavior in (limits.ERROR, limits.TRUNCATE, limits.CLAMP), name
+        assert limits.note_for(name).strip(), name
+        assert limits.note_for(name, 7).strip(), name
+
+
+def test_limits_hit_reaches_meta_with_the_templated_note(ctx, work_dir):
+    """
+    行为：处理器报的名字经步骤 6 进 `meta.limits_hit`，`meta.notes` 里那句说明取自同一份模板。
+
+    来源：ADR-0001「响应形状只有一份定义」+ `configs/limits.py` 的 note 模板。
+    实测（2026-10-04）：这条链以前不通——上界命中只有处理器自己写的一句自由文案，
+    既没有结构化名字，也没有统一模板，改说法要动十几个文件。
+    """
+    from configs import limits
+    from pipelines.processors.schema import PreparedSource
+    from pipelines.steps.step6_assemble import build_response
+    from routers.convert.schema import Detector
+
+    anchors = "".join(f'<a href="https://example.com/{index}">{index}</a>' for index in range(150))
+    path = work_dir / "limited.html"
+    path.write_text(f"<html><body>{anchors}</body></html>", encoding="utf-8")
+    prepared = PreparedSource(
+        path=path,
+        source="limited.html",
+        file_name="limited.html",
+        mime="text/html",
+        size_bytes=path.stat().st_size,
+        ext="html",
+        detector=Detector.EXTENSION,
+        page_url="",
+    )
+    response = build_response(prepared, dispatch("html", path, ctx))
+    assert response.meta.limits_hit == ["max_links"]
+    assert limits.note_for("max_links") in response.meta.notes
+
+
 # ---------- 降级路径 ----------
 
 def test_legacy_office_degrades_to_basic_file_info(ctx, fixture_copy):

@@ -11,7 +11,6 @@
 import time
 from typing import BinaryIO, Optional
 
-import configs.settings as settings
 from configs.formats import IMAGE_EXTENSIONS, MEDIA_EXTENSIONS
 from configs.log_config import logger
 from models.deepseek import DeepSeekClient
@@ -88,9 +87,7 @@ class UnderstandPipeline:
                         "模型阶段没有产出摘要：这份内容里既没有可加工的文本，也没有读出可用的图像信息"
                     )
                 if input_truncated:
-                    result.notes.append(
-                        f"送模型的文本超过 {settings.MAX_MODEL_INPUT_CHARS} 字符，摘要只覆盖前一部分"
-                    )
+                    result.limits_hit.append("max_model_input_chars")
             else:
                 result.notes.append("没有可供模型处理的内容，understand 跳过模型调用")
 
@@ -163,9 +160,7 @@ class UnderstandPipeline:
                         "模型阶段没有产出摘要：这份内容里既没有可加工的文本，也没有读出可用的图像信息"
                     )
                 if input_truncated:
-                    result.notes.append(
-                        f"送模型的文本超过 {settings.MAX_MODEL_INPUT_CHARS} 字符，摘要只覆盖前一部分"
-                    )
+                    result.limits_hit.append("max_model_input_chars")
             else:
                 result.notes.append("没有可供模型处理的内容，understand 跳过模型调用")
 

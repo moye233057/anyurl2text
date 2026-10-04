@@ -85,6 +85,12 @@ class Meta(BaseModel):
     degrade_reason: Optional[str] = None
     truncated: bool = Field(False, description="content 是否被字符上限截断")
 
+    limits_hit: List[str] = Field(
+        default_factory=list,
+        description="本次命中的上界名，取自 configs/limits.py 的 LIMIT_NAMES；"
+        "命中说明同时按模板写进 notes。truncated 等价于命中 max_content_chars。",
+    )
+
     pages: Optional[int] = Field(None, description="文档总页数")
     pages_used: Optional[int] = Field(None, description="实际处理的页数")
     images: Optional[int] = Field(None, description="文档内嵌图总数")

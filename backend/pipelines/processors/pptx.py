@@ -99,7 +99,12 @@ def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
                 # image part，而 rId 只在页内唯一——同一张图出现在两页上时 rId 可以不同，
                 # 按 rId 去重会漏。sha1 与「同一个来源部件」在这条路上是一一对应的。
                 fingerprint = shape.image.sha1
-                if fingerprint in seen or len(assets) >= settings.MAX_EMBEDDED_IMAGES:
+                if fingerprint in seen:
+                    continue
+                # 上限只在新图真的存不下时才算命中：剩下的全是重复引用就不是命中
+                if len(assets) >= settings.MAX_EMBEDDED_IMAGES:
+                    if "max_embedded_images" not in result.limits_hit:
+                        result.limits_hit.append("max_embedded_images")
                     continue
                 # 先记来源再落盘：同一张图只试一次，转码失败也不回头重试 N 遍
                 seen.add(fingerprint)

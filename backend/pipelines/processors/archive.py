@@ -14,20 +14,20 @@ import tarfile
 import zipfile
 from pathlib import Path
 
+import configs.limits as limits
 from pipelines.processors.schema import ExtractResult
-
-# content 里最多列出的条目数，超出部分只报数量
-MAX_ENTRIES = 500
 
 
 def entries_to_content(entries: list, archive_kind: str) -> tuple:
-    """把条目名列表转成 content 文本，超出上限时截断并给出说明。"""
-    shown = entries[:MAX_ENTRIES]
+    """把条目名列表转成 content 文本，超出上限时截断。返回 (content, 条目总数, 命中的上界名)。"""
+    shown = entries[: limits.MAX_ENTRIES]
     header = f"# {archive_kind} 条目清单（共 {len(entries)} 条）"
     body = "\n".join(shown)
-    if len(entries) > MAX_ENTRIES:
-        body += f"\n... 其余 {len(entries) - MAX_ENTRIES} 条未列出"
-    return f"{header}\n{body}", len(entries)
+    hits = []
+    if len(entries) > limits.MAX_ENTRIES:
+        body += f"\n... 其余 {len(entries) - limits.MAX_ENTRIES} 条未列出"
+        hits.append("max_entries")
+    return f"{header}\n{body}", len(entries), hits
 
 def extract_zip(path: Path) -> ExtractResult:
     """列出 ZIP 条目并检测密码保护。"""
@@ -35,13 +35,14 @@ def extract_zip(path: Path) -> ExtractResult:
         infos = archive.infolist()
         encrypted = any(info.flag_bits & 0x1 for info in infos)
         entries = [info.filename for info in infos]
-    content, count = entries_to_content(entries, "ZIP")
+    content, count, hits = entries_to_content(entries, "ZIP")
     notes = ["压缩包受密码保护，只能列出条目名" if encrypted else ""]
     return ExtractResult(
         content=content,
         engines=["zipfile"],
         notes=[note for note in notes if note],
         entry_count=count,
+        limits_hit=hits,
     )
 
 def extract_tar(path: Path) -> ExtractResult:
@@ -50,8 +51,8 @@ def extract_tar(path: Path) -> ExtractResult:
     with tarfile.open(path, "r:*") as archive:
         for member in archive:
             entries.append(member.name)
-    content, count = entries_to_content(entries, "TAR")
-    return ExtractResult(content=content, engines=["tarfile"], entry_count=count)
+    content, count, hits = entries_to_content(entries, "TAR")
+    return ExtractResult(content=content, engines=["tarfile"], entry_count=count, limits_hit=hits)
 
 def extract_7z(path: Path) -> ExtractResult:
     """列出 7z 条目并检测密码保护。"""
@@ -60,13 +61,14 @@ def extract_7z(path: Path) -> ExtractResult:
     with py7zr.SevenZipFile(str(path), mode="r") as archive:
         entries = archive.getnames()
         encrypted = archive.needs_password()
-    content, count = entries_to_content(entries, "7Z")
+    content, count, hits = entries_to_content(entries, "7Z")
     notes = ["压缩包受密码保护，只能列出条目名" if encrypted else ""]
     return ExtractResult(
         content=content,
         engines=["py7zr"],
         notes=[note for note in notes if note],
         entry_count=count,
+        limits_hit=hits,
     )
 
 def extract_rar(path: Path) -> ExtractResult:
@@ -95,13 +97,14 @@ def extract_rar(path: Path) -> ExtractResult:
             entries.append(info.filename)
             if info.needs_password():
                 encrypted = True
-    content, count = entries_to_content(entries, "RAR")
+    content, count, hits = entries_to_content(entries, "RAR")
     notes = ["压缩包受密码保护，只能列出条目名" if encrypted else ""]
     return ExtractResult(
         content=content,
         engines=["rarfile"],
         notes=[note for note in notes if note],
         entry_count=count,
+        limits_hit=hits,
     )
 
 def extract_single_stream(path: Path, ext: str) -> ExtractResult:

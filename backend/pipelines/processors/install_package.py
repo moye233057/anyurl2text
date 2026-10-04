@@ -65,9 +65,10 @@ def extract_install_package(path: Path, ext: str) -> ExtractResult:
         else:
             lines.append("疑似 iOS 安装包，但缺少 Payload/*.app/Info.plist")
 
-    content, count = entries_to_content(entries, f"{ext.upper()} 容器")
+    content, count, hits = entries_to_content(entries, f"{ext.upper()} 容器")
     return ExtractResult(
         content="\n".join(lines) + "\n\n" + content,
         engines=["zipfile"],
         entry_count=count,
+        limits_hit=hits,
     )

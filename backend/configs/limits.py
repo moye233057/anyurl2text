@@ -1,0 +1,141 @@
+# -*- coding: utf-8 -*-
+"""
+限额的单一定义处。
+
+为什么要有这个文件：上界原本散在 `settings.py`（环境变量）与十来个处理器（模块级常量）里，
+谁都能再加一个，于是「这份文档为什么被截断」既没有一处能读全，也没有统一的说法。
+这里把每一条上界登记成一个 `Limit`：值、单位、命中行为、在哪强制、命中时写什么文案。
+
+两个数值来源在这里汇合：可配的读 `settings`（环境变量），写死的直接定义在本文件——
+**不再有第三个来源**。
+
+规则：
+
+- 命中时处理器只把**名字**记进 `result.limits_hit`，不自己写文案；文案只有 `note` 一处模板。
+- `LIMIT_NAMES` 是名字白名单，`meta.limits_hit` 里出现表外的名字就是漂移。
+- 阈值（判定用的下限，如「合计不足 30 字算没有文字层」）不是上界，不进表，见 `NON_LIMIT_THRESHOLDS`。
+
+为什么压得这么密：判据 2 是「总行 ≤ 250 且代码行 ≤ 150」（`tests/test_structure.py`），
+一条上界写成多行对象会顶穿预算——这是本方案里唯一有真实预算压力的文件。
+"""
+from typing import Dict, NamedTuple, Optional, Union
+
+import configs.settings as settings
+
+# 命中后的三种结果：请求失败 / 截断后继续 / 静默钳到上界
+ERROR = "error"
+TRUNCATE = "truncate"
+CLAMP = "clamp"
+
+# ---------- 写死的上界（原本散在各处理器里，收进这里） ----------
+# 单个表格最多渲染的行数；docx 与 odf 原本各有一份同值常量，合并成这一处
+MAX_TABLE_ROWS = 2000
+# 单个表格的格位展开（跨度额外占用的格位）总量上限
+MAX_GRID_EXPANSION = 200_000
+# ODF 的 `number-*-repeated` 游程上限：它常被用来把一行补到上千列
+MAX_REPEATED_SLOTS = 100
+# 压缩包 / 安装包的条目清单上限
+MAX_ENTRIES = 500
+# 单张工作表的行数上限；读取时多读一行，用来区分「还有后续行」与「这是最后一行」
+MAX_ROWS_PER_SHEET = 5000
+MAX_ROWS_TO_READ = MAX_ROWS_PER_SHEET + 1
+# 网页链接清单上限
+MAX_LINKS = 100
+# 文本类（txt/md/json/xml/csv…）读取上限
+MAX_TEXT_BYTES = 20 * 1024 * 1024
+# RAG 预览取前几页
+PREVIEW_FIRST_PAGES = 15
+# 送模型前图片长边缩到多大（不是截断，是编码前的等比缩放）
+MAX_LONG_EDGE = 1600
+
+class Limit(NamedTuple):
+    """
+    一条上界。
+
+    属性：
+        value — 上界本身；文案里的 {value} 默认换成它，也可由调用方传实际值覆盖。
+        unit — 单位，给文档与人看（bytes / chars / rows / count / seconds）。
+        behavior — 命中后的结果：ERROR / TRUNCATE / CLAMP 三者之一。
+        configurable — 值是否可经环境变量调整（True 读 settings，False 写死在本文件）。
+        enforced_at — 在哪强制，`文件:行` 形式，多处用 " / " 分隔。
+        note — 命中时写进 `meta.notes` 的模板，用 str.format 填 {value}。
+    """
+
+    value: Union[int, float]
+    unit: str
+    behavior: str
+    configurable: bool
+    enforced_at: str
+    note: str
+
+LIMITS: Dict[str, Limit] = {
+    # ---------- 下载层（可配置） ----------
+    "max_download_bytes": Limit(settings.MAX_DOWNLOAD_BYTES, "bytes", ERROR, True,
+        "app.reject_oversized_body / step1_download._stream_to_file / step3_prepare.prepare_from_upload",
+        "文件超过 {value} 字节上限已拒绝（调大等于放宽防护）"),
+    "max_redirects": Limit(settings.MAX_REDIRECTS, "count", ERROR, True, "step1_download.download",
+        "跳转超过 {value} 次已停止"),
+    # ---------- 交付文本与模型输入（可配置） ----------
+    "max_content_chars": Limit(settings.MAX_CONTENT_CHARS, "chars", TRUNCATE, True, "step6_assemble.build_response",
+        "content 超过 {value} 字符已截断"),
+    "max_model_input_chars": Limit(settings.MAX_MODEL_INPUT_CHARS, "chars", TRUNCATE, True,
+        "step5_enhance.summarize / understand.run_from_upload, run_from_url",
+        "送模型的文本超过 {value} 字符，摘要只覆盖前一部分"),
+    "llm_max_tokens": Limit(settings.LLM_MAX_TOKENS, "tokens", TRUNCATE, True, "deepseek.chat",
+        "模型单次输出上限 {value} token，超出部分被截断"),
+    # ---------- 素材与页面（可配置） ----------
+    "max_embedded_images": Limit(settings.MAX_EMBEDDED_IMAGES, "count", TRUNCATE, True,
+        "docx._save_embedded_images / pdf._save_embedded_images / pptx.extract_pptx",
+        "内嵌图超过 {value} 张，其余未送模型识读"),
+    "rendered_page_max": Limit(settings.RENDERED_PAGE_MAX, "count", TRUNCATE, True, "pdf.extract_pdf",
+        "扫描件超过 {value} 页，其余未渲染送模型"),
+    "asr_max_audio_seconds": Limit(settings.ASR_MAX_AUDIO_SECONDS, "seconds", TRUNCATE, True, "media.enhance_media",
+        "音轨超过 {value} 秒，超出部分未转写"),
+    # ---------- 各格式的读取上限（写死在本文件） ----------
+    "max_entries": Limit(MAX_ENTRIES, "count", TRUNCATE, False, "archive.entries_to_content",
+        "容器内条目超过 {value} 条，清单已截断"),
+    "max_rows_per_sheet": Limit(MAX_ROWS_PER_SHEET, "rows", TRUNCATE, False, "excel._render_rows",
+        "工作表超过 {value} 行，其余行未读出"),
+    "max_table_rows": Limit(MAX_TABLE_ROWS, "rows", TRUNCATE, False, "docx._render_table / odf._render_table",
+        "表格超过 {value} 行，其余行未列出"),
+    "max_grid_expansion": Limit(MAX_GRID_EXPANSION, "count", TRUNCATE, False, "grid.GridBuilder.__init__",
+        "表格跨度展开超过 {value} 个格位，超出的合并跨度按 1 格处理"),
+    "max_repeated_slots": Limit(MAX_REPEATED_SLOTS, "count", CLAMP, False, "odf._render_table",
+        "ODF 的 number-*-repeated 超过 {value} 次，按 {value} 次处理"),
+    "max_links": Limit(MAX_LINKS, "count", TRUNCATE, False, "html.extract_html",
+        "网页链接超过 {value} 条，清单已截断"),
+    "max_text_bytes": Limit(MAX_TEXT_BYTES, "bytes", TRUNCATE, False, "textfile.read_text_file",
+        "文本超过 {value} 字节，超出部分未读取"),
+    "preview_first_pages": Limit(PREVIEW_FIRST_PAGES, "count", TRUNCATE, False, "rag_extract._try_catalogue",
+        "预览只取前 {value} 页"),
+    "max_long_edge": Limit(MAX_LONG_EDGE, "count", CLAMP, False, "images.encode_image",
+        "图片长边缩到 {value} 像素后再编码"),
+}
+
+# 名字白名单：meta.limits_hit 里出现表外的名字就是漂移
+LIMIT_NAMES = frozenset(LIMITS)
+
+# 已登记、但**还没**接进 meta.limits_hit 的上界。它们语义上会截断，只是强制点拿不到 result：
+# textfile.read_text_file 是返回字符串的工具函数，rag_extract 的预览走自己的响应契约，
+# llm_max_tokens 要看模型的 finish_reason 才判得出有没有截断。
+# 登记在这里是为了让「上界一览」不缺项——接上报名字之前，别把文档读成已全覆盖。
+NOT_REPORTED_YET = frozenset({"max_text_bytes", "preview_first_pages", "llm_max_tokens"})
+
+# 判定用的阈值不是上界：命中它们不产生截断，也不该出现在 limits_hit 里
+NON_LIMIT_THRESHOLDS = frozenset({
+    "text_layer_min_chars",            # 合计不足 30 字 → 判定为「没有文字层」
+    "rendered_page_retry_min_chars",   # 整页识别结果短于 20 字 → 切半重试
+    "blank_page_luma_tolerance",       # 判空白页的灰度容差
+})
+
+def note_for(name: str, actual: Optional[Union[int, float]] = None) -> str:
+    """
+    按表里的模板生成命中说明。
+
+    功能：把「给使用者看的文案」收敛到本文件一处——处理器只报名字，改文案不必动十几个文件。
+    应用场景：处理器与组装层命中上界时调用。
+    输入：name — LIMITS 里的键；actual — 实际值，省略则用表里的上界。
+    输出：说明文案。键不在表里 → KeyError（漂移应当当场炸掉，不是静默放过）。
+    """
+    limit = LIMITS[name]
+    return limit.note.format(value=limit.value if actual is None else actual)

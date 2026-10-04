@@ -47,6 +47,7 @@
 | 处理器输入产出结构 + 各格式共用的读素材实现 | `backend/pipelines/processors/schema.py`、`processors/reading.py` | 已实现 |
 | 一格式一个文件的处理器 | `backend/pipelines/processors/{pdf,docx,pptx,excel,odf,plaintext,rtf,html,image,media,archive,install_package}.py` | 已实现 |
 | 表格格位建模：合并单元格的唯一表示与唯一渲染 | `backend/pipelines/processors/grid.py`、`processors/xlsx_merges.py`（xlsx 合并区从包内 XML 读） | 已实现 |
+| 限额的单一定义处：值 + 命中行为 + 强制点 + 命中文案模板 | `backend/configs/limits.py` | 已实现 |
 | RAG 分页与印刷目录规则 | `backend/pipelines/processors/pdf_pages.py`、`processors/catalogue.py` | 已实现 |
 | 模型出口（一模型一文件）+ 图片编码 + 提示词模板 | `backend/models/deepseek.py`、`paddle_ocr.py`、`qwen3_asr.py`、`images.py`、`prompts/` | 已实现 |
 | 通用件：文本解码与文件头、`LlmError`、计价记账、抽音轨 | `backend/utils/textfile.py`、`errors.py`、`usage.py`、`ffmpeg.py` | 已实现 |

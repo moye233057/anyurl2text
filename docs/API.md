@@ -81,7 +81,8 @@
 | `detector` | 总是 | 靠什么认出来的：`extension` / `content_type` / `magic` / `unknown` |
 | `degraded` | 总是 | 是否走了「基础文件信息」降级产出 |
 | `degrade_reason` | 降级时 | 缺的是什么依赖 |
-| `truncated` | 总是 | `content` 是否被字符上限截断 |
+| `truncated` | 总是 | `content` 是否被字符上限截断。等价于 `limits_hit` 里含 `max_content_chars` |
+| `limits_hit` | 总是 | 本次命中的上界名，取自 `configs/limits.py` 的 `LIMIT_NAMES`（如 `max_links`、`max_rows_per_sheet`、`max_embedded_images`）；同一句命中说明按表里的模板进 `notes` |
 | `pages` / `pages_used` | 文档类 | 总页数与实际处理页数；扫描件超出渲染上限时两者不等 |
 | `images` / `images_used` | 文档类 | 内嵌图**引用次数**与实际落盘处理数；同一张图被引多次只处理一次（按来源部件去重），所以源里有重复引用时两者会不等 |
 | `image` | 源本身是图片 | 尺寸 / 格式 / 色彩模式 / 帧数 / 常用 EXIF |

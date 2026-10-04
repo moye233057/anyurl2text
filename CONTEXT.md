@@ -73,6 +73,12 @@ _Avoid_: 全页 OCR、整页识别
 `MAX_EMBEDDED_IMAGES` 都按对象算，而 `meta.images` 记的是引用次数。
 _Avoid_: 文档图片、插图
 
+**上界**（限额）：
+一个「最多允许多少」的上限：字节、字符、行、页、张、条。命中后要么失败（`error`）、要么截断
+（`truncate`）、要么静默钳到上界（`clamp`）。**阈值不是上界**——「不足 30 字算没有文字层」是判定用的
+下限，命中它不产生截断。全部上界登记在 `configs/limits.py`，命中后名字进 `meta.limits_hit`。
+_Avoid_: 限制、门限、上限值
+
 **用量**（`usage`）：
 本次调用真实的模型 token 与折算成本，按模型分别记账。不存在用内容长度冒充 token 的字段。
 _Avoid_: inputTokens / outputTokens

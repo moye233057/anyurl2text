@@ -120,12 +120,8 @@ def enhance_media(result: ExtractResult) -> EnhanceOutcome:
 
     duration = result.audio_meta.duration_seconds if result.audio_meta else None
     if duration and duration > settings.ASR_MAX_AUDIO_SECONDS:
-        return EnhanceOutcome(
-            notes=[
-                f"音轨 {duration:.0f} 秒，超过 ASR_MAX_AUDIO_SECONDS="
-                f"{settings.ASR_MAX_AUDIO_SECONDS:.0f} 秒上限，未做转写"
-            ]
-        )
+        result.limits_hit.append("asr_max_audio_seconds")
+        return EnhanceOutcome(notes=["音轨超过转写时长上限，未做转写"])
 
     transcription = qwen3_asr.transcribe(tracks[0].path)
     language_note = f"，语种判定为 {transcription.language}" if transcription.language else ""

@@ -20,12 +20,10 @@ from docx.oxml.ns import qn
 from docx.table import Table
 from PIL import Image
 
+import configs.limits as limits
 import configs.settings as settings
 from pipelines.processors.grid import GridBuilder, fill_from_specs, render_tsv
 from pipelines.processors.schema import EmbeddedAsset, ExtractContext, ExtractResult
-
-# 单个表格最多渲染的行数，避免广表把 content 淹掉
-MAX_TABLE_ROWS = 2000
 
 def _textbox_texts(document: "Document") -> list:
     """收集正文之外文本框里的文字（Word 三类文本框容器）。"""
@@ -55,7 +53,7 @@ def _row_specs(row) -> list:
         specs.append((text, tc.grid_span or 1, tc.vMerge not in (None, "restart")))
     return specs
 
-def _render_table(table) -> str:
+def _render_table(table) -> tuple:
     """
     把表格渲染成制表符分隔的行。
 
@@ -63,33 +61,42 @@ def _render_table(table) -> str:
           再交给格位网格填充与渲染——纵向合并的行跨度由网格从继续格数出来。
     应用场景：extract_docx 遇到表格时调用。
     输入：table — python-docx 的表格对象。
-    输出：制表符分隔的多行文本；合并区文本只出现一次、覆盖位占列位。
+    输出：(制表符分隔的多行文本, 命中的上界名列表)；合并区文本只出现一次、覆盖位占列位。
     """
     total_rows = len(table.rows)
-    specs_by_row = [_row_specs(row) for row in islice(table.rows, MAX_TABLE_ROWS)]
-    lines = render_tsv(fill_from_specs(GridBuilder(), specs_by_row), MAX_TABLE_ROWS)
-    if total_rows > MAX_TABLE_ROWS:
-        lines.append(f"... 其余 {total_rows - MAX_TABLE_ROWS} 行未列出")
-    return "\n".join(lines)
+    builder = GridBuilder()
+    specs_by_row = [_row_specs(row) for row in islice(table.rows, limits.MAX_TABLE_ROWS)]
+    lines = render_tsv(fill_from_specs(builder, specs_by_row), limits.MAX_TABLE_ROWS)
+    hits = []
+    if total_rows > limits.MAX_TABLE_ROWS:
+        lines.append(f"... 其余 {total_rows - limits.MAX_TABLE_ROWS} 行未列出")
+        hits.append("max_table_rows")
+    if builder.limit_hit:
+        hits.append("max_grid_expansion")
+    return "\n".join(lines), hits
 
-def _save_embedded_images(document: "Document", ctx: ExtractContext) -> list:
+def _save_embedded_images(document: "Document", ctx: ExtractContext, result: ExtractResult) -> list:
     """
     把前若干张内嵌图转存成 PNG 素材，返回素材列表。
 
     功能：按 `a:blip` 的来源关系 id 去重后落盘——同一张图被引 N 次只落一次，
            `MAX_EMBEDDED_IMAGES` 也因而记在**不同的图**上，重复引用不会挤掉后面的图。
+           真的因上限少读了图时，把 `max_embedded_images` 记到 result 上（以前这里是静默的）。
     应用场景：`prepare_assets=True` 的 extract 与 understand 两条路。
-    输入：document — python-docx 文档对象；ctx — 抽取上下文（用它的 work_dir）。
+    输入：document — python-docx 文档对象；ctx — 抽取上下文（用它的 work_dir）；
+          result — 抽取产出，只用来记命中的上界名。
     输出：EmbeddedAsset 列表，数量不超过 MAX_EMBEDDED_IMAGES 且文件互不相同。
     """
     assets = []
     seen = set()
     for blip in document.element.body.iter(qn("a:blip")):
-        if len(assets) >= settings.MAX_EMBEDDED_IMAGES:
-            break
         rel_id = blip.get(qn("r:embed")) or blip.get(qn("r:link"))
         if not rel_id or rel_id in seen:
             continue
+        # 上限只在遇到**新的**来源时判定：剩下的全是重复引用就不算命中，别误报
+        if len(assets) >= settings.MAX_EMBEDDED_IMAGES:
+            result.limits_hit.append("max_embedded_images")
+            break
         part = document.part.related_parts.get(rel_id)
         blob = getattr(part, "blob", None)
         if not blob:
@@ -157,10 +164,12 @@ def extract_docx(path: Path, ctx: ExtractContext) -> ExtractResult:
         )
 
     blocks = []
+    hits = []
     image_marker = 0
     for item in document.iter_inner_content():
         if isinstance(item, Table):
-            rendered = _render_table(item)
+            rendered, table_hits = _render_table(item)
+            hits.extend(table_hits)
             if rendered:
                 blocks.append(rendered)
             continue
@@ -180,6 +189,7 @@ def extract_docx(path: Path, ctx: ExtractContext) -> ExtractResult:
         pages=declared_pages or None,
         images=_count_embedded_images(document),
         images_used=0,
+        limits_hit=hits,
     )
     if declared_pages:
         result.notes.append("页数取自文档自带的 docProps/app.xml，是保存时的缓存值，可能不精确")
@@ -190,7 +200,7 @@ def extract_docx(path: Path, ctx: ExtractContext) -> ExtractResult:
         result.notes.append(f"正文之外另有 {len(textboxes)} 个文本框，已单独成节")
 
     if ctx.prepare_assets:
-        assets = _save_embedded_images(document, ctx)
+        assets = _save_embedded_images(document, ctx, result)
         result.assets = assets
         result.images_used = len(assets)
     return result

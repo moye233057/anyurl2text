@@ -13,11 +13,9 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
+import configs.limits as limits
 from pipelines.processors.schema import ExtractResult
 from utils.textfile import read_text_file
-
-# 链接清单上限：网页导航区动辄几百条，全带上会把正文淹掉
-MAX_LINKS = 100
 
 def _clean_text(raw: str) -> str:
     """去掉连续空行与行内多余空白，保留段落结构。"""
@@ -68,7 +66,7 @@ def extract_html(path: Path, page_url: str = "") -> ExtractResult:
 
     # 先把全部去重链接收集完再截断：提前 break 的话，就再也说不清「总共多少条」了
     total_links = len(links)
-    links = links[:MAX_LINKS]
+    links = links[: limits.MAX_LINKS]
 
     body = _clean_text(soup.get_text(separator="\n"))
 
@@ -81,11 +79,8 @@ def extract_html(path: Path, page_url: str = "") -> ExtractResult:
     if links:
         blocks.append("## 链接\n" + "\n".join(links))
 
-    notes = []
-    if total_links > MAX_LINKS:
-        notes.append(f"页面共 {total_links} 条去重链接，content 只保留前 {MAX_LINKS} 条")
     return ExtractResult(
         content="\n\n".join(block for block in blocks if block),
         engines=["BeautifulSoup"],
-        notes=notes,
+        limits_hit=["max_links"] if total_links > limits.MAX_LINKS else [],
     )

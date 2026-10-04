@@ -16,10 +16,8 @@ OOXML、真实重叠的跨度）都由 `GridBuilder` 吸收，下游只按列位
 """
 from typing import Dict, List, Optional, Tuple
 
+import configs.limits as limits
 from pipelines.processors.schema import CoveredSlot, GridSpan, TableGrid
-
-# 格位展开（跨度额外占用的格位）总量上限：宽表行数没超也可能格位极多，由它兜住
-MAX_GRID_EXPANSION = 200_000
 
 def _holds_place(slot) -> bool:
     """这个格位是否占住一个位置：覆盖位、有文字的 origin、带跨度的 origin 都算。"""
@@ -28,7 +26,7 @@ def _holds_place(slot) -> bool:
 class GridBuilder:
     """网格的唯一构造者：逐行 `next_row()`，一行内按列序 `place()` / `covered()`，最后 `finish()`。"""
 
-    def __init__(self, limit: int = MAX_GRID_EXPANSION) -> None:
+    def __init__(self, limit: int = limits.MAX_GRID_EXPANSION) -> None:
         self.grid: TableGrid = []
         self.limit_hit: Optional[str] = None
         self._pending: Dict[Tuple[int, int], Tuple[int, int]] = {}

@@ -13,8 +13,7 @@ from pathlib import Path
 
 import chardet
 
-# 文本类文件的体积上限：超过就只读前若干字节，避免把超大日志整份拉进内存
-MAX_TEXT_BYTES = 20 * 1024 * 1024
+import configs.limits as limits
 
 # 文件头前若干字节的十六进制预览长度
 HEADER_PREVIEW_BYTES = 16
@@ -27,10 +26,10 @@ def read_text_file(path: Path) -> str:
           最后退回 utf-8 + errors=replace，保证不抛异常。
     应用场景：txt / csv / md / json / xml / html 的落地读盘，多处共用。
     输入：path — 文件路径。
-    输出：解码后的文本。超出 MAX_TEXT_BYTES 时按该上限截读。
+    输出：解码后的文本。超出 limits.MAX_TEXT_BYTES 时按该上限截读。
     """
     with path.open("rb") as handle:
-        raw = handle.read(MAX_TEXT_BYTES)
+        raw = handle.read(limits.MAX_TEXT_BYTES)
     if raw.startswith(b"\xef\xbb\xbf"):
         return raw.decode("utf-8-sig", errors="replace")
     try:

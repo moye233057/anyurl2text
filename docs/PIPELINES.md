@@ -341,6 +341,13 @@ ODS 与 CSV 也在这个文件里：这一族都按行列渲染成同一种文�
 
 ## 4. 相关上限一览
 
+**只有一个定义处**：`backend/configs/limits.py` 的 `LIMITS` 表。可配置的值读 `settings`（环境变量），
+写死的直接定义在那里——两个来源在同一个文件里汇合，不再有第三个。
+
+表里每条登记了值、单位、命中行为（`error` / `truncate` / `clamp`）、强制点（按函数名，不写行号——
+行号会随任何一次编辑腐烂）与命中文案模板。**处理器命中时只把名字记进 `result.limits_hit`**，
+文案由 `step6_assemble` 按模板统一生成：改说法只动一处，不必翻十几个处理器。
+
 | 配置项 | 默认 | 作用点 |
 |---|---|---|
 | `MAX_DOWNLOAD_BYTES` | 200MB | 下载与上传边写边校验 |
@@ -350,14 +357,27 @@ ODS 与 CSV 也在这个文件里：这一族都按行列渲染成同一种文�
 | `MAX_MODEL_INPUT_CHARS` | 12 万字符 | 步骤 5 送模型的输入截断 |
 | `MAX_EMBEDDED_IMAGES` | 3 张 | **不同的**内嵌图落盘与批量识读上限（同一张图被引多次只算一张） |
 | `RENDERED_PAGE_MAX` / `RENDERED_PAGE_DPI` | 10 页 / 150 | 扫描件页面渲染 |
-| `RENDERED_PAGE_RETRY_MIN_CHARS` | 20 字 | 整页识别失败的切半重试阈值 |
+| `RENDERED_PAGE_RETRY_MIN_CHARS` | 20 字 | 整页识别失败的切半重试**阈值**（不是上界，见 `NON_LIMIT_THRESHOLDS`） |
 | `ASR_MAX_AUDIO_SECONDS` / `FFMPEG_TIMEOUT_SEC` | 600 秒 / 120 秒 | 转写与抽音轨 |
-| `MAX_ENTRIES`（模块内常量） | 500 条 | 压缩包条目清单 |
-| `MAX_ROWS_PER_SHEET` / `MAX_ROWS_TO_READ`（模块内常量） | 5000 / 5001 行 | 表格读取上限；后者比前者多一行，用来区分「还有后续行」与「这是最后一行」 |
-| `MAX_TABLE_ROWS`（模块内常量） | 2000 行 | docx 与 odf 的表格渲染上限（两个文件各有一份同值常量） |
-| `MAX_REPEATED_SLOTS`（模块内常量） | 100 | odf：`number-*-repeated` 的重复次数上限，防尾部补位把网格撑爆 |
-| `MAX_LINKS`（模块内常量） | 100 条 | 网页链接清单 |
-| `TEXT_LAYER_MIN_CHARS`（模块内常量） | 30 字 | PDF 文字层判定 |
-| `MAX_TEXT_BYTES`（模块内常量） | 20MB | 文本类读取上限 |
+| `MAX_ENTRIES` | 500 条 | 压缩包条目清单 |
+| `MAX_ROWS_PER_SHEET` / `MAX_ROWS_TO_READ` | 5000 / 5001 行 | 表格读取上限；后者比前者多一行，用来区分「还有后续行」与「这是最后一行」 |
+| `MAX_TABLE_ROWS` | 2000 行 | docx 与 odf 的表格渲染上限（**共用一处**，不再各写一份） |
+| `MAX_GRID_EXPANSION` | 200000 | 表格跨度展开的格位总量上限 |
+| `MAX_REPEATED_SLOTS` | 100 | odf：`number-*-repeated` 的重复次数上限，防尾部补位把网格撑爆 |
+| `MAX_LINKS` | 100 条 | 网页链接清单 |
+| `TEXT_LAYER_MIN_CHARS` | 30 字 | PDF 文字层判定**阈值**（不是上界） |
+| `MAX_TEXT_BYTES` | 20MB | 文本类读取上限 |
+| `MAX_LONG_EDGE` | 1600 | 送模型前图片长边缩放目标 |
+| `PREVIEW_FIRST_PAGES` | 15 页 | RAG 预览页数 |
 
-`.env` 变量与全部取值见 [RUNBOOK.md](./RUNBOOK.md) 的配置项全表，模块内常量（不是 `.env` 变量，改代码才变）见紧随其后的模块内常量表，判定见 [adr.md](./adr.md)。
+**哪些会出现在 `meta.limits_hit` 里**：行为是 `truncate` 的**大部分**——真的少读了用户的字节 / 行 / 页 / 张。
+`error` 类（下载体积、跳转数）本身就是失败响应，用户直接从 `error` 与状态码看到；`clamp` 类
+（图片等比缩放、ODF 补位次数）是常规归一化，命中不代表数据丢失，报出来只会变成噪声——
+它们登记在表里备查，但不报告。
+
+**还没接上的三个**（`configs/limits.py` 的 `NOT_REPORTED_YET`）：`max_text_bytes`、
+`preview_first_pages`、`llm_max_tokens`。它们语义上也会截断，只是强制点拿不到 `result`——
+`textfile.read_text_file()` 是返回字符串的工具函数、RAG 预览走自己的响应契约、
+`llm_max_tokens` 要看模型的 `finish_reason` 才判得出有没有截断。**别把这一节读成已全覆盖。**
+
+`.env` 变量与全部取值见 [RUNBOOK.md](./RUNBOOK.md) 的配置项全表，写死的上界见紧随其后的模块内常量表，判定见 [adr.md](./adr.md)。
