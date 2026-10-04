@@ -120,3 +120,132 @@ def test_entry_validation_carries_the_documented_code(url, code, param, status):
     assert caught.value.param == param
     assert caught.value.status_code == status
     assert str(caught.value), "面向使用者的文案不能为空"
+
+
+# ---------- 第 3 组：模型阶段失败进 meta.model_error ----------
+
+class _FakeLedger:
+    """假用量账本：管线收尾时只读一次，这里恒为「没有用量」。"""
+
+    @staticmethod
+    def snapshot():
+        return None
+
+class _FakeClient:
+    """假模型客户端：不联网、不读 API key，只提供管线要用的那一个入口。"""
+
+    ledger = _FakeLedger()
+
+
+def test_model_failure_lands_in_meta_model_error(fixture_copy, monkeypatch):
+    """
+    行为：understand 的模型那一段失败时，`meta.notes` 里那句中文保留、结构化说明进
+          `meta.model_error`，而 `error` 仍是 null、HTTP 仍是 200。
+
+    来源：`configs/errors.py` 第 3 组的通道约定（模型失败不夺走确定性产出）+ ADR-0007。
+    做法：把「取字节」与「调模型」两处换成假件——不联网、不需要 API key、不起服务，
+    只验这条通道的接线；真调模型的贵缝在 `-m model` 那一组里。
+    """
+    from pipelines import understand
+    from pipelines.processors.schema import PreparedSource
+    from routers.convert.schema import Detector
+    from utils.errors import LlmError
+
+    path, ext = fixture_copy("plain.txt")
+    prepared = PreparedSource(
+        path=path,
+        source=path.name,
+        file_name=path.name,
+        mime=None,
+        size_bytes=path.stat().st_size,
+        ext=ext,
+        detector=Detector.EXTENSION,
+        page_url="",
+    )
+    monkeypatch.setattr(understand.step3_prepare, "prepare_from_url", lambda url: (prepared, 1))
+    monkeypatch.setattr(understand.step3_prepare, "cleanup", lambda prepared: None)
+    monkeypatch.setattr(understand, "DeepSeekClient", _FakeClient)
+
+    def fail(*args, **kwargs):
+        raise LlmError("模型服务不可达", "ocr_unreachable", "ocr")
+
+    monkeypatch.setattr(understand.step4_extract, "enhance", fail)
+
+    outcome = understand.UnderstandPipeline().run_from_url("https://example.invalid/plain.txt")
+
+    assert outcome.status == 200, "模型失败不该把整条请求变成失败"
+    assert outcome.response.error is None, "模型失败走 meta.model_error，不走 error"
+    info = outcome.response.meta.model_error
+    assert info is not None, "模型失败必须留下机器可读的说明"
+    assert info.code == "ocr_unreachable"
+    assert info.param == "ocr"
+    assert info.code in errors.MODEL_FAILURE_CODES
+    assert any(
+        "模型增强失败" in note for note in outcome.response.meta.notes
+    ), "那句中文是既有验收判据，不能丢"
+
+
+# ---------- 未预期异常：失败响应的形状也只有一份 ----------
+
+def _prepared_from(fixture_copy, name: str = "plain.txt"):
+    """把一个样例包成 PreparedSource：不下载、不识别，直接进抽取阶段。"""
+    from pipelines.processors.schema import PreparedSource
+    from routers.convert.schema import Detector
+
+    path, ext = fixture_copy(name)
+    return PreparedSource(
+        path=path,
+        source=path.name,
+        file_name=path.name,
+        mime=None,
+        size_bytes=path.stat().st_size,
+        ext=ext,
+        detector=Detector.EXTENSION,
+        page_url="",
+    )
+
+
+def test_unexpected_failure_after_preparation_becomes_internal(fixture_copy, monkeypatch):
+    """
+    行为：抽取阶段冒出没预料到的异常时返回 500 + `error.code == "internal"`，而不是让异常冒到框架
+          （冒上去的默认 500 body 不是 ConvertResponse 形状，调用方得判两种形状）。
+
+    来源：`configs/errors.py` 的 `internal` + ADR-0001「error 恒存在」。异常文本**不回显**：
+    它是内部细节，回显等于把路径与依赖版本塞进契约。
+    """
+    from pipelines import extract
+
+    prepared = _prepared_from(fixture_copy)
+    monkeypatch.setattr(extract.step3_prepare, "prepare_from_url", lambda url: (prepared, 1))
+    monkeypatch.setattr(extract.step3_prepare, "cleanup", lambda prepared: None)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("内部路径 /srv/secret/anyurl2text 打不开")
+
+    monkeypatch.setattr(extract.step4_extract, "run_extraction", boom)
+
+    outcome = extract.ExtractPipeline().run_from_url("https://example.invalid/plain.txt")
+
+    assert outcome.status == 500
+    assert outcome.response.error is not None, "失败响应必须带 error"
+    assert outcome.response.error.code == "internal"
+    assert "secret" not in outcome.response.error.message, "异常文本不回显给调用方"
+
+
+def test_unexpected_failure_before_preparation_becomes_internal(monkeypatch):
+    """
+    行为：准备工作（下载 / 识别 / 建临时目录）这一段出未预期异常时同样兜成 `internal` 的 500。
+
+    来源：ADR-0001。这一段原本只接 `FetchError`，其它异常会整条冒到框架。
+    """
+    from pipelines import extract
+
+    def boom(url):
+        raise OSError("临时目录建不出来")
+
+    monkeypatch.setattr(extract.step3_prepare, "prepare_from_url", boom)
+
+    outcome = extract.ExtractPipeline().run_from_url("https://example.invalid/plain.txt")
+
+    assert outcome.status == 500
+    assert outcome.response.error.code == "internal"

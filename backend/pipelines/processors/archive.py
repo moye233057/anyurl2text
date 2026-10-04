@@ -87,6 +87,7 @@ def extract_rar(path: Path) -> ExtractResult:
             notes=["未安装 rarfile，RAR 只能识别格式，无法列出条目"],
             degraded=True,
             degrade_reason="缺 rarfile 依赖，RAR 的目录列举不可用",
+            degrade_code="rar_dependency_missing",
         )
 
     entries = []
@@ -159,10 +160,12 @@ def extract_archive(path: Path, ext: str) -> ExtractResult:
             engines=["基础文件信息"],
             degraded=True,
             degrade_reason=f"压缩包解析失败: {exc}",
+            degrade_code="archive_parse_failed",
         )
     return ExtractResult(
         content="",
         engines=["基础文件信息"],
         degraded=True,
         degrade_reason=f"未支持的压缩格式: .{ext}",
+        degrade_code="archive_unsupported",
     )

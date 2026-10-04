@@ -15,8 +15,8 @@ HTTP 状态码。每条只有一个码；同一触发点不得两个码；不同
 - 第 2 组（降级）→ `meta.degrade_code`，HTTP 200（ADR-0003：降级是能力边界而不是故障）；
 - 第 3 组（模型阶段失败）→ `meta.model_error.code`，HTTP 200（确定性抽取产出仍然交付）。
 
-**第 1、3 组已落**；第 2 组目前只有音轨那几个（`FfmpegError` 与音轨读取），
-各格式的解析降级随 P1-5 第 3 步补齐。每个码后面注明它的触发点，就是为了防止「同一个码两处用」。
+**第 1、2、3 组已全落**：硬失败 16 个、降级 21 个（音轨 6 + 各格式解析降级 15）、
+模型阶段失败 15 个。每个码后面注明它的触发点，就是为了防止「同一个码两处用」。
 """
 
 HARD_FAILURE_CODES = frozenset({
@@ -38,7 +38,11 @@ HARD_FAILURE_CODES = frozenset({
     "internal",                            # 兜底：未预期的异常；文案不回显异常文本（500）
 })
 
-# 第 2 组：降级（进 meta.degrade_code，HTTP 200）。本步先落音轨那几个，其余随第 3 步补齐。
+# 第 2 组：降级（进 meta.degrade_code，HTTP 200）。21 个：音轨 6 + 各格式解析降级 15。
+# 与设计文档 `03-错误模型与限额.md` 的第 2 组（20 个）差一条：odf 那两处拆成
+# `odf_parse_failed` / `odf_content_failed`。理由是设计给它标的是「同码，param 区分」，
+# 而降级通道只有 code + reason 两个字段、没有 param；不拆的话「容器坏了」与
+# 「content.xml 非法」在机器侧就分不开，正是这一轮要消掉的那种不可读。
 DEGRADE_CODES = frozenset({
     "soundfile_dependency_missing",        # media.extract_media：没装 soundfile，结构信息读不出来
     "ffmpeg_dependency_missing",           # ffmpeg.extract_audio_track：没装 imageio-ffmpeg
@@ -46,6 +50,21 @@ DEGRADE_CODES = frozenset({
     "ffmpeg_start_failed",                 # ffmpeg.extract_audio_track：ffmpeg 无法启动
     "ffmpeg_track_failed",                 # ffmpeg.extract_audio_track：源里没有音轨 / 容器损坏
     "media_track_read_failed",             # media.extract_media：抽出的音轨读不出参数
+    "unsupported_type",                    # step4_extract：认不出的扩展名 / 没有解析路径
+    "legacy_office_requires_converter",    # step4_extract：老版 Office 需要 LibreOffice 转换器
+    "rar_dependency_missing",              # archive.extract_rar：没装 rarfile，列不出条目
+    "archive_parse_failed",                # archive.extract_archive：压缩包解析抛异常
+    "archive_unsupported",                 # archive.extract_archive：走到末尾的未支持格式
+    "docx_parse_failed",                   # docx.extract_docx：python-docx 打不开
+    "excel_unsupported",                   # excel.extract_excel：未支持的表格格式
+    "excel_parse_failed",                  # excel.extract_excel：表格解析抛异常
+    "image_decode_failed",                 # image.extract_image：Pillow 解码失败
+    "install_package_parse_failed",        # install_package：安装包不是有效的 ZIP 容器
+    "odf_parse_failed",                    # odf.extract_odf：ZIP 容器里读不出 content.xml
+    "odf_content_failed",                  # odf.extract_odf：content.xml 不是合法 XML
+    "pdf_parse_failed",                    # pdf.extract_pdf：PyMuPDF 打不开
+    "pdf_encrypted",                       # pdf.extract_pdf：受密码保护，authenticate 失败
+    "pptx_parse_failed",                   # pptx.extract_pptx：python-pptx 打不开
 })
 
 # 第 3 组：模型阶段失败（进 meta.model_error.code，HTTP 200）。全部由 LlmError 抛出，

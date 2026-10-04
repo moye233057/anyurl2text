@@ -118,6 +118,7 @@ def extract_pdf(path: Path, ctx: ExtractContext) -> ExtractResult:
         return ExtractResult(
             degraded=True,
             degrade_reason=f"PDF 打开失败: {exc}",
+            degrade_code="pdf_parse_failed",
             engines=["PyMuPDF"],
         )
 
@@ -126,6 +127,7 @@ def extract_pdf(path: Path, ctx: ExtractContext) -> ExtractResult:
             return ExtractResult(
                 degraded=True,
                 degrade_reason="PDF 受密码保护，无法提取内容",
+                degrade_code="pdf_encrypted",
                 engines=["PyMuPDF"],
             )
 

@@ -58,15 +58,17 @@ def _degrade_reason(ext: str) -> str:
         return "老版 Office 格式需要 LibreOffice 转换器，本机不具备，只能给出文件信息"
     return "没有可用于该格式的纯代码解析路径，只能给出文件信息"
 
-def extract_file_info(path: Path, reason: str, extra_notes: list = None) -> ExtractResult:
+def extract_file_info(path: Path, reason: str, degrade_code: str, extra_notes: list = None) -> ExtractResult:
     """
     产出降级的基础文件信息（ADR 0003）。
 
-    功能：只声明「这是什么、多大」，把降级原因写进 degrade_reason，供调用方区分
+    功能：只声明「这是什么、多大」，把降级原因写进 degrade_reason、机器名写进 degrade_code，供调用方区分
           「能力边界」与「故障」；不往 content 写自然语言模板句——模板句机器没法解析，
           事实全部进 meta。
     应用场景：dispatch 遇到覆盖不了的扩展名，或该类型缺依赖时调用。
-    输入：path — 文件路径；reason — 降级原因；extra_notes — 附加上下文说明。
+    输入：path — 文件路径；reason — 降级原因（给人看）；degrade_code — 降级的稳定机器名
+          （`configs/errors.py` 的 DEGRADE_CODES，必填：每个降级点都得自己声明是哪个码，
+          免得「忘了传」被悄悄标成 `unsupported_type`）；extra_notes — 附加上下文说明。
     输出：ExtractResult，content 为空，degraded=True。
     """
     notes = list(extra_notes or [])
@@ -79,6 +81,7 @@ def extract_file_info(path: Path, reason: str, extra_notes: list = None) -> Extr
         notes=notes,
         degraded=True,
         degrade_reason=reason,
+        degrade_code=degrade_code,
     )
 
 def dispatch(ext: str, path: Path, ctx: ExtractContext, page_url: str = "") -> ExtractResult:
@@ -93,10 +96,14 @@ def dispatch(ext: str, path: Path, ctx: ExtractContext, page_url: str = "") -> E
     输出：ExtractResult。
     """
     if not ext:
-        return extract_file_info(path, "无法识别文件类型，只能给出文件信息")
+        return extract_file_info(
+            path, "无法识别文件类型，只能给出文件信息", degrade_code="unsupported_type"
+        )
 
     if ext in OFFICE_LEGACY_EXTENSIONS:
-        return extract_file_info(path, _degrade_reason(ext))
+        return extract_file_info(
+            path, _degrade_reason(ext), degrade_code="legacy_office_requires_converter"
+        )
 
     # ---------- 文档 ----------
     if ext == "pdf":
@@ -130,7 +137,9 @@ def dispatch(ext: str, path: Path, ctx: ExtractContext, page_url: str = "") -> E
     if ext in INSTALL_PACKAGE_EXTENSIONS:
         return install_package.extract_install_package(path, ext)
 
-    return extract_file_info(path, f"没有 .{ext} 的解析路径，只能给出文件信息")
+    return extract_file_info(
+        path, f"没有 .{ext} 的解析路径，只能给出文件信息", degrade_code="unsupported_type"
+    )
 
 def enhance(prepared: PreparedSource, result: ExtractResult, client: DeepSeekClient) -> EnhanceOutcome:
     """

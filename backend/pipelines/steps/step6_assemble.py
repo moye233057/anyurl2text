@@ -6,10 +6,12 @@
 `error` 恒存在，成功为 None，调用方不必判两种响应形状。错误语义在抛出的地方最清楚，
 所以状态码与响应体一起返回，不让路由去猜。
 """
+import time
 from typing import Any, NamedTuple, Optional
 
 import configs.limits as limits
 import configs.settings as settings
+from configs.log_config import logger
 from pipelines.steps.step2_detect import modality_from_extension
 from pipelines.processors.schema import ExtractResult, PreparedSource
 from routers.convert.schema import ConvertResponse, ErrorInfo, Meta, Modality, Timings, truncate_content
@@ -68,6 +70,7 @@ def build_response(
         degraded=result.degraded,
         degrade_reason=result.degrade_reason,
         degrade_code=result.degrade_code,
+        model_error=result.model_error,
         truncated=truncated,
         limits_hit=limits_hit,
         pages=result.pages,
@@ -124,3 +127,19 @@ def error_response(
         ),
         status,
     )
+
+def internal_error_response(source: str, exc: Exception, started_at: float, stage: str) -> PipelineResult:
+    """
+    未预期异常的兜底：写日志 + 返回 `internal` 的 500，让失败响应的形状也只有一份。
+
+    功能：异常文本只进日志、**不回显给调用方**——那是内部细节（路径、依赖版本），
+          回显等于把实现细节塞进契约；查因看服务日志。
+    应用场景：两个管线的入口阶段各自兜底（`extract.py` / `understand.py`）。没有它，
+          未预期异常会绕过 ConvertResponse 直接冒到框架，调用方拿到的是另一种形状的 500。
+    输入：source — 原始输入（URL 或文件名）；exc — 捕获到的异常；started_at — 入口起始的
+          `time.monotonic()`；stage — 进日志的阶段名（extract / understand）。
+    输出：PipelineResult（`internal` 的 500）。
+    """
+    logger.error(f"{stage} 未预期异常: {exc}", exc_info=True)
+    total_ms = int((time.monotonic() - started_at) * 1000)
+    return error_response(source, "内部错误，请查看服务日志", total_ms, 500, "internal")

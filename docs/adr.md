@@ -48,3 +48,5 @@
 ## ADR-0009 · 2026-09-28 · RAG 抽取用独立契约，不进 ConvertResponse
 
 检索入库需要页列表与目录区间，而 ConvertResponse 的 `content` 必须在 extract / understand 下逐字节一致、不能为 RAG 改形状，所以新增 `POST /rag/extract/file`，响应 `{kind, pages?, text?, catalogue_ranges?, error}`、`error` 恒存在、**不调用模型**。PDF 先统一走 pymupdf4llm 分页（`extract_pdf_pages()`），再只看前 `PREVIEW_FIRST_PAGES`（15 页）找印刷目录：抽出则加上目录区间返回，抽不出才复用 extract 内核的交付文本。实现落点：路由 `routers/rag/`，编排 `pipelines/rag_extract.py`，目录规则 `processors/catalogue.py`，分页 `processors/pdf_pages.py`，契约 `routers/rag/schema.py`。代价是多一份契约与一条管线，对比界面不渲染此口。
+
+**2026-10-04 补：这一口的 `error` 保持字符串，与 convert 的 `{code, message, param}` 有意不同**（决定已拍板，别再当漏改）。两个理由：① 已知消费方 `Individual/self-rag` 的 `offline/extract/methods/anyurl.py` 只判 `error` 真假（`if error: raise RuntimeError(f"...: {error}")`）、不解析内容，改成对象它照旧能跑但报错文案会变成字典字面量，收益为零；② `routers/rag/schema.py` 是**叶子模块**（`tests/test_structure.py` 的判据 1 与 `test_leaf_modules_include_the_contracts` 都靠它），复用 `routers/convert/schema.py` 的 `ErrorInfo` 会让它不再是叶子，而 `pipelines/rag_extract.py` 正靠「叶子任何层都能用」才能 import 它。触发条件：出现第一个按 `error.code` 判分支的消费方时，连同「把 `ErrorInfo` 提成独立叶子模块」一起改。

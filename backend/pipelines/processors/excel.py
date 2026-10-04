@@ -167,12 +167,14 @@ def extract_excel(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:
             return ExtractResult(
                 degraded=True,
                 degrade_reason=f"未支持的表格格式: .{ext}",
+                degrade_code="excel_unsupported",
                 engines=["基础文件信息"],
             )
     except Exception as exc:
         return ExtractResult(
             degraded=True,
             degrade_reason=f"表格解析失败: {exc}",
+            degrade_code="excel_parse_failed",
             engines=["基础文件信息"],
         )
 

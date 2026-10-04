@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Union
 
-from routers.convert.schema import AudioMeta, Detector, ImageMeta
+from routers.convert.schema import AudioMeta, Detector, ErrorInfo, ImageMeta
 
 @dataclass
 class PreparedSource:
@@ -84,6 +84,9 @@ class ExtractResult:
     # 降级的稳定机器名（`configs/errors.py` 的 DEGRADE_CODES）：degraded 为真时应有值。
     # 与 degrade_reason 分工同 error：code 给程序看、不许改；reason 给使用者看、会改措辞。
     degrade_code: Optional[str] = None
+    # 模型阶段失败的结构化说明（`configs/errors.py` 的 MODEL_FAILURE_CODES）：由 understand 填，
+    # 抽取产出仍然交付——它是一条独立通道，与 degraded 互不影响。
+    model_error: Optional[ErrorInfo] = None
     # 命中的上界名（`configs/limits.py` 的 LIMIT_NAMES）：处理器只记名字、不写文案，
     # 文案由 step6_assemble 按表里的模板统一生成——改说法不必动十几个处理器。
     limits_hit: List[str] = field(default_factory=list)

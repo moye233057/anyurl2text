@@ -82,6 +82,7 @@
 | `degraded` | 总是 | 是否走了「基础文件信息」降级产出 |
 | `degrade_reason` | 降级时 | 缺的是什么依赖，面向使用者的说法 |
 | `degrade_code` | 降级时 | 降级的稳定机器名（`configs/errors.py` 的 `DEGRADE_CODES`），与 `degrade_reason` 分工同 `error` 的 `code` / `message` |
+| `model_error` | 模型阶段失败时 | `{code, message, param}`：模型那一段失败的结构化说明，`code` 取自 `configs/errors.py` 的 `MODEL_FAILURE_CODES`。此时确定性抽取产出**仍然交付**、HTTP 仍 200、`error` 仍为 null |
 | `truncated` | 总是 | `content` 是否被字符上限截断。等价于 `limits_hit` 里含 `max_content_chars` |
 | `limits_hit` | 总是 | 本次命中的上界名，取自 `configs/limits.py` 的 `LIMIT_NAMES`（如 `max_links`、`max_rows_per_sheet`、`max_embedded_images`）；同一句命中说明按表里的模板进 `notes` |
 | `pages` / `pages_used` | 文档类 | 总页数与实际处理页数；扫描件超出渲染上限时两者不等 |
@@ -124,7 +125,7 @@
 | 422 | 入参问题：URL 为空、协议不是 http(s)、缺主机名、命中内网或保留地址 |
 | 502 | 上游失败：HTTP 错误码、域名解析失败、重定向异常、网络错误 |
 | 504 | 下载超时 |
-| 500 | 未预期异常：`/rag/extract/file` 的兜底分支（见 §11），convert 两个接口不走这条 |
+| 500 | 未预期异常：`internal` 的兜底分支（convert 两个接口的入口阶段与 `/rag/extract/file` 都有）；此时 `error.code` 恒为 `internal` |
 
 **响应体始终带 `error` 字段**，所以「只看状态码」和「只看 body」两种消费方式都能用。失败时它是
 `{code, message, param}`：`code` 是**稳定机器名**（见 `configs/errors.py` 的码表），按它分组统计、
@@ -195,3 +196,5 @@
 ```
 
 PDF 抽出印刷目录：`kind=pdf`，带 `pages` 与 `catalogue_ranges`。否则：`kind` 为扩展名，带 `text`（extract 内核的交付文本，不截断、不调模型）。失败时 `kind=error` 或仍带扩展名，`error` 非空。
+
+**这里的 `error` 是一句字符串，与 convert 的 `{code, message, param}` 有意不同**（见 ADR-0009 的 2026-10-04 补记）：已知消费方只判它真假、不解析内容；统一成对象要先让这份契约不再是叶子模块。等出现按 `error.code` 判分支的消费方时再一起改。

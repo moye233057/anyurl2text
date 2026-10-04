@@ -178,6 +178,7 @@ def extract_odf(path: Path, ext: str) -> ExtractResult:
             engines=["标准库"],
             degraded=True,
             degrade_reason=f"{kind}容器解析失败: {exc}",
+            degrade_code="odf_parse_failed",
         )
 
     try:
@@ -188,6 +189,7 @@ def extract_odf(path: Path, ext: str) -> ExtractResult:
             engines=["标准库"],
             degraded=True,
             degrade_reason=f"{kind}的 content.xml 解析失败: {exc}",
+            degrade_code="odf_content_failed",
         )
 
     body = root.find(OFFICE_NS + "body")

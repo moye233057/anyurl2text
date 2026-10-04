@@ -160,6 +160,7 @@ def extract_docx(path: Path, ctx: ExtractContext) -> ExtractResult:
         return ExtractResult(
             degraded=True,
             degrade_reason=f"DOCX 打开失败: {exc}",
+            degrade_code="docx_parse_failed",
             engines=["python-docx"],
         )
 

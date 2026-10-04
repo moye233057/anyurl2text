@@ -5,6 +5,9 @@
 每一步在方法体里点明对应的步骤文件与它的入口方法：
 `step3_prepare.prepare_from_url()`（内部依次走 step1 下载、step2 识别）→ `step4_extract.run_extraction()`
 → `step6_assemble.build_response()`。understand 走的是同一批步骤（ADR 0002/0007），本文件不碰模型。
+
+兜底：入口阶段冒出**未预期**异常时返回 `internal` 的 500——失败响应的形状也只有一份
+（ADR 0001）；异常文本只进日志，不回显给调用方。
 """
 import time
 from typing import BinaryIO, Optional
@@ -34,6 +37,8 @@ class ExtractPipeline:
             return step6_assemble.error_response(
                 url, str(exc), int((time.monotonic() - started) * 1000), exc.status_code, exc.code, exc.param
             )
+        except Exception as exc:
+            return step6_assemble.internal_error_response(url, exc, started, "extract")
         try:
             # ── 步骤 4：按扩展名跑处理器，产出 content（交付文本）与素材清单
             result, parse_ms = step4_extract.run_extraction(prepared, prepare_assets=False)
@@ -49,6 +54,8 @@ class ExtractPipeline:
                 ),
                 200,
             )
+        except Exception as exc:
+            return step6_assemble.internal_error_response(prepared.source, exc, started, "extract")
         finally:
             step3_prepare.cleanup(prepared)
 
@@ -69,6 +76,8 @@ class ExtractPipeline:
             return step6_assemble.error_response(
                 file_name, str(exc), int((time.monotonic() - started) * 1000), exc.status_code, exc.code, exc.param
             )
+        except Exception as exc:
+            return step6_assemble.internal_error_response(file_name, exc, started, "extract")
         try:
             # ── 步骤 4：按扩展名跑处理器
             result, parse_ms = step4_extract.run_extraction(prepared, prepare_assets=False)
@@ -84,6 +93,8 @@ class ExtractPipeline:
                 ),
                 200,
             )
+        except Exception as exc:
+            return step6_assemble.internal_error_response(prepared.source, exc, started, "extract")
         finally:
             step3_prepare.cleanup(prepared)
 

@@ -38,7 +38,13 @@ export interface Meta {
   detector: string
   degraded: boolean
   degrade_reason?: string | null
+  /** 降级的稳定机器名，见后端 configs/errors.py 的 DEGRADE_CODES；与 degrade_reason 分工同 error 的 code / message */
+  degrade_code?: string | null
+  /** 模型阶段失败的结构化说明；此时抽取产出仍然交付、error 仍为 null */
+  model_error?: ErrorInfo | null
   truncated: boolean
+  /** 本次命中的上界名，见后端 configs/limits.py；等价关系：truncated 等价于含 max_content_chars */
+  limits_hit: string[]
   pages?: number | null
   pages_used?: number | null
   images?: number | null

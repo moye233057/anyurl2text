@@ -23,6 +23,7 @@ from pipelines.steps import (
     step6_assemble,
 )
 from pipelines.steps.step6_assemble import PipelineResult
+from routers.convert.schema import ErrorInfo
 from utils.errors import LlmError
 
 # SVG 是矢量图，没法当位图送模型；它也没有可摘要的文本，所以整类跳过模型
@@ -52,6 +53,8 @@ class UnderstandPipeline:
             return step6_assemble.error_response(
                 url, str(exc), int((time.monotonic() - started) * 1000), exc.status_code, exc.code, exc.param
             )
+        except Exception as exc:
+            return step6_assemble.internal_error_response(url, exc, started, "understand")
         try:
             # ── 步骤 4：按扩展名跑处理器（prepare_assets=True：准备内嵌图与扫描页素材）
             result, parse_ms = step4_extract.run_extraction(prepared, prepare_assets=True)
@@ -78,14 +81,14 @@ class UnderstandPipeline:
                 except LlmError as exc:
                     model_failed = True
                     result.notes.append(f"模型增强失败: {exc}")
+                    # notes 里那句中文是既有验收判据，必须留着；结构化说明另走 meta.model_error
+                    result.model_error = ErrorInfo(code=exc.code, message=str(exc), param=exc.param)
                     logger.error(f"understand 模型阶段失败: {exc}")
                 model_ms = int((time.monotonic() - model_started) * 1000)
                 # 没报错却也没有摘要，说明模型确实没东西可加工（例如一张既无文字、又给不出描述的图）。
                 # 不写一句说明的话，summary 为 null 看起来像功能坏了。
                 if summary is None and not model_failed:
-                    result.notes.append(
-                        "模型阶段没有产出摘要：这份内容里既没有可加工的文本，也没有读出可用的图像信息"
-                    )
+                    result.notes.append("模型阶段没有产出摘要：这份内容里既没有可加工的文本，也没有读出可用的图像信息")
                 if input_truncated:
                     result.limits_hit.append("max_model_input_chars")
             else:
@@ -107,6 +110,8 @@ class UnderstandPipeline:
                 ),
                 200,
             )
+        except Exception as exc:
+            return step6_assemble.internal_error_response(prepared.source, exc, started, "understand")
         finally:
             step3_prepare.cleanup(prepared)
 
@@ -127,6 +132,8 @@ class UnderstandPipeline:
             return step6_assemble.error_response(
                 file_name, str(exc), int((time.monotonic() - started) * 1000), exc.status_code, exc.code, exc.param
             )
+        except Exception as exc:
+            return step6_assemble.internal_error_response(file_name, exc, started, "understand")
         try:
             # ── 步骤 4：按扩展名跑处理器（prepare_assets=True）
             result, parse_ms = step4_extract.run_extraction(prepared, prepare_assets=True)
@@ -153,12 +160,12 @@ class UnderstandPipeline:
                 except LlmError as exc:
                     model_failed = True
                     result.notes.append(f"模型增强失败: {exc}")
+                    # notes 里那句中文是既有验收判据，必须留着；结构化说明另走 meta.model_error
+                    result.model_error = ErrorInfo(code=exc.code, message=str(exc), param=exc.param)
                     logger.error(f"understand 模型阶段失败: {exc}")
                 model_ms = int((time.monotonic() - model_started) * 1000)
                 if summary is None and not model_failed:
-                    result.notes.append(
-                        "模型阶段没有产出摘要：这份内容里既没有可加工的文本，也没有读出可用的图像信息"
-                    )
+                    result.notes.append("模型阶段没有产出摘要：这份内容里既没有可加工的文本，也没有读出可用的图像信息")
                 if input_truncated:
                     result.limits_hit.append("max_model_input_chars")
             else:
@@ -180,6 +187,8 @@ class UnderstandPipeline:
                 ),
                 200,
             )
+        except Exception as exc:
+            return step6_assemble.internal_error_response(prepared.source, exc, started, "understand")
         finally:
             step3_prepare.cleanup(prepared)
 

@@ -75,6 +75,7 @@ def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
         return ExtractResult(
             degraded=True,
             degrade_reason=f"PPTX 打开失败: {exc}",
+            degrade_code="pptx_parse_failed",
             engines=["python-pptx"],
         )
 

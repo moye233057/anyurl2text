@@ -146,6 +146,7 @@ def extract_image(path: Path, ext: str) -> ExtractResult:
             engines=["Pillow"],
             degraded=True,
             degrade_reason=f"图片解码失败: {exc}",
+            degrade_code="image_decode_failed",
         )
         return result
 

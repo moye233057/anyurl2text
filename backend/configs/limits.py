@@ -96,6 +96,8 @@ LIMITS: Dict[str, Limit] = {
         "容器内条目超过 {value} 条，清单已截断"),
     "max_rows_per_sheet": Limit(MAX_ROWS_PER_SHEET, "rows", TRUNCATE, False, "excel._render_rows",
         "工作表超过 {value} 行，其余行未读出"),
+    # 不加模块前缀（设计文档 03 写的是 `docx_max_table_rows`）：docx 与 odf **共用**这一条限额，
+    # 值与强制点都只有一处，带模块前缀反而要拆成两个名字、两份值。命名以本文件为准。
     "max_table_rows": Limit(MAX_TABLE_ROWS, "rows", TRUNCATE, False, "docx._render_table / odf._render_table",
         "表格超过 {value} 行，其余行未列出"),
     "max_grid_expansion": Limit(MAX_GRID_EXPANSION, "count", TRUNCATE, False, "grid.GridBuilder.__init__",

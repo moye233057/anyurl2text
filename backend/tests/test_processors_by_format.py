@@ -18,6 +18,7 @@ r"""
 """
 import pytest
 
+from configs import errors
 from pipelines.processors.schema import ExtractContext
 from pipelines.steps.step4_extract import dispatch
 
@@ -455,6 +456,7 @@ def test_legacy_office_degrades_to_basic_file_info(ctx, fixture_copy):
     assert result.content == ""
     assert result.degraded is True
     assert result.degrade_reason, "降级必须说明缺的是什么"
+    assert result.degrade_code == "legacy_office_requires_converter"
     assert result.engines == ["基础文件信息"]
 
 
@@ -466,6 +468,7 @@ def test_unknown_extension_degrades_to_basic_file_info(ctx, work_dir):
     assert result.content == ""
     assert result.degraded is True
     assert result.degrade_reason
+    assert result.degrade_code == "unsupported_type"
 
 
 def test_missing_extension_degrades_to_basic_file_info(ctx, fixture_copy):
@@ -475,3 +478,47 @@ def test_missing_extension_degrades_to_basic_file_info(ctx, fixture_copy):
     assert result.content == ""
     assert result.degraded is True
     assert result.degrade_reason
+    assert result.degrade_code == "unsupported_type"
+
+
+# 内容不是对应容器时，每个格式该报的那一个码（`configs/errors.py` 的 DEGRADE_CODES）
+BROKEN_INPUT_CODES = (
+    ("docx", "docx_parse_failed"),
+    ("pptx", "pptx_parse_failed"),
+    ("xlsx", "excel_parse_failed"),
+    ("odt", "odf_parse_failed"),
+    ("pdf", "pdf_parse_failed"),
+    ("png", "image_decode_failed"),
+    ("apk", "install_package_parse_failed"),
+)
+
+
+@pytest.mark.parametrize(("ext", "code"), BROKEN_INPUT_CODES)
+def test_broken_input_carries_the_degrade_code(ext, code, ctx, work_dir):
+    """
+    行为：容器损坏 / 解不开时，降级带上「哪一类失败」的稳定机器名，且该码在码表白名单里。
+
+    来源：`configs/errors.py` 的第 2 组 + ADR-0003（降级是能力边界，但边界也要机器可读）。
+    这条盯的是「同一句中文说明由不同分支产生」——只写 degrade_reason 的话，调用方分不出
+    「容器坏了」与「压根不支持」。
+    """
+    path = work_dir / f"broken.{ext}"
+    path.write_bytes(f"this is definitely not a {ext} container".encode())
+    result = dispatch(ext, path, ctx)
+    assert result.degraded is True
+    assert result.degrade_code == code, f"{ext} 应报 {code}，实际 {result.degrade_code}"
+    assert result.degrade_code in errors.DEGRADE_CODES
+
+
+def test_every_degrade_branch_declares_a_code(ctx, work_dir):
+    """
+    行为：降级必然带码——`degraded=True` 却没有 `degrade_code` 就是漏了这条通道。
+
+    来源：`configs/errors.py`「degraded=true 时必有 degrade_code」。上面那条参数化用例只盖
+    几个格式，这条用「无扩展名」这个最通用的降级入口把「必有」本身钉住。
+    """
+    path = work_dir / "nameless"
+    path.write_bytes(b"no extension at all")
+    result = dispatch("", path, ctx)
+    assert result.degraded and result.degrade_code in errors.DEGRADE_CODES
+

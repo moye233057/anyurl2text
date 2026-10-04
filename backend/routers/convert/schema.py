@@ -73,6 +73,19 @@ class AudioMeta(BaseModel):
     channels: Optional[int] = None
     format: Optional[str] = Field(None, description="音轨容器格式，如 WAV / MP3")
 
+class ErrorInfo(BaseModel):
+    """
+    一次失败或降级的结构化说明。
+
+    `code` 是**稳定机器名**（`configs/errors.py` 的码表），给程序看、不许改；
+    `message` 是给使用者看的文案，会改。`param` 指出哪个入参或字段出错（`url` / `upload`），
+    没有明确归属时为 null。
+    """
+
+    code: str = Field(..., description="稳定错误码，见 configs/errors.py；是契约的一部分，不随文案改")
+    message: str = Field(..., description="面向使用者的说明，可能随时改措辞")
+    param: Optional[str] = Field(None, description="出错的是哪个入参或字段；无明确归属时为 null")
+
 class Meta(BaseModel):
     """机器可读的抽取现场信息。"""
 
@@ -85,6 +98,11 @@ class Meta(BaseModel):
     degrade_reason: Optional[str] = None
     degrade_code: Optional[str] = Field(
         None, description="降级的稳定机器名（configs/errors.py 的 DEGRADE_CODES）；未降级为 null"
+    )
+    model_error: Optional[ErrorInfo] = Field(
+        None,
+        description="模型阶段失败的结构化说明（code 取自 configs/errors.py 的 MODEL_FAILURE_CODES）；"
+        "此时确定性抽取产出仍然交付，HTTP 仍 200、error 仍为 null",
     )
     truncated: bool = Field(False, description="content 是否被字符上限截断")
 
@@ -136,19 +154,6 @@ class Timings(BaseModel):
     parse_ms: int = 0
     model_ms: int = 0
     total_ms: int = 0
-
-class ErrorInfo(BaseModel):
-    """
-    一次失败的结构化说明。
-
-    `code` 是**稳定机器名**（`configs/errors.py` 的 `HARD_FAILURE_CODES`），给程序看、不许改；
-    `message` 是给使用者看的文案，会改。`param` 指出哪个入参或字段出错（`url` / `upload`），
-    没有明确归属时为 null。
-    """
-
-    code: str = Field(..., description="稳定错误码，见 configs/errors.py；是契约的一部分，不随文案改")
-    message: str = Field(..., description="面向使用者的说明，可能随时改措辞")
-    param: Optional[str] = Field(None, description="出错的是哪个入参或字段；无明确归属时为 null")
 
 class ConvertResponse(BaseModel):
     """两个接口统一的响应体。"""

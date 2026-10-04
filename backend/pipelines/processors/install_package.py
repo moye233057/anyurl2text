@@ -49,6 +49,7 @@ def extract_install_package(path: Path, ext: str) -> ExtractResult:
             notes=[f"不是有效的 ZIP 容器: {exc}"],
             degraded=True,
             degrade_reason="安装包容器解析失败",
+            degrade_code="install_package_parse_failed",
         )
 
     if ext == "apk":
