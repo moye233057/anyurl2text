@@ -47,7 +47,7 @@
 | OLE 复合文档的目录流名读取（判 doc / xls / ppt 的第二层依据） | `backend/pipelines/steps/ole_directory.py` | 已实现 |
 | 处理器输入产出结构 + 各格式共用的读素材实现 | `backend/pipelines/processors/schema.py`、`processors/reading.py` | 已实现 |
 | 一格式一个文件的处理器 | `backend/pipelines/processors/{pdf,docx,pptx,excel,odf,ofd,plaintext,rtf,html,image,media,archive,install_package}.py` | 已实现 |
-| 表格格位建模：合并单元格的唯一表示与唯一渲染 | `backend/pipelines/processors/grid.py`、`processors/xlsx_merges.py`（xlsx 合并区从包内 XML 读）、`processors/ods_merges.py`（ods 合并区，以及值行按覆盖位对齐） | 已实现 |
+| 表格格位建模：合并单元格的唯一表示与唯一渲染 | `backend/pipelines/processors/grid.py`、`processors/xlsx_merges.py`（xlsx 合并区从包内 XML 读）、`processors/ods_merges.py`（ods 合并区，以及值行按覆盖位对齐）、`processors/html_tables.py`（网页与 EPUB 章节的 `<table>`） | 已实现 |
 | DOCX 超链接的收集（叶子模块：`docx.py` 贴着单文件预算，把它拆出来） | `backend/pipelines/processors/docx_links.py` | 已实现 |
 | EPUB 抽取：容器 → OPF → 按 spine 拼章节 + 内部引用提升成文档级目标 | `backend/pipelines/processors/epub.py` | 已实现 |
 | OFD 抽取：容器 → `OFD.xml` → 文档根 → 按 `Pages/Page` 声明的页序逐页取正文 | `backend/pipelines/processors/ofd.py` | 已实现 |

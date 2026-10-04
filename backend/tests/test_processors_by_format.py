@@ -472,6 +472,79 @@ def test_covered_tail_behind_a_short_row_gap_materializes():
     assert check_grid(grid) == [], f"网格不自洽：{check_grid(grid)}"
 
 
+# ---------- 网页与 EPUB 的表格：走格位网格，不再拉平 ----------
+
+@pytest.mark.capability_table
+def test_html_table_is_rendered_as_columns(ctx, fixture_copy):
+    """
+    行为：网页里的 `<table>` 按行列渲成制表符行，而不是每个单元格各占一行。
+
+    来源：README「支持哪些输入」的网页行 + 「尽量保留真实信息」；`html_tables.py` 的模块 docstring
+          记了为什么（`get_text()` 拉平之后列对应关系就没了）。
+    预期值来源：样例 `backend/data/page.html` 的表格是写死的 3 行 × 2 列
+          （表头「组别 / 关门时间」，两行数据「十公里 / 3 小时」「二十一公里 / 6 小时」）。
+    实测（2026-10-04）：改前这 6 个单元格各占一行，列对应关系丢失。
+    """
+    path, _ = fixture_copy("page.html")
+    content = dispatch("html", path, ctx).content
+    assert "组别\t关门时间" in content, f"表头应渲成一行两列：{content!r}"
+    assert "十公里\t3 小时" in content
+    assert "二十一公里\t6 小时" in content
+    assert "组别\n关门时间" not in content, "不应该再是「一个单元格一行」的拉平形状"
+
+
+@pytest.mark.capability_table
+def test_html_table_spans_go_through_the_grid(ctx, work_dir):
+    """
+    行为：`colspan` / `rowspan` 交给格位网格——合并文本只出现一次，被吞掉的格位占列位（行首空列保住）。
+
+    来源：`html_tables.table_to_tsv` 的 docstring（`rowspan="0"` 按「跨到本行组末尾」处理）；
+          `01-表格格位建模.md` 的不变式（内容与跨度只挂在 origin 上）。
+    预期值来源：本用例自己写的 HTML（横向合并一处、跨两行的纵向合并一处）。
+    """
+    path = work_dir / "spanned.html"
+    path.write_text(
+        "<html><body><table>"
+        "<tr><td colspan='2'>合并标题</td><td>c1</td></tr>"
+        "<tr><td rowspan='2'>纵向</td><td>b2</td><td>c2</td></tr>"
+        "<tr><td>b3</td><td>c3</td></tr>"
+        "</table></body></html>",
+        encoding="utf-8",
+    )
+    content = dispatch("html", path, ctx).content
+    assert content.count("合并标题") == 1, f"横向合并的文本重复了：{content!r}"
+    assert content.count("纵向") == 1, f"纵向合并的文本重复了：{content!r}"
+    table_lines = [line for line in content.splitlines() if "\t" in line]
+    assert table_lines[0] == "合并标题\t\tc1", table_lines
+    assert {line.count("\t") for line in table_lines} == {2}, f"同一张表行宽不一致：{table_lines}"
+    assert "\tb3\tc3" in table_lines, "被纵向合并吞掉的列位要占住位置（行首空列不能丢）"
+
+
+@pytest.mark.capability_table
+def test_epub_chapter_table_goes_through_the_grid():
+    """
+    行为：EPUB 章节里的 `<table>` 与网页同一条路——`_chapter_body` 交出制表符块，而不是拉平的文本。
+
+    来源：`html_tables.py` 是网页与 EPUB 共用的那一份（同一能力只在最靠近它的缝验一次，
+          所以这里直接测章节处理器，不另起一个 epub 样例）。
+    预期值来源：本用例自己写的章节 XHTML（表 2 行 × 2 列，前后各一段）。
+    """
+    from bs4 import BeautifulSoup
+
+    from pipelines.processors.epub import _chapter_body
+
+    soup = BeautifulSoup(
+        "<html><body><p>前一段</p>"
+        "<table><tr><th>甲</th><th>乙</th></tr><tr><td>1</td><td>2</td></tr></table>"
+        "<p>后一段</p></body></html>",
+        "html.parser",
+    )
+    body, hits = _chapter_body(soup)
+    assert "甲\t乙" in body and "1\t2" in body, f"章节表格应渲成制表符行：{body!r}"
+    assert "前一段" in body and "后一段" in body, "表格前后的段落不能丢"
+    assert hits == []
+
+
 # ---------- 内嵌图：同一张图被引多次 ----------
 
 # 样例生成参数（`scripts/make_fixtures.py` 阶段 14）：photo.png 被引 3 次、screenshot.png 被引 1 次，

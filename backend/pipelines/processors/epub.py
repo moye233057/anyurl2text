@@ -25,6 +25,7 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 
 import configs.limits as limits
+from pipelines.processors import html_tables
 from pipelines.processors.schema import ExtractContext, ExtractResult
 
 # EPUB 规范要求容器里必有这个文件，它指向 OPF（真正的包描述）
@@ -112,19 +113,21 @@ def _chapter_title(soup) -> str:
             return heading.get_text(strip=True)
     return ""
 
-def _chapter_body(soup) -> str:
+def _chapter_body(soup) -> tuple:
     """
     取一章的正文文本。
 
     功能：丢掉 `DROP_TAGS` 与 `<head>`——`<title>` 已经进了分章标记，留在正文里会重复出现；
-           然后按块级元素取文本并整理空行。
+           然后按块级元素取文本并整理空行；表格走格位网格渲成制表符块后回填到原位置。
     应用场景：extract_epub 逐章调用；必须在取过标题之后再调用。
     输入：soup — 该章 XHTML 的 BeautifulSoup 对象。
-    输出：正文文本。
+    输出：(正文文本, 命中的上界名列表)。
     """
     for tag in soup(DROP_TAGS + ("head",)):
         tag.decompose()
-    return _clean((soup.body or soup).get_text(separator="\n"))
+    table_blocks, table_hits = html_tables.render_tables(soup)
+    text = _clean((soup.body or soup).get_text(separator="\n"))
+    return html_tables.restore_blocks(text, table_blocks), table_hits
 
 def _chapter_links(soup, chapter_path: str) -> list:
     """
@@ -202,7 +205,7 @@ def extract_epub(path: Path, ctx: ExtractContext) -> ExtractResult:
                 markup = archive.read(chapter)
                 soup = BeautifulSoup(markup, "html.parser")
                 title = _chapter_title(soup)
-                body = _chapter_body(soup)
+                body, chapter_hits = _chapter_body(soup)
                 chapter_links = _chapter_links(soup, chapter)
             except Exception as exc:
                 # 单章坏掉不该让整份文档失败：跳过它、如实说明，其余章照常交付。
@@ -213,6 +216,7 @@ def extract_epub(path: Path, ctx: ExtractContext) -> ExtractResult:
                 continue
             marker = f"=== 章节 {index}: {title} ===" if title else f"=== 章节 {index} ==="
             blocks.append(f"{marker}\n\n{body}")
+            hits.extend(chapter_hits)
             links.extend(chapter_links)
         if unreadable and not blocks:
             return _degraded(f"EPUB 的 {unreadable} 个章节都读不出来（容器损坏或受保护）")
