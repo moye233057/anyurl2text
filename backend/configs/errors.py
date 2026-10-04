@@ -15,8 +15,8 @@ HTTP 状态码。每条只有一个码；同一触发点不得两个码；不同
 - 第 2 组（降级）→ `meta.degrade_code`，HTTP 200（ADR-0003：降级是能力边界而不是故障）；
 - 第 3 组（模型阶段失败）→ `meta.model_error.code`，HTTP 200（确定性抽取产出仍然交付）。
 
-**本文件目前只落了第 1 组**（P1-5 第 1 步：`FetchError` 带码）；第 2、3 组随第 2、3 步落进来。
-每个码后面注明它的触发点，就是为了防止「同一个码两处用」。
+**第 1、3 组已落**；第 2 组目前只有音轨那几个（`FfmpegError` 与音轨读取），
+各格式的解析降级随 P1-5 第 3 步补齐。每个码后面注明它的触发点，就是为了防止「同一个码两处用」。
 """
 
 HARD_FAILURE_CODES = frozenset({
@@ -36,4 +36,34 @@ HARD_FAILURE_CODES = frozenset({
     "download_budget_exhausted",           # step1_download._stream_to_file：请求时间预算用尽（504）
     "download_timeout",                    # step1_download.download：httpx 超时（504）
     "internal",                            # 兜底：未预期的异常；文案不回显异常文本（500）
+})
+
+# 第 2 组：降级（进 meta.degrade_code，HTTP 200）。本步先落音轨那几个，其余随第 3 步补齐。
+DEGRADE_CODES = frozenset({
+    "soundfile_dependency_missing",        # media.extract_media：没装 soundfile，结构信息读不出来
+    "ffmpeg_dependency_missing",           # ffmpeg.extract_audio_track：没装 imageio-ffmpeg
+    "ffmpeg_timeout",                      # ffmpeg.extract_audio_track：抽音轨超过 FFMPEG_TIMEOUT_SEC
+    "ffmpeg_start_failed",                 # ffmpeg.extract_audio_track：ffmpeg 无法启动
+    "ffmpeg_track_failed",                 # ffmpeg.extract_audio_track：源里没有音轨 / 容器损坏
+    "media_track_read_failed",             # media.extract_media：抽出的音轨读不出参数
+})
+
+# 第 3 组：模型阶段失败（进 meta.model_error.code，HTTP 200）。全部由 LlmError 抛出，
+# 在 understand 里一处接住——确定性抽取产出仍然交付（ADR-0002/0007 的直接推论）。
+MODEL_FAILURE_CODES = frozenset({
+    "llm_api_key_missing",                 # deepseek.DeepSeekClient：未配置 DEEPSEEK_API_KEY
+    "llm_call_failed",                     # deepseek.chat：重试后仍失败
+    "image_encode_failed",                 # images.encode_image：图片编码失败
+    "ocr_input_empty",                     # paddle_ocr：输入图片为空
+    "ocr_unreachable",                     # paddle_ocr：本机 OCR 服务不可达
+    "ocr_bad_response",                    # paddle_ocr：响应不是 json / 不是对象（param 区分）
+    "ocr_service_failed",                  # paddle_ocr：服务返回失败码
+    "ocr_slice_empty",                     # paddle_ocr：长图切片后为空
+    "ocr_slice_failed",                    # paddle_ocr：某一片识别失败（param 填 切片N）
+    "ocr_read_image_failed",               # paddle_ocr：读图 / 读图片字节失败（param 区分）
+    "asr_read_track_failed",               # qwen3_asr：读取音轨字节失败
+    "asr_input_empty",                     # qwen3_asr：输入音轨为空
+    "asr_unreachable",                     # qwen3_asr：本机 ASR 服务不可达
+    "asr_bad_response",                    # qwen3_asr：响应不是 json / 不是对象（param 区分）
+    "asr_service_failed",                  # qwen3_asr：服务返回失败码
 })

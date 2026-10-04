@@ -46,7 +46,10 @@ class DeepSeekClient:
             return self._client
         api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
         if not api_key:
-            raise LlmError("未配置 DEEPSEEK_API_KEY，请在项目根目录的 .env 里填写（可参考 .env.example）")
+            raise LlmError(
+                "未配置 DEEPSEEK_API_KEY，请在项目根目录的 .env 里填写（可参考 .env.example）",
+                "llm_api_key_missing",
+            )
         from openai import OpenAI
 
         # 超时必须显式给：视觉模型逐页识别单页就可能跑几十秒，用 SDK 默认值会过早断开
@@ -113,7 +116,7 @@ class DeepSeekClient:
             last_error = "模型返回空内容"
             time.sleep(min(2 ** attempt, 8))
 
-        raise LlmError(f"模型调用失败（已重试 {settings.LLM_MAX_RETRIES} 次）: {last_error}")
+        raise LlmError(f"模型调用失败（已重试 {settings.LLM_MAX_RETRIES} 次）: {last_error}", "llm_call_failed")
 
     def _record_usage(self, response) -> None:
         """把 SDK 响应里的 usage 转成 dict 记进账本。"""

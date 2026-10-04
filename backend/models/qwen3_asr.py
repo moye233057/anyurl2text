@@ -42,9 +42,9 @@ def transcribe(path: Path) -> Transcription:
     try:
         audio_bytes = path.read_bytes()
     except OSError as exc:
-        raise LlmError(f"Qwen3-ASR 读取音轨字节失败: {exc}") from exc
+        raise LlmError(f"Qwen3-ASR 读取音轨字节失败: {exc}", "asr_read_track_failed") from exc
     if not audio_bytes:
-        raise LlmError("Qwen3-ASR 输入音轨为空")
+        raise LlmError("Qwen3-ASR 输入音轨为空", "asr_input_empty")
 
     payload = {"audio_base64": base64.b64encode(audio_bytes).decode("ascii")}
     try:
@@ -54,14 +54,17 @@ def transcribe(path: Path) -> Transcription:
         response.raise_for_status()
         result = response.json()
     except httpx.HTTPError as exc:
-        raise LlmError(f"Qwen3-ASR 服务不可达（{settings.ASR_API_URL}）: {exc}") from exc
+        raise LlmError(f"Qwen3-ASR 服务不可达（{settings.ASR_API_URL}）: {exc}", "asr_unreachable") from exc
     except ValueError as exc:
-        raise LlmError(f"Qwen3-ASR 响应不是 json: {exc}") from exc
+        raise LlmError(f"Qwen3-ASR 响应不是 json: {exc}", "asr_bad_response", "json") from exc
 
     if not isinstance(result, dict):
-        raise LlmError(f"Qwen3-ASR 响应不是对象: {result!r}")
+        raise LlmError(f"Qwen3-ASR 响应不是对象: {result!r}", "asr_bad_response", "object")
     if str(result.get("code")) != "200":
-        raise LlmError(f"Qwen3-ASR 返回失败: code={result.get('code')} msg={result.get('msg')}")
+        raise LlmError(
+            f"Qwen3-ASR 返回失败: code={result.get('code')} msg={result.get('msg')}",
+            "asr_service_failed",
+        )
 
     text = str(result.get("data") or "")
     language = str(result.get("language") or "")

@@ -48,7 +48,7 @@
 | 一格式一个文件的处理器 | `backend/pipelines/processors/{pdf,docx,pptx,excel,odf,plaintext,rtf,html,image,media,archive,install_package}.py` | 已实现 |
 | 表格格位建模：合并单元格的唯一表示与唯一渲染 | `backend/pipelines/processors/grid.py`、`processors/xlsx_merges.py`（xlsx 合并区从包内 XML 读） | 已实现 |
 | 限额的单一定义处：值 + 命中行为 + 强制点 + 命中文案模板 | `backend/configs/limits.py` | 已实现 |
-| 稳定错误码表（机器名白名单，`error.code` 的契约） | `backend/configs/errors.py` | 已实现（目前只落硬失败那一组） |
+| 稳定错误码表（机器名白名单：硬失败 / 降级 / 模型三组） | `backend/configs/errors.py` | 已实现（硬失败与模型两组已全覆盖；降级组随 P1-5 第 3 步补齐） |
 | RAG 分页与印刷目录规则 | `backend/pipelines/processors/pdf_pages.py`、`processors/catalogue.py` | 已实现 |
 | 模型出口（一模型一文件）+ 图片编码 + 提示词模板 | `backend/models/deepseek.py`、`paddle_ocr.py`、`qwen3_asr.py`、`images.py`、`prompts/` | 已实现 |
 | 通用件：文本解码与文件头、`LlmError`、计价记账、抽音轨 | `backend/utils/textfile.py`、`errors.py`、`usage.py`、`ffmpeg.py` | 已实现 |

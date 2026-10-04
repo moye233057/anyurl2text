@@ -55,7 +55,7 @@ def _recognize_bytes(image_bytes: bytes, label: str) -> str:
     异常：LlmError — 图片为空、服务不可达、响应不是预期的 json 对象、服务返回失败。
     """
     if not image_bytes:
-        raise LlmError("Paddle OCR 输入图片为空")
+        raise LlmError("Paddle OCR 输入图片为空", "ocr_input_empty")
 
     payload = {"file_base64": base64.b64encode(image_bytes).decode("ascii")}
     try:
@@ -65,14 +65,17 @@ def _recognize_bytes(image_bytes: bytes, label: str) -> str:
         response.raise_for_status()
         result = response.json()
     except httpx.HTTPError as exc:
-        raise LlmError(f"Paddle OCR 服务不可达（{settings.OCR_API_URL}）: {exc}") from exc
+        raise LlmError(f"Paddle OCR 服务不可达（{settings.OCR_API_URL}）: {exc}", "ocr_unreachable") from exc
     except ValueError as exc:
-        raise LlmError(f"Paddle OCR 响应不是 json: {exc}") from exc
+        raise LlmError(f"Paddle OCR 响应不是 json: {exc}", "ocr_bad_response", "json") from exc
 
     if not isinstance(result, dict):
-        raise LlmError(f"Paddle OCR 响应不是对象: {result!r}")
+        raise LlmError(f"Paddle OCR 响应不是对象: {result!r}", "ocr_bad_response", "object")
     if str(result.get("code")) != "200":
-        raise LlmError(f"Paddle OCR 返回失败: code={result.get('code')} msg={result.get('msg')}")
+        raise LlmError(
+            f"Paddle OCR 返回失败: code={result.get('code')} msg={result.get('msg')}",
+            "ocr_service_failed",
+        )
     text = str(result.get("data") or "")
     logger.info(f"paddle ocr 完成 {label} server_cost={result.get('cost')}s chars={len(text)}")
     return text
@@ -96,6 +99,10 @@ def _iter_slices(image: Image.Image) -> List[Tuple[int, int, int, Image.Image]]:
 def _recognize_long_image(image: Image.Image, label: str) -> str:
     """纵向超长图切片并发识别，再按切片顺序拼回文本。"""
     slices = _iter_slices(image)
+    if not slices:
+        # 空切片会让 ThreadPoolExecutor(max_workers=0) 抛 ValueError；那是个难懂的错，
+        # 而且它不是 LlmError，会绕过 understand 对模型错误的处理。这里明确成带码的失败。
+        raise LlmError("Paddle OCR 长图切片为空", "ocr_slice_empty", label)
 
     def recognize_one(slice_info):
         index, y_start, y_end, piece = slice_info
@@ -103,18 +110,19 @@ def _recognize_long_image(image: Image.Image, label: str) -> str:
         try:
             return index, _recognize_bytes(_encode_jpeg(piece), slice_label), None
         except LlmError as exc:
-            return index, "", str(exc)
+            # 连异常一起带出去：只留 str(exc) 会把内层 code 丢掉
+            return index, "", exc
 
     by_index: Dict[int, str] = {}
     with ThreadPoolExecutor(max_workers=min(SLICE_MAX_WORKERS, len(slices))) as pool:
         futures = [pool.submit(recognize_one, slice_info) for slice_info in slices]
         for future in as_completed(futures):
-            index, text, reason = future.result()
+            index, text, failure = future.result()
             # 任一切片失败即整张图失败：半张的文字混进 ocr_text 比明确失败更难发现
-            if reason:
+            if failure is not None:
                 for pending in futures:
                     pending.cancel()
-                raise LlmError(reason)
+                raise LlmError(str(failure), "ocr_slice_failed", f"切片{index}")
             by_index[index] = text
     return "\n".join(by_index[index] for index in sorted(by_index) if by_index[index])
 
@@ -135,7 +143,7 @@ def recognize(path: Path) -> str:
             long_vertical = _is_long_vertical(width, height)
             rgb = image.convert("RGB") if long_vertical else None
     except Exception as exc:
-        raise LlmError(f"Paddle OCR 读图失败: {exc}") from exc
+        raise LlmError(f"Paddle OCR 读图失败: {exc}", "ocr_read_image_failed", "image") from exc
 
     label = f"size={width}x{height}"
     if long_vertical:
@@ -144,5 +152,5 @@ def recognize(path: Path) -> str:
     try:
         image_bytes = path.read_bytes()
     except OSError as exc:
-        raise LlmError(f"Paddle OCR 读取图片字节失败: {exc}") from exc
+        raise LlmError(f"Paddle OCR 读取图片字节失败: {exc}", "ocr_read_image_failed", "bytes") from exc
     return _recognize_bytes(image_bytes, label)

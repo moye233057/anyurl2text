@@ -67,6 +67,7 @@ def build_response(
         detector=prepared.detector,
         degraded=result.degraded,
         degrade_reason=result.degrade_reason,
+        degrade_code=result.degrade_code,
         truncated=truncated,
         limits_hit=limits_hit,
         pages=result.pages,

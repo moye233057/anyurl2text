@@ -81,6 +81,9 @@ class ExtractResult:
 
     degraded: bool = False
     degrade_reason: Optional[str] = None
+    # 降级的稳定机器名（`configs/errors.py` 的 DEGRADE_CODES）：degraded 为真时应有值。
+    # 与 degrade_reason 分工同 error：code 给程序看、不许改；reason 给使用者看、会改措辞。
+    degrade_code: Optional[str] = None
     # 命中的上界名（`configs/limits.py` 的 LIMIT_NAMES）：处理器只记名字、不写文案，
     # 文案由 step6_assemble 按表里的模板统一生成——改说法不必动十几个处理器。
     limits_hit: List[str] = field(default_factory=list)

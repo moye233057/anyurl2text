@@ -41,6 +41,6 @@ def encode_image(path: Path) -> str:
             buffer = BytesIO()
             image.save(buffer, format="JPEG", quality=90)
     except Exception as exc:
-        raise LlmError(f"图片编码失败: {exc}") from exc
+        raise LlmError(f"图片编码失败: {exc}", "image_encode_failed") from exc
     payload = base64.b64encode(buffer.getvalue()).decode("ascii")
     return f"data:image/jpeg;base64,{payload}"

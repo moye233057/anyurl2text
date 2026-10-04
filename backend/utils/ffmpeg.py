@@ -12,7 +12,9 @@ ffmpeg 出口：把任意音频/视频抽成可以送语音识别的音轨。
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
+import configs.errors as errors
 import configs.settings as settings
 from configs.log_config import logger
 
@@ -25,7 +27,20 @@ TRACK_SAMPLE_RATE = 16000
 TRACK_SUFFIX = ".wav"
 
 class FfmpegError(Exception):
-    """抽音轨失败。消息面向使用者，会原样出现在 meta.notes 或 degrade_reason 里。"""
+    """
+    抽音轨失败。消息面向使用者，会原样出现在 meta.notes 或 degrade_reason 里。
+
+    code 是**稳定机器名**（见 `configs/errors.py` 的 `DEGRADE_CODES`），进 `meta.degrade_code`；
+    它的定位是「能力边界」而不是故障，所以整条请求仍是 200。构造时校验白名单。
+    """
+
+    def __init__(self, message: str, code: str = "ffmpeg_track_failed",
+                 param: Optional[str] = None) -> None:
+        if code not in errors.DEGRADE_CODES:
+            raise ValueError(f"未登记的降级码: {code}（见 configs/errors.py）")
+        super().__init__(message)
+        self.code = code
+        self.param = param
 
 def extract_audio_track(source: Path, work_dir: Path) -> Path:
     """
@@ -38,7 +53,7 @@ def extract_audio_track(source: Path, work_dir: Path) -> Path:
     异常：FfmpegError — ffmpeg 不可用、源里没有音轨、转码失败或超时。
     """
     if not FFMPEG_AVAILABLE:
-        raise FfmpegError("未安装 imageio-ffmpeg，视频与容器音频的音轨抽不出来")
+        raise FfmpegError("未安装 imageio-ffmpeg，视频与容器音频的音轨抽不出来", "ffmpeg_dependency_missing")
 
     target = work_dir / f"{source.stem}_track{TRACK_SUFFIX}"
     command = [
@@ -60,15 +75,15 @@ def extract_audio_track(source: Path, work_dir: Path) -> Path:
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
     except subprocess.TimeoutExpired as exc:
-        raise FfmpegError(f"抽音轨超过 {settings.FFMPEG_TIMEOUT_SEC} 秒未完成") from exc
+        raise FfmpegError(f"抽音轨超过 {settings.FFMPEG_TIMEOUT_SEC} 秒未完成", "ffmpeg_timeout") from exc
     except OSError as exc:
-        raise FfmpegError(f"ffmpeg 无法启动: {exc}") from exc
+        raise FfmpegError(f"ffmpeg 无法启动: {exc}", "ffmpeg_start_failed") from exc
 
     if completed.returncode != 0 or not target.exists() or target.stat().st_size == 0:
         # ffmpeg 的失败原因只写在 stderr 末尾，摘最后一行足够定位（缺音轨 / 容器损坏）
         detail = completed.stderr.decode("utf-8", "ignore").strip().splitlines()
         reason = detail[-1] if detail else f"退出码 {completed.returncode}"
-        raise FfmpegError(f"抽音轨失败: {reason}")
+        raise FfmpegError(f"抽音轨失败: {reason}", "ffmpeg_track_failed")
 
     logger.info(f"ffmpeg 抽音轨完成 {source.name} → {target.name} {target.stat().st_size} 字节")
     return target

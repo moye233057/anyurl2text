@@ -71,6 +71,7 @@ def extract_media(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:
             engines=["基础文件信息"],
             degraded=True,
             degrade_reason="未安装 soundfile，音频与视频的结构信息读不出来",
+            degrade_code="soundfile_dependency_missing",
         )
 
     track = path
@@ -79,7 +80,11 @@ def extract_media(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:
             track = ffmpeg.extract_audio_track(path, ctx.work_dir)
         except FfmpegError as exc:
             return ExtractResult(
-                content="", engines=engines, degraded=True, degrade_reason=str(exc)
+                content="",
+                engines=engines,
+                degraded=True,
+                degrade_reason=str(exc),
+                degrade_code=exc.code,
             )
 
     try:
@@ -90,6 +95,7 @@ def extract_media(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:
             engines=engines,
             degraded=True,
             degrade_reason=f"音轨读不出来: {exc}",
+            degrade_code="media_track_read_failed",
         )
 
     result = ExtractResult(content="", engines=engines, assets=_track_asset(track, ctx))

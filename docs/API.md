@@ -80,7 +80,8 @@
 | `size_bytes` | 总是 | 实际落盘字节数 |
 | `detector` | 总是 | 靠什么认出来的：`extension` / `content_type` / `magic` / `unknown` |
 | `degraded` | 总是 | 是否走了「基础文件信息」降级产出 |
-| `degrade_reason` | 降级时 | 缺的是什么依赖 |
+| `degrade_reason` | 降级时 | 缺的是什么依赖，面向使用者的说法 |
+| `degrade_code` | 降级时 | 降级的稳定机器名（`configs/errors.py` 的 `DEGRADE_CODES`），与 `degrade_reason` 分工同 `error` 的 `code` / `message` |
 | `truncated` | 总是 | `content` 是否被字符上限截断。等价于 `limits_hit` 里含 `max_content_chars` |
 | `limits_hit` | 总是 | 本次命中的上界名，取自 `configs/limits.py` 的 `LIMIT_NAMES`（如 `max_links`、`max_rows_per_sheet`、`max_embedded_images`）；同一句命中说明按表里的模板进 `notes` |
 | `pages` / `pages_used` | 文档类 | 总页数与实际处理页数；扫描件超出渲染上限时两者不等 |

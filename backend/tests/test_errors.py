@@ -15,12 +15,15 @@ r"""
 预期值来源：`configs/errors.py` 的码表与注释里写明的触发点、ADR-0001（`error` 恒存在）、
 ADR-0003（降级是能力边界而不是故障——所以那些走 `meta`，不进 `error`）。
 """
+import ast
+
 import pytest
 
 from configs import errors
 from pathlib import Path
 
 from pipelines.steps import step1_download
+from test_structure import production_modules, relative
 
 # 四个「不用联网就该被拒」的入口：地址本身非法，判定发生在 DNS 与连接之前
 NOT_NETWORK_CASES = (
@@ -44,6 +47,45 @@ def test_the_code_table_is_well_formed():
         assert code == code.lower(), f"{code} 不是全小写"
         assert " " not in code and "-" not in code, f"{code} 用了空格或连字符"
         assert code.replace("_", "").isalnum(), f"{code} 含非字母数字字符"
+
+
+def test_every_code_used_in_the_codebase_is_registered():
+    """
+    行为：仓里写死的每一个码都在对应的白名单里——**静态扫，不靠用例覆盖到那条路径**。
+
+    来源：`configs/errors.py`「不在表里的码抛不出来」。两个异常在构造时校验，但那只盖到真跑过的
+    分支；这条把没跑到的分支（服务不可达、容器损坏、缺依赖…）一起扫一遍，这才是码表不漂移的保证。
+    """
+    # 异常名 → 它该用的白名单；码在第几个位置参数上
+    exception_sets = {
+        "FetchError": (errors.HARD_FAILURE_CODES, 2),
+        "LlmError": (errors.MODEL_FAILURE_CODES, 1),
+        "FfmpegError": (errors.DEGRADE_CODES, 1),
+    }
+    problems = []
+    found = 0
+    for path in production_modules():
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            # 关键字形式：degrade_code="..." 之类，按关键字名收
+            for keyword in node.keywords:
+                if keyword.arg == "degrade_code" and isinstance(keyword.value, ast.Constant):
+                    found += 1
+                    if keyword.value.value not in errors.DEGRADE_CODES:
+                        problems.append(f"{relative(path)}:{node.lineno} degrade_code={keyword.value.value!r} 未登记")
+            if name not in exception_sets:
+                continue
+            codes, position = exception_sets[name]
+            if len(node.args) <= position or not isinstance(node.args[position], ast.Constant):
+                continue
+            found += 1
+            if node.args[position].value not in codes:
+                problems.append(f"{relative(path)}:{node.lineno} {name} 的码 {node.args[position].value!r} 未登记")
+    # 没有这条，扫描一旦因为遍历写错而扫不到东西，上面会全绿——那是假绿
+    assert found > 20, f"只扫到 {found} 个码，遍历大概率写错了"
+    assert not problems, "有码没登记进 configs/errors.py：\n" + "\n".join(problems)
 
 
 def test_unregistered_code_is_rejected_at_construction():

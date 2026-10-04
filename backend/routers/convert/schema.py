@@ -83,6 +83,9 @@ class Meta(BaseModel):
     detector: Detector = Detector.UNKNOWN
     degraded: bool = Field(False, description="是否走了降级产出（基础文件信息）")
     degrade_reason: Optional[str] = None
+    degrade_code: Optional[str] = Field(
+        None, description="降级的稳定机器名（configs/errors.py 的 DEGRADE_CODES）；未降级为 null"
+    )
     truncated: bool = Field(False, description="content 是否被字符上限截断")
 
     limits_hit: List[str] = Field(
