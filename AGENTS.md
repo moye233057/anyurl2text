@@ -53,6 +53,7 @@ E:\miniconda\envs\multimodal\python.exe -m pytest tests -q    # 需要后端在�
 4. **同一能力只在最靠近它的缝验一次**：HTTP 缝只抽查代表格式（证明真实服务跑得通），不重复进程内的格式矩阵。
 5. **状态码只是附加断言**，主断言必须是业务事实（正文内容、字段值、降级码、命中的上界名）。
 6. 每条用例的 docstring 第一行会被 `tests/conftest.py` 收进留痕文件（`backend/data/debug/last_test_run.txt`）——写成一句人能读懂的话。
+7. **能力域标记**：每条用例打一个 `@pytest.mark.capability_*`（单一能力域的文件用模块级 `pytestmark`，混合文件逐条打），并同步登记进 `backend/pytest.ini` 的 `markers`（`--strict-markers` 会挡下未登记的）。按域跑：`pytest tests -m capability_epub`；能力域清单与覆盖项数见 `docs/RUNBOOK.md` 第 5 节。
 
 ## 改代码时的三条硬约束
 

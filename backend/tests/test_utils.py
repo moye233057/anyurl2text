@@ -22,6 +22,9 @@ import utils.usage as usage
 from utils.textfile import HEADER_PREVIEW_BYTES, read_header_hex, read_text_file
 from utils.usage import UsageLedger, compute_cost_cny, is_peak_hour
 
+# 能力域见 AGENTS.md「测试用例怎么写」；按域跑：python -m pytest tests -m capability_utils
+pytestmark = pytest.mark.capability_utils
+
 CN = ZoneInfo("Asia/Shanghai")
 MODEL = "deepseek-flash"
 

@@ -12,9 +12,13 @@ r"""
 预期值来源：`configs/limits.py` 的 `preview_first_pages`（TRUNCATE：目录只在前 N 页里找）
 + `docs/PIPELINES.md` 的 RAG 段。
 """
+import pytest
 from pathlib import Path
 
 from routers.rag.schema import RagCatalogueRange, RagPage
+
+# 能力域见 AGENTS.md「测试用例怎么写」；按域跑：python -m pytest tests -m capability_rag
+pytestmark = pytest.mark.capability_rag
 
 
 def _stub_pdf_pipeline(monkeypatch, page_count: int, preview_limit: int) -> None:

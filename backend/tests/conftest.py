@@ -38,6 +38,8 @@ if str(BACKEND) not in sys.path:
 
 # nodeid → 该用例 docstring 的第一句（本仓每条用例都写了「行为：…」）
 _BEHAVIOR = {}
+# nodeid → 能力域标记名（`capability_*`，见 AGENTS.md「测试用例怎么写」）
+_CAPABILITY = {}
 # [(状态, nodeid, 用时秒)]，跑完由 terminal summary 汇总
 _RESULTS = []
 
@@ -100,10 +102,19 @@ def _behavior_of(item) -> str:
     return ""
 
 
+def _capability_of(item) -> str:
+    """该用例的能力域标记名（`capability_*`）；漏打的返回 `-`，在按域汇总里会显形。"""
+    for marker in item.iter_markers():
+        if marker.name.startswith("capability_"):
+            return marker.name
+    return "-"
+
+
 def pytest_collection_modifyitems(session, config, items):
-    """收集每个用例「这条在测什么」，供跑完的清单使用。"""
+    """收集每个用例的「这条在测什么」与能力域，供跑完的清单与按域汇总使用。"""
     for item in items:
         _BEHAVIOR[item.nodeid] = _behavior_of(item)
+        _CAPABILITY[item.nodeid] = _capability_of(item)
 
 
 def pytest_runtest_logreport(report):
@@ -131,22 +142,46 @@ def pytest_report_header(config):
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
-    """结尾把「没通过的是哪条、这条在测什么」讲清楚，并把全量清单落盘。"""
+    """
+    结尾按**能力域**汇总，并把「没通过的是哪条、这条在测什么」讲清楚、把全量清单落盘。
+
+    为什么按能力域报：条数会被参数化放大（13 种格式 = 13 条），而人要的是
+    「这次动了哪块能力、它有几项覆盖、过没过」（AGENTS.md「测试用例怎么写」第 3 条）。
+    """
     if not _RESULTS:
         return
 
-    report_lines = []
+    # 能力域 → [(状态, nodeid, 用时)]；普通 dict 保持插入顺序
+    domains = {}
     for status, nodeid, seconds in _RESULTS:
-        report_lines.append(f"{status.upper():<8}{seconds:7.2f}s  {nodeid}")
-        behavior = _BEHAVIOR.get(nodeid)
-        if behavior:
-            report_lines.append(f"{'':<8}{'':7}  └─ 这条在测：{behavior}")
+        domains.setdefault(_CAPABILITY.get(nodeid, "-"), []).append((status, nodeid, seconds))
+
+    report_lines = []
+    for domain, results in domains.items():
+        passed = sum(1 for status, _, _ in results if status == "passed")
+        report_lines.append(
+            f"== {domain}（{len(results)} 个覆盖项：通过 {passed}、未通过 {len(results) - passed}）"
+        )
+        for status, nodeid, seconds in results:
+            report_lines.append(f"{status.upper():<8}{seconds:7.2f}s  {nodeid}")
+            behavior = _BEHAVIOR.get(nodeid)
+            if behavior:
+                report_lines.append(f"{'':<8}{'':7}  └─ 这条在测：{behavior}")
     try:
         REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
         REPORT_PATH.write_text("\n".join(report_lines) + "\n", encoding="utf-8")
-        report_hint = f"（含每条的「这条在测什么」与用时）见 {REPORT_PATH}"
+        report_hint = f"（按能力域分组、含每条的「这条在测什么」与用时）见 {REPORT_PATH}"
     except OSError as exc:
         report_hint = f"（报告文件没写成：{exc}）"
+
+    terminalreporter.write_sep("-", "按能力域汇总")
+    for domain, results in domains.items():
+        passed = sum(1 for status, _, _ in results if status == "passed")
+        failed = len(results) - passed
+        mark = "OK " if not failed else "!! "
+        terminalreporter.write_line(
+            f"{mark}{domain:<22}{len(results):3} 个覆盖项：通过 {passed}、未通过 {failed}"
+        )
 
     bad = [(status, nodeid, seconds) for status, nodeid, seconds in _RESULTS if status != "passed"]
     if bad:
@@ -157,5 +192,6 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
                 terminalreporter.write_line(f"{'':<8}└─ 这条在测：{_BEHAVIOR[nodeid]}")
     passed = sum(1 for status, _, _ in _RESULTS if status == "passed")
     terminalreporter.write_line(
-        f"本次共 {len(_RESULTS)} 条：通过 {passed}、未通过 {len(bad)}。全量清单{report_hint}"
+        f"本次 {len(_RESULTS)} 个覆盖项 / {len(domains)} 个能力域：通过 {passed}、未通过 {len(bad)}。"
+        f"全量清单{report_hint}"
     )

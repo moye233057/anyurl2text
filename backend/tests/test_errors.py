@@ -25,6 +25,9 @@ from pathlib import Path
 from pipelines.steps import step1_download
 from test_structure import production_modules, relative
 
+# 能力域见 AGENTS.md「测试用例怎么写」；按域跑：python -m pytest tests -m capability_errors
+pytestmark = pytest.mark.capability_errors
+
 # 四个「不用联网就该被拒」的入口：地址本身非法，判定发生在 DNS 与连接之前
 NOT_NETWORK_CASES = (
     ("", "download_url_empty", "url", 422),

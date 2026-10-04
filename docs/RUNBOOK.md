@@ -147,14 +147,40 @@ pytest 的缓存是关掉的（`backend/pytest.ini` 里的 `-p no:cacheprovider`
 | 缝 | 覆盖什么 | 前置 | 命令（cwd=`backend/`） |
 |---|---|---|---|
 | 自检缝 | 处理器产出、判型、通用件、结构判据、错误码、RAG 口 | 无（几秒） | `python -m pytest tests --ignore=tests/test_extract_contract.py` |
-| HTTP 缝 | `POST /extract/file` 的契约与状态码（26 条） | **后端在 8020 应答** | `python -m pytest tests/test_extract_contract.py -v` |
+| HTTP 缝 | 真实服务上的代表格式 + 契约形状（13 条） | **后端在 8020 应答** | `python -m pytest tests/test_extract_contract.py -v` |
 | 贵缝 | `/understand` 两条路一致、模型增强、音视频转写 | 真模型 + 本机 8021/8022 | `python -m pytest tests -m model` |
+
+**按能力域看**（跑完的汇总就照这个口径给，别再只数条数）：
+
+| 能力域（`-m` 直接用） | 覆盖项 | 观测信号（断言的是什么，不是状态码） |
+|---|---|---|
+| `capability_detect` | 99 | `(扩展名, 判据来源, 模态)`——决定这个文件送哪个处理器、响应的 `type` |
+| `capability_document` | 20 | 正文内容 / 页数 / 内嵌图数 / 文本框节 |
+| `capability_table` | 14 | 合并单元格不重复、行宽一致、分隔符、数值格式 |
+| `capability_media` | 7 | 图片结构信息、内嵌图去重与名额、音轨参数 |
+| `capability_container` | 2 | 压缩包 / 安装包的条目清单 |
+| `capability_links` | 3 | 链接是否进交付文本、去重与上限 |
+| `capability_epub` | 8 | spine 顺序、章节标记、内部引用消歧、CSS 不进正文 |
+| `capability_degrade` | 16 | 降级码是不是那一个、HTTP 仍是 200 |
+| `capability_limits` | 7 | 命的哪条上界、文案是否来自同一模板 |
+| `capability_errors` | 14 | 码表白名单、`error` 对象、模型失败通道、`internal` 兜底 |
+| `capability_http` | 13 | 真实服务上的代表格式 + 契约形状（**只抽查代表，不重复进程内矩阵**） |
+| `capability_utils` | 25 | 解码顺序、峰谷计价、账本累计 |
+| `capability_structure` | 9 | 依赖方向、单文件预算、扩展名覆盖、上界值、前端契约镜像 |
+| `capability_rag` | 2 | RAG 口自己的 `limits_hit` |
+
+```powershell
+E:\miniconda\envs\multimodal\python.exe -m pytest tests -m capability_epub -v          # 只跑 EPUB 这一个能力域
+E:\miniconda\envs\multimodal\python.exe -m pytest tests -m "capability_table or capability_limits" -v
+```
+
+**别只报条数**：13 种格式各一条是**清单驱动的覆盖**，它算 1 个能力点里的 13 个覆盖项。汇报与验收按「**能力域 × 覆盖项**」说（跑完的汇总就是按域给的）。加能力域要同时登记进 `backend/pytest.ini` 的 `markers`，否则 `--strict-markers` 会挡下。
 
 **跑完一次会留三份东西给人看**（不是只有 `passed` 的数量）：
 
-1. 终端结尾的「没通过的用例」一节：每条未通过的用例名 + **「这条在测什么」** + 用时；
+1. 终端结尾的「按能力域汇总」：每个能力域一行「N 个覆盖项：通过 x、未通过 y」——**先看哪个域红了**；紧接「没通过的用例」逐条列出用例名 + **「这条在测什么」** + 用时；
 2. `--durations=5` 标出最慢的五条——「跑了十几分钟」时一眼看出是谁；
-3. **全量清单落盘**到 `backend/data/debug/last_test_run.txt`：每条的状态、用时、用例名与「这条在测什么」（`data/debug/` 在 `.gitignore` 里）。`-ra` 另会把跳过/失败的原因收尾列出。
+3. **全量清单落盘**到 `backend/data/debug/last_test_run.txt`：**按能力域分组**，每条给状态、用时、用例名与「这条在测什么」（`data/debug/` 在 `.gitignore` 里）。`-ra` 另会把跳过/失败的原因收尾列出。
 
 想看每条用例的实时名字加 `-v`（注意 `-q` 与 `-v` 相抵，别一起用）；只想跑一条用 `-k 关键字`，例如 `python -m pytest tests -k epub -v`。
 

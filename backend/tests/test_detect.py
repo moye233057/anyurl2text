@@ -41,6 +41,9 @@ from pipelines.steps.step2_detect import (
 )
 from routers.convert.schema import Detector, Modality
 
+# 能力域见 AGENTS.md「测试用例怎么写」；按域跑：python -m pytest tests -m capability_detect
+pytestmark = pytest.mark.capability_detect
+
 OLE_HEAD = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 16
 PLAIN_TEXT = b"this file has no recognisable magic at all"
 

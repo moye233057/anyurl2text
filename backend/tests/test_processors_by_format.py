@@ -67,6 +67,7 @@ def run(name, ctx, fixture_copy, page_url: str = ""):
 
 # ---------- 承诺「完整解析」的格式 ----------
 
+@pytest.mark.capability_document
 @pytest.mark.parametrize("name", DOCUMENT_FIXTURES)
 def test_document_formats_are_fully_parsed(name, ctx, fixture_copy):
     """
@@ -80,6 +81,7 @@ def test_document_formats_are_fully_parsed(name, ctx, fixture_copy):
     assert result.engines, f"{name} 应报出实际使用的引擎"
 
 
+@pytest.mark.capability_document
 def test_plain_text_is_delivered_verbatim(ctx, work_dir):
     """
     行为：交付文本就是源文本本身，不加工、不加前缀。
@@ -96,6 +98,7 @@ def test_plain_text_is_delivered_verbatim(ctx, work_dir):
     assert result.content == text
 
 
+@pytest.mark.capability_document
 def test_line_endings_are_delivered_unchanged(ctx, work_dir):
     """
     行为：行尾原样交付，CRLF 不被归一成 LF。
@@ -115,6 +118,7 @@ def test_line_endings_are_delivered_unchanged(ctx, work_dir):
     ("name", "pages", "images"),
     [("report.docx", 1, 1), ("deck.pptx", 6, 1)],
 )
+@pytest.mark.capability_document
 def test_office_documents_report_page_and_embedded_image_counts(name, pages, images, ctx, fixture_copy):
     """
     行为：Office 文档报出页数与内嵌图张数。
@@ -127,12 +131,14 @@ def test_office_documents_report_page_and_embedded_image_counts(name, pages, ima
     assert result.images == images
 
 
+@pytest.mark.capability_table
 def test_spreadsheet_reports_its_sheet_count(ctx, fixture_copy):
     """行为：表格类报出工作表数。来源：inventory.xlsx 是单工作表样例。"""
     result = run("inventory.xlsx", ctx, fixture_copy)
     assert result.pages == 1
 
 
+@pytest.mark.capability_document
 def test_text_pdf_reports_every_page(ctx, fixture_copy):
     """
     行为：有文字层的 PDF 逐页抽出正文，页数与内嵌图张数如实报出。
@@ -146,6 +152,7 @@ def test_text_pdf_reports_every_page(ctx, fixture_copy):
     assert result.degraded is False
 
 
+@pytest.mark.capability_document
 def test_scanned_pdf_declares_missing_text_layer_without_degrading(ctx, fixture_copy):
     """
     行为：没有文字层的 PDF 正文为空、页数与图张数照报，但**不降级**，并在现场说明里讲清原因。
@@ -162,6 +169,7 @@ def test_scanned_pdf_declares_missing_text_layer_without_degrading(ctx, fixture_
     assert any("文字层" in note for note in result.notes), result.notes
 
 
+@pytest.mark.capability_limits
 def test_unprocessed_pages_are_named_when_the_render_limit_bites(asset_ctx, fixture_copy, monkeypatch):
     """
     行为：扫描件页数超过整页渲染上限时，`unprocessed_pages` 精确列出没处理的页码，
@@ -183,6 +191,7 @@ def test_unprocessed_pages_are_named_when_the_render_limit_bites(asset_ctx, fixt
     assert "rendered_page_max" in result.limits_hit
 
 
+@pytest.mark.capability_media
 @pytest.mark.parametrize("name", ["screenshot.png", "photo.png"])
 def test_image_extract_yields_structure_only(name, ctx, fixture_copy):
     """
@@ -200,6 +209,7 @@ def test_image_extract_yields_structure_only(name, ctx, fixture_copy):
     assert result.audio_meta is None
 
 
+@pytest.mark.capability_media
 def test_audio_reports_its_track_structure(ctx, fixture_copy):
     """
     行为：音频的确定性产出是音轨参数（时长 / 采样率 / 声道），没有正文，也不降级。
@@ -217,6 +227,7 @@ def test_audio_reports_its_track_structure(ctx, fixture_copy):
     assert result.audio_meta.channels == AUDIO_CHANNELS
 
 
+@pytest.mark.capability_media
 def test_video_reports_the_parameters_of_its_extracted_track(ctx, fixture_copy):
     """
     行为：视频先抽出音轨，报出的是**音轨**的参数（统一转成 16kHz 单声道），正文同样为空且不降级。
@@ -236,6 +247,7 @@ def test_video_reports_the_parameters_of_its_extracted_track(ctx, fixture_copy):
     assert result.notes, "抽过音轨这件事要说明，不能静默"
 
 
+@pytest.mark.capability_container
 @pytest.mark.parametrize(("name", "entries"), [("bundle.zip", 12), ("demo.apk", 6)])
 def test_archive_family_lists_entries_without_extracting(name, entries, ctx, fixture_copy):
     """
@@ -264,6 +276,7 @@ def _table_lines(content: str) -> list:
     return [line for line in content.splitlines() if line.strip() and not line.startswith("===")]
 
 
+@pytest.mark.capability_table
 @pytest.mark.parametrize("name", MERGED_FIXTURES)
 def test_merged_text_appears_exactly_once(name, ctx, fixture_copy):
     """
@@ -279,6 +292,7 @@ def test_merged_text_appears_exactly_once(name, ctx, fixture_copy):
     assert result.content.count(MERGED_VERTICAL) == 1, f"纵向合并的文本重复：{result.content!r}"
 
 
+@pytest.mark.capability_table
 @pytest.mark.parametrize("name", MERGED_FIXTURES)
 def test_merged_rows_keep_the_same_column_count(name, ctx, fixture_copy):
     """
@@ -302,6 +316,7 @@ REPEATED_REFERENCES = 4
 REPEATED_DISTINCT = 2
 
 
+@pytest.mark.capability_media
 @pytest.mark.parametrize("name", REPEATED_FIXTURES)
 def test_repeated_image_is_saved_once_and_does_not_starve_others(name, asset_ctx, fixture_copy):
     """
@@ -336,6 +351,7 @@ ODT_LIST_PARENT = "组别设置"
 ODT_LIST_CHILD = "十公里组"
 
 
+@pytest.mark.capability_table
 def test_odt_table_keeps_columns_instead_of_one_paragraph_per_line(ctx, fixture_copy):
     """
     行为：ODT 表格按行列渲成制表符分隔的行，合并区文本只出现一次。
@@ -358,6 +374,7 @@ def test_odt_table_keeps_columns_instead_of_one_paragraph_per_line(ctx, fixture_
     assert result.content.count(MERGED_VERTICAL) == 1, "纵向合并的文本重复了"
 
 
+@pytest.mark.capability_document
 def test_odt_nested_list_keeps_its_levels(ctx, fixture_copy):
     """
     行为：嵌套列表的子项比父项多一层缩进，层级不因抽取而消失。
@@ -372,6 +389,7 @@ def test_odt_nested_list_keeps_its_levels(ctx, fixture_copy):
 
 # ---------- 上界命中：名字进 limits_hit，文案只有一处模板 ----------
 
+@pytest.mark.capability_limits
 def test_html_reports_the_link_limit(ctx, work_dir):
     """
     行为：链接数超上限时，命中的上界名进 `limits_hit`。
@@ -385,6 +403,7 @@ def test_html_reports_the_link_limit(ctx, work_dir):
     assert dispatch("html", path, ctx).limits_hit == ["max_links"]
 
 
+@pytest.mark.capability_limits
 def test_archive_reports_the_entry_limit(ctx, work_dir):
     """
     行为：条目数超上限时名字进 `limits_hit`，条目总数照报。
@@ -403,6 +422,7 @@ def test_archive_reports_the_entry_limit(ctx, work_dir):
     assert result.entry_count == 600
 
 
+@pytest.mark.capability_limits
 def test_spreadsheet_reports_the_row_limit(ctx, work_dir):
     """
     行为：单表行数超上限时名字进 `limits_hit`。
@@ -422,6 +442,7 @@ def test_spreadsheet_reports_the_row_limit(ctx, work_dir):
 CSV_DIALECTS = ((";", "分号"), ("\t", "制表符"), ("|", "竖线"))
 
 
+@pytest.mark.capability_table
 @pytest.mark.parametrize(("delimiter", "label"), CSV_DIALECTS)
 def test_csv_delimiter_is_sniffed_instead_of_assumed_comma(delimiter, label, ctx, work_dir):
     """
@@ -437,6 +458,7 @@ def test_csv_delimiter_is_sniffed_instead_of_assumed_comma(delimiter, label, ctx
     assert lines == ["名称\t数量", "甲\t1", "乙\t2"], f"{label}分隔的 CSV 被读错了"
 
 
+@pytest.mark.capability_table
 def test_a_comma_csv_keeps_its_exact_old_output(ctx, work_dir):
     """
     行为：逗号 CSV 的产出逐字节不变——平局时逗号优先，且字段里出现的制表符 / 分号 / 竖线
@@ -452,6 +474,7 @@ def test_a_comma_csv_keeps_its_exact_old_output(ctx, work_dir):
     )
 
 
+@pytest.mark.capability_table
 def test_the_comma_sample_keeps_its_output_byte_for_byte(ctx, fixture_copy):
     """
     行为：仓库自带的逗号样例 `table.csv` 产出逐字节不变。
@@ -475,6 +498,7 @@ def test_the_comma_sample_keeps_its_output_byte_for_byte(ctx, fixture_copy):
     assert run("table.csv", ctx, fixture_copy).content == expected
 
 
+@pytest.mark.capability_table
 def test_float_cells_use_fifteen_significant_digits(ctx, work_dir):
     """
     行为：浮点单元格按 15 位有效数字写成文本，不再带二进制误差的长尾；整数与字符串不动。
@@ -498,6 +522,7 @@ def test_float_cells_use_fifteen_significant_digits(ctx, work_dir):
 
 # ---------- docx 的超链接 ----------
 
+@pytest.mark.capability_links
 def test_docx_hyperlinks_land_in_content_with_text_and_url(ctx, fixture_copy):
     """
     行为：docx 里的超链接按「文字 -> URL」进末尾的 `## 链接` 段，按地址去重，
@@ -513,6 +538,7 @@ def test_docx_hyperlinks_land_in_content_with_text_and_url(ctx, fixture_copy):
     assert content.count("https://example.com/a") == 1, "同一地址应去重"
 
 
+@pytest.mark.capability_links
 def test_docx_link_limit_is_reported(monkeypatch, ctx, fixture_copy):
     """
     行为：链接数超过 `MAX_LINKS` 时截断，并把命中的上界名 `max_links` 报到 `limits_hit`。
@@ -530,6 +556,7 @@ def test_docx_link_limit_is_reported(monkeypatch, ctx, fixture_copy):
     assert result.content.count(" -> ") == 1, "截断后只应留上限条数的链接行"
 
 
+@pytest.mark.capability_links
 def test_documents_without_hyperlinks_are_not_touched(ctx, fixture_copy):
     """
     行为：没有超链接的文档产出一字不加——`## 链接` 段只在真有链接时出现。
@@ -542,6 +569,7 @@ def test_documents_without_hyperlinks_are_not_touched(ctx, fixture_copy):
         assert "## 链接" not in run(name, ctx, fixture_copy).content
 
 
+@pytest.mark.capability_limits
 def test_the_limit_registry_is_self_consistent():
     """
     行为：`configs/limits.py` 的表自洽——值是正数、行为是三种之一、每条模板都能格式化出文案。
@@ -558,6 +586,7 @@ def test_the_limit_registry_is_self_consistent():
         assert limits.note_for(name, 7).strip(), name
 
 
+@pytest.mark.capability_limits
 def test_limits_hit_reaches_meta_with_the_templated_note(ctx, work_dir):
     """
     行为：处理器报的名字经步骤 6 进 `meta.limits_hit`，`meta.notes` 里那句说明取自同一份模板。
@@ -589,6 +618,7 @@ def test_limits_hit_reaches_meta_with_the_templated_note(ctx, work_dir):
     assert limits.note_for("max_links") in response.meta.notes
 
 
+@pytest.mark.capability_limits
 def test_model_side_limits_are_reported_by_step5(monkeypatch):
     """
     行为：模型侧的两条上界都交回调用方——输出被 `llm_max_tokens` 截断（账本的
@@ -653,6 +683,7 @@ def _epub_link_lines(content: str) -> list:
     return [line for line in content.split("## 链接", 1)[1].splitlines() if line.strip()]
 
 
+@pytest.mark.capability_epub
 def test_epub_chapters_follow_the_spine_order(ctx, fixture_copy):
     """
     行为：章节按 OPF 的 spine 顺序拼接——manifest 的声明顺序与 zip 的写入顺序都说了不算。
@@ -669,6 +700,7 @@ def test_epub_chapters_follow_the_spine_order(ctx, fixture_copy):
     assert markers == sorted(markers), "分章标记的顺序与正文顺序不一致"
 
 
+@pytest.mark.capability_epub
 def test_epub_titles_come_from_title_then_heading_then_nothing(ctx, fixture_copy):
     """
     行为：分章标记的标题先取 `<title>`、再取第一个 h1–h6、都没有就只写章号。
@@ -682,6 +714,7 @@ def test_epub_titles_come_from_title_then_heading_then_nothing(ctx, fixture_copy
     assert "=== 章节 3 ===" in content, "两者都没有时分章标记只写章号"
 
 
+@pytest.mark.capability_epub
 def test_epub_internal_links_are_promoted_to_document_level_targets(ctx, fixture_copy):
     """
     行为：章内锚点与相对引用都提升成带章路径的文档级目标——拼成一整篇后每个目标唯一。
@@ -702,6 +735,7 @@ def test_epub_internal_links_are_promoted_to_document_level_targets(ctx, fixture
     assert "mailto:" not in "".join(lines), "mailto 应被跳过"
 
 
+@pytest.mark.capability_epub
 def test_epub_styles_never_reach_the_delivered_text(ctx, fixture_copy):
     """
     行为：`<link rel="stylesheet">` 与内联 `<style>` 的内容都不进交付文本。
@@ -713,6 +747,7 @@ def test_epub_styles_never_reach_the_delivered_text(ctx, fixture_copy):
     assert EPUB_CSS_SENTINEL not in run(EPUB_FIXTURE, ctx, fixture_copy).content
 
 
+@pytest.mark.capability_epub
 def test_epub_extraction_is_byte_identical_on_repeat(ctx, fixture_copy):
     """
     行为：同一个文件两次抽取逐字节相同——不依赖 dict 顺序，也不依赖 zip 内的文件顺序。
@@ -724,6 +759,7 @@ def test_epub_extraction_is_byte_identical_on_repeat(ctx, fixture_copy):
     assert dispatch("epub", path, ctx).content == dispatch("epub", path, ctx).content
 
 
+@pytest.mark.capability_epub
 def test_epub_content_is_identical_on_both_paths(ctx, asset_ctx, fixture_copy):
     """
     行为：`prepare_assets` 两种取值下 `content` 逐字节相同——两个接口共用同一份抽取。
@@ -754,6 +790,7 @@ def test_epub_content_is_identical_on_both_paths(ctx, asset_ctx, fixture_copy):
     assert plain.content.strip(), "两条路都应有非空正文"
 
 
+@pytest.mark.capability_epub
 def test_epub_reports_the_entry_limit(monkeypatch, ctx, fixture_copy):
     """
     行为：spine 章数超过 `MAX_ENTRIES` 时只读前几章，命中名字进 `limits_hit`，并在 `notes` 里说明。
@@ -773,6 +810,7 @@ def test_epub_reports_the_entry_limit(monkeypatch, ctx, fixture_copy):
     assert any("章" in note for note in result.notes), result.notes
 
 
+@pytest.mark.capability_epub
 def test_a_plain_zip_renamed_to_epub_degrades(ctx, work_dir):
     """
     行为：普通 ZIP 改名成 `.epub` 走 epub 处理器时降级为 `epub_parse_failed`，不抛异常。
@@ -796,6 +834,7 @@ def test_a_plain_zip_renamed_to_epub_degrades(ctx, work_dir):
 
 # ---------- 降级路径 ----------
 
+@pytest.mark.capability_degrade
 def test_legacy_office_degrades_to_basic_file_info(ctx, fixture_copy):
     """
     行为：老版 Office 降级成「基础文件信息」——无正文、说明缺的是什么，但不算错误。
@@ -811,6 +850,7 @@ def test_legacy_office_degrades_to_basic_file_info(ctx, fixture_copy):
     assert result.engines == ["基础文件信息"]
 
 
+@pytest.mark.capability_degrade
 def test_unknown_extension_degrades_to_basic_file_info(ctx, work_dir):
     """行为：认不出的扩展名走降级，不报错。来源：ADR-0003「做不到的降级而不是报错」。"""
     path = work_dir / "mystery.xyz"
@@ -822,6 +862,7 @@ def test_unknown_extension_degrades_to_basic_file_info(ctx, work_dir):
     assert result.degrade_code == "unsupported_type"
 
 
+@pytest.mark.capability_degrade
 def test_missing_extension_degrades_to_basic_file_info(ctx, fixture_copy):
     """行为：连扩展名都没有时同样降级，不抛异常。来源：ADR-0003。"""
     path, _ = fixture_copy("plain.txt")
@@ -836,6 +877,7 @@ def test_missing_extension_degrades_to_basic_file_info(ctx, fixture_copy):
 NOISE_FILES = ("~$report.docx", ".DS_Store", "Thumbs.db")
 
 
+@pytest.mark.capability_degrade
 @pytest.mark.parametrize("name", NOISE_FILES)
 def test_noise_files_degrade_with_their_own_code(name, ctx, work_dir):
     """
@@ -856,6 +898,7 @@ def test_noise_files_degrade_with_their_own_code(name, ctx, work_dir):
     assert result.degrade_code in errors.DEGRADE_CODES
 
 
+@pytest.mark.capability_degrade
 def test_noise_is_judged_by_the_original_name_not_the_temp_name(ctx, work_dir):
     """
     行为：噪音判定看**原始文件名**——下载落盘名已被 `step3_prepare._align_extension` 换成
@@ -884,6 +927,7 @@ BROKEN_INPUT_CODES = (
 )
 
 
+@pytest.mark.capability_degrade
 @pytest.mark.parametrize(("ext", "code"), BROKEN_INPUT_CODES)
 def test_broken_input_carries_the_degrade_code(ext, code, ctx, work_dir):
     """
@@ -901,6 +945,7 @@ def test_broken_input_carries_the_degrade_code(ext, code, ctx, work_dir):
     assert result.degrade_code in errors.DEGRADE_CODES
 
 
+@pytest.mark.capability_degrade
 def test_every_degrade_branch_declares_a_code(ctx, work_dir):
     """
     行为：降级必然带码——`degraded=True` 却没有 `degrade_code` 就是漏了这条通道。

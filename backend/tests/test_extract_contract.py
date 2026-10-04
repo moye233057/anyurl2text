@@ -2,17 +2,16 @@
 r"""
 extract 缝的契约测试：只打 HTTP，不 import 项目内任何东西。
 
-职责：把 `docs/RUNBOOK.md` 验收清单里「纯代码那一路」的部分做成可重复执行的 pytest 用例——
-每次改动都能跑，不联网、不花钱、不起 Paddle OCR / ASR。
-
-缝：`POST /extract/file`（本地文件上传，纯代码抽取，恒不调模型）。
-不覆盖：`understand` 那条路要调模型与本机 OCR / ASR 服务，属于贵缝，由
-        `tests/test_understand_contract.py` 覆盖，由人在关键节点跑；本文件刻意不重复它。
+职责：证明**真实服务**上这条链走得通、契约不漂——上传 → 抽取 → 组装 → 响应。
+不覆盖：各格式的完整抽取矩阵在缝 A（`test_processors_by_format.py`，免费、进程内、13 种格式），
+        `understand` 那条路要调模型与本机 OCR / ASR，属于贵缝（`test_understand_contract.py`）。
+        同一能力只在一个缝里验一次（AGENTS.md「测试用例怎么写」第 4 条），这里只抽查代表格式。
 
 预期值不来自「跑一遍代码看它输出什么」，而来自：
 - `docs/RUNBOOK.md` 的验收清单
 - `README.md` 的「支持哪些输入」表与「几个关键取舍」
 - `CONTEXT.md` 的术语定义
+- 样例生成参数（`scripts/make_fixtures.py` 各阶段写死的页数 / 内嵌图数）
 - 用例自己写入的已知内容（最强的一种：输入是我造的，输出该是什么我知道）
 
 本机跑法（用项目自己的环境，服务先起）：
@@ -37,46 +36,30 @@ import pytest
 BASE_URL = os.environ.get("ANYURL2TEXT_BASE_URL", "http://127.0.0.1:8020")
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 # 本地服务的单次请求上限：本文件打的都是 127.0.0.1 的上传口，正常 1 秒内返回。
-# **别**照搬「下载大文件」那类 120 秒——服务卡住时那就是 26 × 120 秒 ≈ 十几分钟，
-# 而人只看到一行行 F 与最后那个数字（踩过这个坑，见 docs/RUNBOOK.md「怎么看测试结果」）。
+# **别**照搬「下载大文件」那类 120 秒——服务卡住时那就是十几分钟只换来一行行 F，
+# 而人只看到 `F` 与最后那个数字（踩过这个坑，见 docs/RUNBOOK.md「怎么看测试结果」）。
 TIMEOUT = 20.0
+
+# 能力域见 AGENTS.md「测试用例怎么写」；按域跑：python -m pytest tests -m capability_http
+pytestmark = pytest.mark.capability_http
 
 # README「响应形状恒定：7 个固定字段，error 恒存在（成功为 null）」
 RESPONSE_KEYS = {"type", "content", "summary", "meta", "usage", "timings", "error"}
 
-# README「支持哪些输入」表里列为「完整解析（版面顺序、表格、文本框、内嵌图位置）」的格式
-DOCUMENT_FIXTURES = (
-    "plain.txt",
-    "notes.md",
-    "table.csv",
-    "sample.json",
-    "feed.xml",
-    "sample.rtf",
-    "report.docx",
-    "inventory.xlsx",
-    "deck.pptx",
-    "sample.odt",
-    "sample.odp",
-    "sample.epub",
-    "manual.pdf",
+# 抽查代表：挑三条风险最高的路径，每条再钉一个**业务事实**（页数 / 内嵌图数 / 正文特征串）。
+# 期望值来源：`scripts/make_fixtures.py` 写死的生成参数——manual.pdf 10 页有文字层、
+# report.docx 带一个表格与 1 张内嵌图、sample.epub 3 章（spine 顺序与 manifest / zip 顺序都不同）。
+REPRESENTATIVES = (
+    ("manual.pdf", 10, 0, "=== 第1页 ==="),
+    ("report.docx", 1, 1, "\t"),
+    ("sample.epub", None, None, "=== 章节 1"),
 )
 
-def extract(file_name, raw=None, query=None):
-    """打一次 `/extract/file`，返回 (状态码, 响应体)。raw 给了就用它当上传内容。"""
-    if raw is None:
-        path = DATA_DIR / file_name
-        if not path.exists():
-            pytest.skip(f"样例不存在：{path}（先跑 python scripts/make_fixtures.py）")
-        raw = path.read_bytes()
-    files = {"file": (file_name, raw)}
-    data = {"query": query} if query else None
-    response = httpx.post(f"{BASE_URL}/extract/file", files=files, data=data, timeout=TIMEOUT)
-    return response.status_code, response.json()
 
 @pytest.fixture(scope="session", autouse=True)
 def service_is_answerable():
     """
-    前置：后端在 8020 上**真的应答**。不在就当场说清，不要等 26 条用例各超时一次。
+    前置：后端在 8020 上**真的应答**。不在就当场说清，不要等十几条用例各超时一次。
 
     来源：`docs/RUNBOOK.md` 第 5 节「怎么看测试结果」——后端由人在自己终端起，AI 不自起
     （端口唯一；uvicorn 的 reloader 在沙箱里建不了命名管道）。卡住的服务比不存在的服务更难查：
@@ -92,24 +75,42 @@ def service_is_answerable():
     if response.status_code != 200:
         pytest.fail(f"{BASE_URL}/probe/health 返回 {response.status_code}，后端状态不对（RUNBOOK 第 6 节）")
 
-def test_service_is_reachable():
-    """缝的前置条件：服务应答健康检查，否则后面每条失败都只是噪音。"""
-    response = httpx.get(f"{BASE_URL}/probe/health", timeout=10)
-    assert response.status_code == 200
 
-@pytest.mark.parametrize("name", DOCUMENT_FIXTURES)
-def test_declared_document_formats_extract_text(name):
+def extract(file_name, raw=None, query=None):
+    """打一次 `/extract/file`，返回 (状态码, 响应体)。raw 给了就用它当上传内容。"""
+    if raw is None:
+        path = DATA_DIR / file_name
+        if not path.exists():
+            pytest.skip(f"样例不存在：{path}（先跑 python scripts/make_fixtures.py）")
+        raw = path.read_bytes()
+    files = {"file": (file_name, raw)}
+    data = {"query": query} if query else None
+    response = httpx.post(f"{BASE_URL}/extract/file", files=files, data=data, timeout=TIMEOUT)
+    return response.status_code, response.json()
+
+
+# ---------- 真实服务上的抽取（只抽查代表） ----------
+
+@pytest.mark.parametrize(("name", "pages", "images", "marker"), REPRESENTATIVES)
+def test_representative_documents_extract_text_over_http(name, pages, images, marker):
     """
-    行为：README 声明「完整解析」的格式，都能抽出非空正文，且不当成降级。
+    行为：代表性格式经**真实服务**上传后，抽出正文且不降级——页数 / 内嵌图数 / 正文特征串
+          与样例生成参数一致（不是「状态码 200 就算过」）。
 
-    来源：README「支持哪些输入」表的文档行 + 「降级是能力边界而非故障」。
+    来源：README「支持哪些输入」的文档行 + `scripts/make_fixtures.py` 各阶段的生成参数。
+    为什么只三条：完整格式矩阵在缝 A 逐格式验（免费、进程内），这里只证明真实服务走得通。
     """
     status, body = extract(name)
     assert status == 200
     assert body["error"] is None
-    assert body["meta"]["ext"] == name.rsplit(".", 1)[1]
     assert body["meta"]["degraded"] is False
-    assert body["content"].strip(), f"{name} 应抽出非空正文"
+    assert body["meta"]["ext"] == name.rsplit(".", 1)[1]
+    assert marker in body["content"], f"{name} 的正文里应出现 {marker!r}"
+    if pages is not None:
+        assert body["meta"]["pages"] == pages
+    if images is not None:
+        assert body["meta"]["images"] == images
+
 
 def test_failures_carry_a_structured_error_with_a_stable_code():
     """
@@ -130,25 +131,22 @@ def test_failures_carry_a_structured_error_with_a_stable_code():
     assert body["error"]["message"], "面向使用者的文案不能为空"
 
 
-def test_meta_reports_no_limit_hits_for_a_small_input():
-    """
-    行为：普通输入不谎报命中——`meta.limits_hit` 恒存在且为空列表。
+# ---------- 响应契约：形状与四条通道 ----------
 
-    来源：ADR-0001「响应形状只有一份定义」+ `configs/limits.py`：只有真的少读了用户的
-    字节 / 行 / 页 / 张才记名字，形状对每个成功响应都在。
-    """
-    status, body = extract("plain.txt")
-    assert status == 200
-    assert body["meta"]["limits_hit"] == []
+def test_response_shape_is_constant():
+    """行为：响应恒为那 7 个字段，成功时 error 为 null。来源：README「响应形状恒定」。"""
+    _, body = extract("plain.txt")
+    assert set(body) == RESPONSE_KEYS
+    assert body["error"] is None
 
 
 def test_meta_carries_every_channel_for_a_small_input():
     """
-    行为：三条通道在正常响应里形状齐全——`limits_hit` 与 `unprocessed_pages` 是空列表，
-          `degrade_code` 与 `model_error` 为 null。
+    行为：四条通道在正常响应里形状齐全且**不谎报**——`limits_hit` 与 `unprocessed_pages`
+          是空列表，`degrade_code` 与 `model_error` 为 null。
 
     来源：ADR-0001「响应形状只有一份」（字段恒存在，调用方不必判两种形状）
-    + ADR-0003（降级/边界各走自己的通道，不挤进 `error`）。
+    + ADR-0003（降级 / 边界各走自己的通道，不挤进 `error`）。
     """
     status, body = extract("plain.txt")
     assert status == 200
@@ -159,99 +157,34 @@ def test_meta_carries_every_channel_for_a_small_input():
     assert meta["model_error"] is None
 
 
-def test_plain_text_is_delivered_verbatim():
-    """
-    行为：交付文本就是源文本本身，不被加工、不被加前缀。
-
-    来源：CONTEXT「交付文本：从源抽取出的文本本身…也不被追加实现细节前缀」。
-    预期值来源：本用例自己写入的内容——不依赖对实现的任何理解。
-    """
-    text = "第一行：中文内容\n第二行：ascii only\n第三行：{braces} 与 $dollar\n"
-    status, body = extract("known.txt", raw=text.encode("utf-8"))
-    assert status == 200
-    assert body["content"] == text
-
-def test_csv_cells_reach_delivered_text():
-    """
-    行为：表格的单元格字面量进入交付文本。
-
-    来源：README「尽可能保留原始信息」；单元格由本用例给定，属于独立预期值。
-    """
-    raw = "name,qty\n苹果,3\nbanana,12\n".encode("utf-8")
-    status, body = extract("known.csv", raw=raw)
-    assert status == 200
-    for cell in ("name", "qty", "苹果", "banana", "12"):
-        assert cell in body["content"], f"单元格 {cell} 没进入交付文本"
-
-def test_response_shape_is_constant():
-    """行为：响应恒为那 7 个字段，成功时 error 为 null。来源：README「响应形状恒定」。"""
-    _, body = extract("plain.txt")
-    assert set(body) == RESPONSE_KEYS
-    assert body["error"] is None
-
 def test_meta_source_is_the_uploaded_filename():
     """行为：meta.source 回填上传的文件名。来源：schema.py 的 Meta.source 定义。"""
     _, body = extract("plain.txt")
     assert body["meta"]["source"] == "plain.txt"
     assert body["meta"]["size_bytes"] > 0
 
+
 def test_extract_never_reports_model_usage():
     """行为：纯代码那一路 usage 恒为 null。来源：README「没调模型就没有用量，给 0 是噪音」。"""
     _, body = extract("plain.txt")
     assert body["usage"] is None
+
 
 def test_extract_never_produces_summary():
     """行为：summary 只由 understand 产出，extract 恒为 null。来源：schema.py 契约 docstring。"""
     _, body = extract("plain.txt")
     assert body["summary"] is None
 
+
+# ---------- 模态与 query 这类业务事实 ----------
+
 def test_webpage_keeps_its_own_modality():
     """行为：html 的模态是 webpage，不是 document。来源：Modality 枚举 + README 支持表。"""
     _, body = extract("page.html")
     assert body["type"] == "webpage"
     assert body["meta"]["ext"] == "html"
+    assert body["content"].strip(), "网页应抽出标题与正文"
 
-def test_image_extract_yields_structure_only():
-    """
-    行为：extract 对图片的全部产出是结构信息，没有正文。
-
-    来源：README「图片：只给尺寸、格式、EXIF 等结构信息」+ CONTEXT 对 extract 的定义。
-    """
-    _, body = extract("screenshot.png")
-    assert body["type"] == "image"
-    assert body["content"] == ""
-    image = body["meta"]["image"]
-    assert image is not None, "图片应给出结构信息"
-    assert image["width"] > 0 and image["height"] > 0
-    assert image["format"]
-
-def test_archive_lists_entries_without_extracting():
-    """行为：压缩包只列条目清单，不解压。来源：README 支持表 + RUNBOOK 0b 期望条目数 12。"""
-    _, body = extract("bundle.zip")
-    assert body["type"] == "archive"
-    assert body["meta"]["entry_count"] == 12
-    assert body["content"].strip(), "条目清单应作为交付文本给出"
-
-def test_scanned_pdf_declares_missing_text_layer():
-    """行为：没有文字层的 PDF 正文为空，并在 notes 里明说。来源：RUNBOOK 验收第 5 条。"""
-    _, body = extract("scanned.pdf")
-    assert body["content"] == ""
-    assert any("没有文字层" in note for note in body["meta"]["notes"]), body["meta"]["notes"]
-
-def test_degraded_is_a_boundary_not_a_failure():
-    """
-    行为：老版 Office 降级成「基础文件信息」，HTTP 仍是 200，不算错误。
-
-    来源：README「降级是能力边界而非故障：缺依赖的类型返回『这是什么、多大』，HTTP 仍是 200」。
-    """
-    status, body = extract("legacy.doc")
-    assert status == 200
-    assert body["error"] is None
-    assert body["type"] == "file"
-    assert body["meta"]["degraded"] is True
-    assert body["meta"]["degrade_reason"], "降级必须说明缺的是什么"
-    assert body["meta"]["degrade_code"] == "legacy_office_requires_converter"
-    assert body["meta"]["size_bytes"] > 0
 
 def test_query_does_not_change_delivered_text_and_is_acknowledged():
     """
@@ -266,7 +199,33 @@ def test_query_does_not_change_delivered_text_and_is_acknowledged():
     assert asked["content"] == without["content"]
     assert any("query" in note.lower() for note in asked["meta"]["notes"]), asked["meta"]["notes"]
 
+
+# ---------- 降级与入参 ----------
+
+def test_degraded_is_a_boundary_not_a_failure():
+    """
+    行为：老版 Office 降级成「基础文件信息」，HTTP 仍是 200，不算错误；降级带上机器可读的码。
+
+    来源：README「降级是能力边界而非故障：缺依赖的类型返回『这是什么、多大』，HTTP 仍是 200」
+    + `configs/errors.py` 的 `legacy_office_requires_converter`。
+    """
+    status, body = extract("legacy.doc")
+    assert status == 200
+    assert body["error"] is None
+    assert body["type"] == "file"
+    assert body["meta"]["degraded"] is True
+    assert body["meta"]["degrade_reason"], "降级必须说明缺的是什么"
+    assert body["meta"]["degrade_code"] == "legacy_office_requires_converter"
+    assert body["meta"]["size_bytes"] > 0
+
+
 def test_missing_file_is_rejected_as_invalid_input():
-    """行为：入参不合法返回 422。来源：路由 docstring「状态码按语义返回（入参 422…）」。"""
+    """
+    行为：没带文件时被拒，且错误里点明缺的是哪个字段。
+
+    来源：路由 docstring「状态码按语义返回（入参 422…）」。这一层由框架的入参校验给出，
+    所以只断言「422 + 指名了 file 字段」，不钉框架的措辞。
+    """
     response = httpx.post(f"{BASE_URL}/extract/file", timeout=TIMEOUT)
     assert response.status_code == 422
+    assert "file" in response.text, "错误里应点明缺的是 file 字段"

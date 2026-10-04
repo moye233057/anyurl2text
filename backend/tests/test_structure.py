@@ -30,6 +30,9 @@ MAX_FILE_LINES = 250
 MAX_CODE_LINES = 150
 NON_PRODUCTION = {"scripts", "tests"}
 
+# 能力域见 AGENTS.md「测试用例怎么写」；按域跑：python -m pytest tests -m capability_structure
+pytestmark = pytest.mark.capability_structure
+
 # 层 → 允许被它 import 的项目内层（ADR-0007）
 ALLOWED: Dict[str, Set[str]] = {
     "configs": set(),
