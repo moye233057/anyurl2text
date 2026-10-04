@@ -22,6 +22,9 @@ PROMPTS_DIR = BASE_DIR / "models" / "prompts"
 # ---------- HTTP 服务 ----------
 API_HOST = os.getenv("ANYURL2TEXT_HOST", "127.0.0.1")
 API_PORT = int(os.getenv("ANYURL2TEXT_PORT", "8020"))
+# 开发期自动重载：改完后端 .py 立即生效，省掉手动重启。uvicorn 的 reload 会额外起一个
+# 监督进程（父进程只负责看文件、子进程才是真服务），所以默认关闭——本机自用想省事再打开。
+RELOAD = os.getenv("RELOAD", "false").strip().lower() in ("1", "true", "yes", "on")
 
 # ---------- 下载层 ----------
 # 单次请求总预算；下载、解析、模型各自分段计时，超时预算按剩余时间递减。

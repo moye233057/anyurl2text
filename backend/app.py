@@ -9,12 +9,14 @@ anyurl2text 服务入口。
 读取环境变量，顺序反了会全部落到默认值，而且症状是「配置看起来没生效」这种难查的问题。
 """
 import os
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+BACKEND_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BACKEND_DIR.parent
 # 只读项目根目录的 .env：位置固定才能解释「配置为什么没生效」，
 # 启动日志会把实际用的路径打出来，省得去猜。
 ENV_FILE = PROJECT_ROOT / ".env"
@@ -45,7 +47,8 @@ async def lifespan(app: FastAPI):
     logger.info(f"配置文件: {ENV_FILE if ENV_FILE.exists() else '(未找到，全部使用默认值)'}")
     logger.info(
         f"模型={settings.DEEPSEEK_MODEL} 思考模式={'开' if settings.THINKING_ENABLED else '关'} "
-        f"扫描件页面渲染={'开' if settings.RENDERED_PAGE_OCR_ENABLED else '关'}"
+        f"扫描件页面渲染={'开' if settings.RENDERED_PAGE_OCR_ENABLED else '关'} "
+        f"自动重载={'开' if settings.RELOAD else '关'}"
     )
     if not os.getenv("DEEPSEEK_API_KEY", "").strip():
         logger.info("未配置 DEEPSEEK_API_KEY：/understand 会失败并说明原因，/extract 不受影响")
@@ -100,4 +103,24 @@ app.include_router(probe_router)
 app.include_router(rag_router)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host=settings.API_HOST, port=settings.API_PORT)
+    if settings.RELOAD:
+        # reload 必须传 import 字符串——传 app 对象时 uvicorn 直接报错「You must pass the
+        # application as an import string」。这就要求 `app` 能被 import：监督进程另起子进程，
+        # 子进程的 cwd 与 sys.path 都继承自这里，所以两者都显式指到 backend/，
+        # 于是 `python app.py`（cwd=backend/，start.py 就是这么起的）与从项目根跑
+        # `python backend/app.py` 都成立。
+        os.chdir(BACKEND_DIR)
+        sys.path.insert(0, str(BACKEND_DIR))
+        # 不设 reload_includes / reload_excludes：本机没装 watchfiles 时 uvicorn 退回
+        # StatReload（轮询 mtime），那两个参数只会打一行「装了 watchfiles 才有效」的警告。
+        # StatReload 只扫 `*.py`，所以改 .env 或样例不会误触发重载。
+        logger.info(f"自动重载已打开（RELOAD=true），监视 {BACKEND_DIR} 下的 .py")
+        uvicorn.run(
+            "app:app",
+            host=settings.API_HOST,
+            port=settings.API_PORT,
+            reload=True,
+            reload_dirs=[str(BACKEND_DIR)],
+        )
+    else:
+        uvicorn.run(app, host=settings.API_HOST, port=settings.API_PORT)
