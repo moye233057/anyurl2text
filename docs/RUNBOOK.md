@@ -124,8 +124,12 @@ mp4 那一份需要 `imageio-ffmpeg`（可选依赖），没装时脚本跳过�
 
 | # | 做什么 | 判据 |
 |---|---|---|
-| 0a | `cd backend && python -m pytest tests -q` | 五条结构判据 + 各格式抽取 + 判型 + 通用件全过（结构判据在 `tests/test_structure.py`；不起服务、不联网、不调模型） |
+| 0a | 后端在跑时 `cd backend && python -m pytest tests -q` | 自检缝全过：五条结构判据（`tests/test_structure.py`）+ 各格式抽取 + 判型 + 通用件（不联网下载、不调模型、不花钱）。**这一条里有 26 条 HTTP 用例（`tests/test_extract_contract.py`），所以后端必须在跑** |
 | 0b | 起服务后 `cd backend && python -m pytest tests -m model -q` | 贵缝全过：两条路 `content` 逐字节一致、模型增强产出、独立图片判型分流、音视频转写（真调模型，且本机 OCR（8021）/ ASR（8022）在跑） |
+
+**别为了跑测试另起一个后端**：端口只有一个，第二个起不来（`10048`）或者两个互相抢端口。改完后端代码时，开着自动重载的那个服务会自己加载新代码（见第 6 节），直接在它上面跑 0a/0b 就行；服务没开就先按第 2 节起一个，再跑。
+
+pytest 的缓存是关掉的（`backend/pytest.ini` 里的 `-p no:cacheprovider`），所以跑完不会在 `backend/` 下留 `.pytest_cache` 或 `pytest-cache-files-*`。代价是没有 `--lf` / `--ff`——本套件跑一次只要几秒，直接全跑。
 
 两条 0 号命令之外都是人工核查。样例缺失时新套件**跳过**该条而不是失败——样例由 `python scripts/make_fixtures.py` 生成（见第 3 节）。
 
@@ -156,6 +160,8 @@ mp4 那一份需要 `imageio-ffmpeg`（可选依赖），没装时脚本跳过�
 - **它多起一个监督进程**（父进程看文件、子进程才是服务）。`start.py` 用 `taskkill /T` 收树，Ctrl+C 仍能一次收干净；手工起的进程要按 Ctrl+C 停，别只关窗口。
 - **`RELOAD` 自身改了也要重启**：它是在启动时读的。
 - 本机没装 `watchfiles` 时 uvicorn 走 `StatReload`（轮询 `mtime`），照样生效，只是比事件式慢一点；装了 `watchfiles`（`uvicorn[standard]` 自带）才支持 include/exclude 过滤。
+
+开了自动重载之后，改完后端就**直接在这个服务上跑验收**（第 5 节的 0a/0b），不要再起第二个后端——端口只有一个，第二个会因 `10048` 起不来。
 
 ### `start.py` 说端口已被占用
 
