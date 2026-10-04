@@ -34,6 +34,13 @@ CLAMP = "clamp"
 MAX_TABLE_ROWS = 2000
 # 单个表格的格位展开（跨度额外占用的格位）总量上限
 MAX_GRID_EXPANSION = 200_000
+# 单张表的**格位数**上限：实测一个格位对象约 100 字节，100 万格位约 100 MB，
+# 而「行上限 5000 × 200 列」正好落在预算内——它挡的是列数无上限的畸形表。
+MAX_GRID_SLOTS = 1_000_000
+# 单张表的**文字总字符数**上限：它直接界定渲染出的中间字符串（实测 2000×50×500 字符 = 5000 万字符、
+# 峰值 60 MB）。交付文本另有 `max_content_chars` 截断，但那是**组装时事后截断**，峰值已经发生；
+# 真实大表（5000 行 × 40 列 × 10 字 ≈ 200 万字符）在预算内，留了 2.5 倍余量。
+MAX_GRID_TEXT_CHARS = 5_000_000
 # ODF 的 `number-*-repeated` 游程上限：它常被用来把一行补到上千列
 MAX_REPEATED_SLOTS = 100
 # 压缩包 / 安装包的条目清单上限
@@ -102,8 +109,12 @@ LIMITS: Dict[str, Limit] = {
     # 值与强制点都只有一处，带模块前缀反而要拆成两个名字、两份值。命名以本文件为准。
     "max_table_rows": Limit(MAX_TABLE_ROWS, "rows", TRUNCATE, False, "docx._render_table / odf._render_table",
         "表格超过 {value} 行，其余行未列出"),
-    "max_grid_expansion": Limit(MAX_GRID_EXPANSION, "count", TRUNCATE, False, "grid.GridBuilder.__init__",
+    "max_grid_expansion": Limit(MAX_GRID_EXPANSION, "count", TRUNCATE, False, "grid.GridBuilder.place",
         "表格跨度展开超过 {value} 个格位，超出的合并跨度按 1 格处理"),
+    "max_grid_slots": Limit(MAX_GRID_SLOTS, "count", TRUNCATE, False, "grid.GridBuilder.place",
+        "单张表的格位数超过 {value}，其余单元格未落位"),
+    "max_grid_text_chars": Limit(MAX_GRID_TEXT_CHARS, "chars", TRUNCATE, False, "grid.GridBuilder.place",
+        "单张表的文字超过 {value} 字符，其余单元格未落位"),
     "max_repeated_slots": Limit(MAX_REPEATED_SLOTS, "count", CLAMP, False, "odf._render_table",
         "ODF 的 number-*-repeated 超过 {value} 次，按 {value} 次处理"),
     "max_links": Limit(MAX_LINKS, "count", TRUNCATE, False, "html.extract_html / docx.extract_docx",

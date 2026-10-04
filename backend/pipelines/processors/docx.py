@@ -74,8 +74,7 @@ def _render_table(table) -> tuple:
     if total_rows > limits.MAX_TABLE_ROWS:
         lines.append(f"... 其余 {total_rows - limits.MAX_TABLE_ROWS} 行未列出")
         hits.append("max_table_rows")
-    if builder.limit_hit:
-        hits.append("max_grid_expansion")
+    hits.extend(builder.limit_hits)
     return "\n".join(lines), hits
 
 def _save_embedded_images(document: "Document", ctx: ExtractContext, result: ExtractResult) -> list:

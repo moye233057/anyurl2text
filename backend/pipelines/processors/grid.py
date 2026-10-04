@@ -11,8 +11,10 @@ OOXML、真实重叠的跨度）都由 `GridBuilder` 吸收，下游只按列位
 单文件预算（`tests/test_structure.py` 判据 2）；它与处理器同层、只 import 同层 `schema`，
 依赖方向不受影响（ADR-0007）。
 
-超限不抛异常：停止展开并记 `limit_hit`，由处理器写进 `notes`——「降级是正常结果」（ADR-0003），
-网格超限不该让整条请求变成错误。
+超限不抛异常：命中预算时**不落这一格**（或把跨度退化成 1×1），把上界名记进 `limit_hits`，由处理器写进
+`limits_hit` / `notes`——「降级是正常结果」（ADR-0003），网格超限不该让整条请求变成错误。
+三条预算各管一件事：**展开**（跨度额外占的格位数）、**格位数**（本表落了多少格）、
+**文字量**（落进来的文字总字符数，直接界定渲染出的中间字符串大小）。
 """
 from typing import Dict, List, Optional, Tuple
 
@@ -26,14 +28,45 @@ def _holds_place(slot) -> bool:
 class GridBuilder:
     """网格的唯一构造者：逐行 `next_row()`，一行内按列序 `place()` / `covered()`，最后 `finish()`。"""
 
-    def __init__(self, limit: Optional[int] = None) -> None:
+    def __init__(
+        self,
+        limit: Optional[int] = None,
+        slot_limit: Optional[int] = None,
+        text_limit: Optional[int] = None,
+    ) -> None:
         self.grid: TableGrid = []
-        self.limit_hit: Optional[str] = None
+        self.limit_hits: List[str] = []
         self._pending: Dict[Tuple[int, int], Tuple[int, int]] = {}
         self._expansion = 0
-        # 上限在**调用时**读，不用默认参数：默认参数在 import 期就绑定，用例没法 monkeypatch 它。
+        self._slots = 0
+        self._text_chars = 0
+        # 三条预算都在**调用时**读，不用默认参数：默认参数在 import 期就绑定，用例没法 monkeypatch。
         # `configs/limits.py` 仍是唯一事实源，改值只改那一处。
         self._limit = limits.MAX_GRID_EXPANSION if limit is None else limit
+        self._slot_limit = limits.MAX_GRID_SLOTS if slot_limit is None else slot_limit
+        self._text_limit = limits.MAX_GRID_TEXT_CHARS if text_limit is None else text_limit
+
+    def _charge(self, name: str, amount: int, budget: Optional[int]) -> bool:
+        """
+        记一笔预算并判断还放不放得下。
+
+        功能：命中时把上界名记进 `limit_hits`（同名只记一次）并返回 False——调用方据此**不落这一格**，
+               超限的格既不落位、也不登记它认领的覆盖位，所以网格不会出现「跨度声明了、覆盖位没有」。
+        应用场景：`place` / `covered` 每次落位前、`finish` 每次补位前调用。
+        输入：name — 上界名；amount — 本次记账量；budget — 该条预算（0 或 None 表示不限）。
+        输出：True 表示还放得下；False 表示已超限。
+        """
+        if name == "max_grid_slots":
+            self._slots += amount
+            total = self._slots
+        else:
+            self._text_chars += amount
+            total = self._text_chars
+        if not budget:
+            return True
+        if total > budget and name not in self.limit_hits:
+            self.limit_hits.append(name)
+        return total <= budget
 
     def next_row(self) -> None:
         """开一行。行内格位必须按列序落：列号由本类维护，调用方不要自己数。"""
@@ -43,8 +76,10 @@ class GridBuilder:
         """
         落一个 origin 格位。
 
-        功能：面积先记账（超限退化成 1x1 并记 `limit_hit`），与本行或下方已被别的跨度认领的
+        功能：面积先记账（超限退化成 1x1 并记 `max_grid_expansion`），与本行或下方已被别的跨度认领的
               位置重叠时就地钳制，再把跨度覆盖的其余位置登记进待覆盖账本。
+              另有两条预算：`max_grid_slots`（本表已落格位数）与 `max_grid_text_chars`（落进来的文字
+              总字符数）——任一超限就**不落这一格**，也不登记它认领的位置。
         应用场景：各格式处理器读到非覆盖格时调用。
         输入：text — 已清理的单元格文本；col_span / row_span — 横向与纵向跨度。
         输出：无。
@@ -54,8 +89,13 @@ class GridBuilder:
         self._expansion += area - 1
         if self._limit and self._expansion > self._limit:
             self._expansion -= area - 1
-            self.limit_hit = "table_expansion"
+            if "max_grid_expansion" not in self.limit_hits:
+                self.limit_hits.append("max_grid_expansion")
             col_span = row_span = 1
+        if not self._charge("max_grid_slots", 1, self._slot_limit):
+            return
+        if not self._charge("max_grid_text_chars", len(text), self._text_limit):
+            return
         row = len(self.grid) - 1
         self._skip_pending(row)
         col = len(self.grid[row])
@@ -71,6 +111,8 @@ class GridBuilder:
         """消费一个显式覆盖位；无人认领时退化成空格并返回 False（产出方少写了格子）。"""
         row = len(self.grid) - 1
         origin = self._pending.pop((row, len(self.grid[row])), None)
+        if not self._charge("max_grid_slots", 1, self._slot_limit):
+            return origin is not None
         if origin is None:
             self.grid[row].append(GridSpan())
             return False
@@ -83,6 +125,8 @@ class GridBuilder:
 
         功能：把跨度认领过、产出方却没写覆盖位的位置补齐成 `CoveredSlot`（必要时补行补列），
               再裁掉尾部全空行。重复调用是幂等的。
+              **这里的格位预算是软上限**：已认领的覆盖位必须补齐，否则跨度没有背书、不变式就破了；
+              所以宁可多出一点（最多 `max_grid_expansion` 个），也要保住网格自洽。
         应用场景：一张表的格位全部落完后调用一次。
         输出：可直接交给 `render_tsv` 的网格。
         """
@@ -91,7 +135,9 @@ class GridBuilder:
                 self.grid.append([])
             while len(self.grid[row]) < col:
                 self.grid[row].append(GridSpan())
+                self._charge("max_grid_slots", 1, self._slot_limit)
             self.grid[row].append(CoveredSlot(origin_row=origin[0], origin_col=origin[1]))
+            self._charge("max_grid_slots", 1, self._slot_limit)
         self._pending.clear()
         while len(self.grid) > 1 and not any(_holds_place(slot) for slot in self.grid[-1]):
             self.grid.pop()

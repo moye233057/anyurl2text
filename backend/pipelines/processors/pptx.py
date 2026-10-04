@@ -34,7 +34,7 @@ def _shape_text(shape) -> str:
         return ""
     return (shape.text_frame.text or "").strip()
 
-def _table_text(shape) -> str:
+def _table_text(shape) -> tuple:
     """
     把表格形状渲染成制表符分隔的行。
 
@@ -42,10 +42,10 @@ def _table_text(shape) -> str:
           交给格位网格，跨度只在合并区左上角取（python-pptx 明确说非 origin 上的跨度不可靠）。
     应用场景：extract_pptx 遇到表格形状时调用。
     输入：shape — 页上的形状。
-    输出：制表符分隔的多行文本；不是表格时返回空串。
+    输出：(制表符分隔的多行文本, 命中的上界名列表)；不是表格时返回 ("", [])。
     """
     if not getattr(shape, "has_table", False):
-        return ""
+        return "", []
     builder = GridBuilder()
     for row in shape.table.rows:
         builder.next_row()
@@ -57,7 +57,7 @@ def _table_text(shape) -> str:
             row_span = cell.span_height if cell.is_merge_origin else 1
             builder.place((cell.text or "").strip(), col_span, row_span)
     grid = builder.finish()
-    return "\n".join(render_tsv(grid, len(grid)))
+    return "\n".join(render_tsv(grid, len(grid))), list(builder.limit_hits)
 
 def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
     """
@@ -90,9 +90,10 @@ def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
             text = _shape_text(shape)
             if text:
                 blocks.append(text)
-            table = _table_text(shape)
+            table, table_hits = _table_text(shape)
             if table:
                 blocks.append(table)
+            hits.extend(table_hits)
             if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
                 images_total += 1
                 if not ctx.prepare_assets:

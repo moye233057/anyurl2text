@@ -40,7 +40,9 @@ def _render_rows(sheets: list, pad_short_rows: bool = True) -> tuple:
     blocks = []
     hits = []
     for name, rows, merges in sheets:
-        lines = render_tsv(_sheet_grid(rows, merges), limits.MAX_ROWS_PER_SHEET, pad_short_rows=pad_short_rows)
+        grid, grid_hits = _sheet_grid(rows, merges)
+        lines = render_tsv(grid, limits.MAX_ROWS_PER_SHEET, pad_short_rows=pad_short_rows)
+        hits.extend(grid_hits)
         if len(rows) > limits.MAX_ROWS_PER_SHEET and "max_rows_per_sheet" not in hits:
             hits.append("max_rows_per_sheet")
         if lines:
@@ -64,7 +66,7 @@ def _cell_text(cell) -> str:
     text = f"{cell:.15g}" if isinstance(cell, float) else str(cell)
     return text.replace("\t", " ").replace("\n", " ").strip()
 
-def _sheet_grid(rows: list, merges: list) -> TableGrid:
+def _sheet_grid(rows: list, merges: list) -> tuple:
     """
     一个表的行值 + 合并矩形 → 格位网格。
 
@@ -72,7 +74,7 @@ def _sheet_grid(rows: list, merges: list) -> TableGrid:
           免得为没读进来的行补出格位。
     应用场景：`_render_rows` 逐表调用。
     输入：rows — 行值列表；merges — 半开矩形 (行起, 列起, 行止, 列止)。
-    输出：可渲染的格位网格。
+    输出：(可渲染的格位网格, 命中的上界名列表)——网格预算命中时要能上报，不能只交网格。
     """
     usable = [
         (row_start, col_start, min(row_end, len(rows)), col_end)
@@ -96,7 +98,7 @@ def _sheet_grid(rows: list, merges: list) -> TableGrid:
                 continue
             col_span, row_span = spans.get((row_index, col_index), (1, 1))
             builder.place(_cell_text(row[col_index]), col_span, row_span)
-    return builder.finish()
+    return builder.finish(), list(builder.limit_hits)
 
 def _read_xlsx(path: Path) -> list:
     """用 openpyxl 读 xlsx/xlsm；read_only 失败时退回常规模式（部分文件的样式表会让只读模式报错）。"""

@@ -21,6 +21,7 @@ import zipfile
 import pytest
 
 from configs import errors
+from pipelines.processors.grid import CoveredSlot, GridBuilder, check_grid, render_tsv
 from pipelines.processors.schema import ExtractContext
 from pipelines.steps.step2_detect import extension_from_name
 from pipelines.steps.step4_extract import dispatch
@@ -346,6 +347,131 @@ def test_grid_invariant_checker_reports_a_contradictory_grid():
     assert check_grid(contradictory), "跨度声明了 2 列却没有覆盖位，校验函数必须报出来"
 
 
+# ---------- 格位网格的边界形状（01 号专题列的五个「难构造」用例）----------
+
+@pytest.mark.capability_table
+def test_late_span_is_clamped_to_positions_it_can_own():
+    """
+    行为：同一行里晚到的跨度不得盖住已被认领的位置——重叠时就地钳制，而不是产出矛盾网格。
+
+    来源：`01-表格格位建模.md` 列的 `overlapping_spans_clamp_the_late_origin`
+          （anydoc `src/model/table.rs:399-413`）；它的注释说明「重叠会破坏『每个格位恰好出现一次』，
+          存储的跨度必须与覆盖位一一对应」。
+    预期值来源：手搭的格位序列（两处纵向跨度认领了第 1 行的第 0 / 第 2 列，晚到的横向跨度只能落 1 列）。
+    """
+    builder = GridBuilder()
+    builder.next_row()
+    builder.place("纵一", 1, 2)  # 认领 (1,0)
+    builder.place("中间", 1, 1)
+    builder.place("纵二", 1, 2)  # 认领 (1,2)
+    builder.next_row()
+    builder.covered()  # 消费 (1,0)
+    builder.place("晚到跨两列", 2, 1)  # 起点在第 1 列，但第 2 列已被认领 → 钳成 1 列
+    builder.covered()  # 消费 (1,2)
+    grid = builder.finish()
+
+    assert grid[1][1].text == "晚到跨两列"
+    assert grid[1][1].col_span == 1, "晚到的跨度必须被钳到它能真正占有的列数"
+    assert check_grid(grid) == [], f"网格不自洽：{check_grid(grid)}"
+    assert builder.limit_hits == []
+
+
+@pytest.mark.capability_table
+def test_nested_spans_and_a_stray_covered_marker_stay_consistent():
+    """
+    行为：横向跨度与纵向跨度交织、且出现一个「没有跨度认领的覆盖位」时，网格仍自洽——孤立的覆盖位
+          退化成空格而不是报错。
+
+    来源：anydoc 的 `covered()` 语义（`src/model/table.rs:216-232`）：`false` 表示「没有跨度认领这个
+          位置，孤立的标记就变成空格子」；本仓 `GridBuilder.covered()` 同构。
+    预期值来源：手搭的格位序列（第 1 行的第 0 列无人认领、第 2 列被上方的纵向跨度认领）。
+    """
+    builder = GridBuilder()
+    builder.next_row()
+    builder.place("横跨两列", 2, 1)
+    builder.place("纵跨两行", 1, 2)  # 认领 (1,2)
+    builder.next_row()
+    assert builder.covered() is False, "第 1 行第 0 列没有跨度认领，应退化成空格"
+    builder.place("晚到", 2, 1)  # 第 2 列被认领 → 钳成 1 列
+    builder.covered()  # 消费 (1,2)
+    grid = builder.finish()
+
+    assert grid[1][0].text == "" and grid[1][0].col_span == 1, "孤立覆盖位应成一个空格子"
+    assert grid[1][1].col_span == 1
+    assert isinstance(grid[1][2], CoveredSlot), "被纵向跨度认领的位应是覆盖位"
+    assert (grid[1][2].origin_row, grid[1][2].origin_col) == (0, 2)
+    assert check_grid(grid) == [], f"网格不自洽：{check_grid(grid)}"
+
+
+@pytest.mark.capability_table
+def test_trailing_covered_rows_stay_backed_and_render_nothing():
+    """
+    行为：只有覆盖位的尾行**不从网格里裁掉**（跨度仍要有覆盖位背书），但渲染时不出空行。
+
+    来源：anydoc 用 `keep_covered_tail` 让电子表格保住这类行、其余来源裁掉
+          （`src/model/table.rs:137-143`、`:258-266`）；本仓刻意只保留在网格里、渲染层跳过整行无文字的
+          行（`render_tsv`）——这是 `00-总览` §4.3-4 记下的有意差异。
+    预期值来源：手搭的格位序列（一处跨 3 行的纵向跨度，后两行只被它认领）。
+    """
+    builder = GridBuilder()
+    builder.next_row()
+    builder.place("纵跨三行", 1, 3)
+    grid = builder.finish()
+
+    assert len(grid) == 3, "只被跨度认领的尾行要留在网格里（否则跨度没有覆盖位背书）"
+    assert isinstance(grid[2][0], CoveredSlot)
+    assert (grid[2][0].origin_row, grid[2][0].origin_col) == (0, 0)
+    assert check_grid(grid) == [], f"网格不自洽：{check_grid(grid)}"
+    assert render_tsv(grid, 10) == ["纵跨三行"], "只被覆盖的整行不该出现在渲染结果里"
+
+
+@pytest.mark.capability_table
+def test_huge_span_is_rejected_before_expanding():
+    """
+    行为：巨大跨度在**展开之前**就被预算拒掉——退化成 1×1 并记 `table_expansion`，不会真的去建
+          百万个格位。
+
+    来源：anydoc 的 `huge_span_hits_the_expansion_budget_before_expanding`
+          （`src/model/table.rs:446-452`，`u32::MAX × u32::MAX` 的跨度在展开前被拒）；本仓
+          `GridBuilder.place` 先按面积记账、超限即退化成 1×1。
+    预期值来源：手搭的格位序列（100 万 × 100 万的跨度）与 `MAX_GRID_EXPANSION` 的默认值。
+    """
+    builder = GridBuilder()
+    builder.next_row()
+    builder.place("巨", 10**6, 10**6)
+    grid = builder.finish()
+
+    assert builder.limit_hits == ["max_grid_expansion"]
+    assert grid[0][0].col_span == 1, "超限的跨度应退化成 1×1"
+    assert len(grid[0]) == 1, "不能为超限跨度真的建出格位"
+    assert check_grid(grid) == [], f"网格不自洽：{check_grid(grid)}"
+
+
+@pytest.mark.capability_table
+def test_covered_tail_behind_a_short_row_gap_materializes():
+    """
+    行为：第 0 行第 5 列起有 2 行跨度、第 1 行只写到第 0 列时，`finish()` 要把中间的空缺补出来，
+          让第 5 列上出现指回 `(0,5)` 的覆盖位。
+
+    来源：anydoc 的 `covered_tail_behind_short_row_gap_materializes`（`src/model/table.rs:466-483`）：
+          该行的长度必须补到 6，且第 5 位是指回 origin 的覆盖位——「补位」不是渲染层的事，是网格的事。
+    预期值来源：手搭的格位序列（第 0 行 6 列、第 1 行 1 列 + 一处纵向跨度）。
+    """
+    builder = GridBuilder()
+    builder.next_row()
+    for index in range(5):
+        builder.place(f"c{index}", 1, 1)
+    builder.place("纵跨两行", 1, 2)  # 认领 (1,5)
+    builder.next_row()
+    builder.place("只有一列", 1, 1)
+    grid = builder.finish()
+
+    assert len(grid[1]) == 6, f"第 1 行应补到 6 位（实际 {len(grid[1])}）"
+    assert isinstance(grid[1][5], CoveredSlot), "第 5 位应是覆盖位"
+    assert (grid[1][5].origin_row, grid[1][5].origin_col) == (0, 5)
+    assert check_grid(grid) == [], f"网格不自洽：{check_grid(grid)}"
+
+
 # ---------- 内嵌图：同一张图被引多次 ----------
 
 # 样例生成参数（`scripts/make_fixtures.py` 阶段 14）：photo.png 被引 3 次、screenshot.png 被引 1 次，
@@ -542,6 +668,58 @@ def test_grid_expansion_limit_is_absent_when_not_hit(ctx, fixture_copy):
     """
     result = run("merged.docx", ctx, fixture_copy)
     assert "max_grid_expansion" not in result.limits_hit, result.limits_hit
+
+
+@pytest.mark.capability_limits
+def test_grid_slot_budget_is_reported(monkeypatch, ctx, fixture_copy):
+    """
+    行为：单张表的格位数超过 `max_grid_slots` 时，其余单元格不落位、名字进 `limits_hit`，请求仍正常。
+
+    来源：`configs/limits.py` 的 `max_grid_slots`（2026-10-04 新增：实测一个格位约 100 字节，
+          100 万格位约 100 MB；它挡的是列数无上限的畸形表）+ ADR-0003（降级是能力边界）。
+    预期值来源：`merged.xlsx` 第一张表是 4 行 × 3 列 = 12 个格位，把预算压到 3 必然命中。
+    """
+    import configs.limits as limits
+
+    monkeypatch.setattr(limits, "MAX_GRID_SLOTS", 3)
+    result = run("merged.xlsx", ctx, fixture_copy)
+    assert "max_grid_slots" in result.limits_hit, result.limits_hit
+    assert result.degraded is False, result.degrade_reason
+
+
+@pytest.mark.capability_limits
+def test_grid_text_budget_is_reported(monkeypatch, ctx, fixture_copy):
+    """
+    行为：单张表落进去的文字总量超过 `max_grid_text_chars` 时同样截断并报名字。
+
+    来源：`configs/limits.py` 的 `max_grid_text_chars`（2026-10-04 新增：实测 2000 行 × 50 列 × 500 字符
+          会渲染出 5000 万字符、峰值 60 MB，而交付侧的 `max_content_chars` 是组装时事后截断）。
+    预期值来源：`sample.tsv` 的单元格文字远多于 1 个字符，把预算压到 1 必然命中。
+    """
+    import configs.limits as limits
+
+    monkeypatch.setattr(limits, "MAX_GRID_TEXT_CHARS", 1)
+    result = run("sample.tsv", ctx, fixture_copy)
+    assert "max_grid_text_chars" in result.limits_hit, result.limits_hit
+    assert result.degraded is False, result.degrade_reason
+
+
+@pytest.mark.capability_limits
+@pytest.mark.parametrize("name", ["merged.xlsx", "merged.pptx"])
+def test_spreadsheet_and_slide_paths_report_the_grid_expansion_limit(monkeypatch, name, ctx, fixture_copy):
+    """
+    行为：`.xlsx` 与 `.pptx` 的表格也要上报 `max_grid_expansion`——今天只有 docx / odf 报。
+
+    来源：`01-表格格位建模.md` 的 D.5「命中上限必须机器可读」；实测（2026-10-04）发现
+          `_sheet_grid` 与 `_table_text` 只交网格、不交命中的名字，于是这两条路的上界**静默**。
+    预期值来源：两个样例各有合并区（各一处跨度），把展开预算压到 1 必然命中。
+    """
+    import configs.limits as limits
+
+    monkeypatch.setattr(limits, "MAX_GRID_EXPANSION", 1)
+    result = run(name, ctx, fixture_copy)
+    assert "max_grid_expansion" in result.limits_hit, result.limits_hit
+    assert result.content.strip(), "命中上界不该把整张表丢掉"
 
 
 # ---------- CSV 分隔符嗅探 ----------
