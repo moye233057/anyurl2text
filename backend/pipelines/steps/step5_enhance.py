@@ -6,8 +6,11 @@
 摘要在没有 query 且已有图像描述时直接复用描述，省掉一次纯文本调用。
 
 摘要只进 `summary`，**不动 `content`**——`content` 只在步骤 4 的 `extract_*` 里产生（ADR 0002/0007）。
+
+本步也是**模型侧上界**的报告点：送模型的输入被 `max_model_input_chars` 截断、或模型输出被
+`llm_max_tokens` 截断（账本上的 `output_truncated`）时，把名字交回调用方进 `meta.limits_hit`。
 """
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import configs.settings as settings
 from configs.settings import PROMPTS_DIR
@@ -22,20 +25,22 @@ def summarize(
     asr_text: Optional[str],
     image_description: Optional[str],
     query: Optional[str],
-) -> Tuple[Optional[str], bool]:
+) -> Tuple[Optional[str], List[str]]:
     """
     步骤 5 的入口：产出摘要。
 
-    功能：把交付文本与识别文本合成模型输入，按上限截断并回报给调用方声明。
+    功能：把交付文本与识别文本合成模型输入，按上限截断并把命中的上界名交回调用方声明。
     应用场景：understand 的第 5 步（步骤 4 之后、组装响应之前）。
     输入：client — 模型客户端；prepared — 源；content — 交付文本；
           ocr_text — 图像识别文本；asr_text — 语音转写文本；
           image_description — 独立图片的描述；query — 用户问题。
-    输出：(摘要文本 或 None, 送模型输入是否被截断)。
+    输出：(摘要文本 或 None, 本次模型阶段命中的上界名列表)。
     异常：LlmError — 调用失败，由调用方转成 notes。
     """
+    # 输出被截断是账本上的事实（`finish_reason == "length"`），与本次是否又调了一次无关
+    hits = ["llm_max_tokens"] if client.ledger.output_truncated else []
     if image_description and not query:
-        return image_description, False
+        return image_description, hits
 
     # 交付文本与识别文本拼成模型输入。
     # 带 query 问一张没有文字的图时，图像描述是唯一可依据的内容，必须带上，
@@ -51,12 +56,11 @@ def summarize(
         parts.append(f"=== 模型的图像描述 ===\n{image_description}")
     text = "\n\n".join(parts)
     if not text.strip():
-        return None, False
+        return None, hits
 
-    truncated = False
     if len(text) > settings.MAX_MODEL_INPUT_CHARS:
         text = text[: settings.MAX_MODEL_INPUT_CHARS]
-        truncated = True
+        hits.append("max_model_input_chars")
 
     if query:
         system_prompt = (PROMPTS_DIR / "answer.txt").read_text(encoding="utf-8").strip()
@@ -70,4 +74,4 @@ def summarize(
         [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
         thinking=settings.THINKING_ENABLED,
     )
-    return summary, truncated
+    return summary, hits

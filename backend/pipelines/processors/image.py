@@ -69,7 +69,10 @@ def _read_exif(image: Image.Image) -> dict:
 def _svg_meta(path: Path) -> Tuple[ImageMeta, Optional[str]]:
     """解析 SVG 画布尺寸与元素数量；解析失败返回空 meta 与原因。"""
     try:
-        root = ET.fromstring(read_text_file(path))
+        # SVG 是 XML：超过文本读取上限时会被截断，随即在下面解析失败并降级，
+        # 所以这里不另报 max_text_bytes——失败原因已经写在 degrade_reason 里。
+        svg_text, _ = read_text_file(path)
+        root = ET.fromstring(svg_text)
     except ET.ParseError as exc:
         return ImageMeta(format="SVG"), f"SVG 解析失败: {exc}"
 

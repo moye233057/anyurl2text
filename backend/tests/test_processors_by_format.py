@@ -160,6 +160,27 @@ def test_scanned_pdf_declares_missing_text_layer_without_degrading(ctx, fixture_
     assert any("文字层" in note for note in result.notes), result.notes
 
 
+def test_unprocessed_pages_are_named_when_the_render_limit_bites(asset_ctx, fixture_copy, monkeypatch):
+    """
+    行为：扫描件页数超过整页渲染上限时，`unprocessed_pages` 精确列出没处理的页码，
+          而不是只留一句「其余未渲染」——机器要读得出「缺了哪几页」。
+
+    来源：借鉴设计 P1-6「meta 加结构化未处理声明」+ ADR-0003（能力边界也要机器可读）。
+    做法：把上限临时压到 1，用 3 页的 scanned.pdf 触发——不新增样例、不动全局配置。
+    预期值来源：样例生成参数（scanned.pdf 3 页）+ 上限 1 → 没处理的是第 2、3 页。
+    """
+    from configs import settings
+
+    monkeypatch.setattr(settings, "RENDERED_PAGE_MAX", 1)
+    monkeypatch.setattr(settings, "RENDERED_PAGE_OCR_ENABLED", True)
+    result = run("scanned.pdf", asset_ctx, fixture_copy)
+
+    assert result.pages == 3
+    assert result.pages_used == 1
+    assert result.unprocessed_pages == [2, 3]
+    assert "rendered_page_max" in result.limits_hit
+
+
 @pytest.mark.parametrize("name", ["screenshot.png", "photo.png"])
 def test_image_extract_yields_structure_only(name, ctx, fixture_copy):
     """
@@ -403,8 +424,6 @@ def test_the_limit_registry_is_self_consistent():
     from configs import limits
 
     assert limits.LIMIT_NAMES == frozenset(limits.LIMITS)
-    # 未接进 limits_hit 的那几个必须是表里的条目，不能是想当然写下的名字
-    assert limits.NOT_REPORTED_YET <= limits.LIMIT_NAMES
     for name, limit in limits.LIMITS.items():
         assert limit.value > 0, name
         assert limit.behavior in (limits.ERROR, limits.TRUNCATE, limits.CLAMP), name
@@ -441,6 +460,50 @@ def test_limits_hit_reaches_meta_with_the_templated_note(ctx, work_dir):
     response = build_response(prepared, dispatch("html", path, ctx))
     assert response.meta.limits_hit == ["max_links"]
     assert limits.note_for("max_links") in response.meta.notes
+
+
+def test_model_side_limits_are_reported_by_step5(monkeypatch):
+    """
+    行为：模型侧的两条上界都交回调用方——输出被 `llm_max_tokens` 截断（账本的
+          `output_truncated`）、送模型的输入被 `max_model_input_chars` 截断。
+
+    来源：`configs/limits.py` 的两条 + ADR-0003「边界要机器可读」。这两条以前接不上：
+    强制点在模型层与步骤 5 里，拿不到 `result`；现在由账本标记、`summarize` 一次交回。
+    做法：假客户端 + 压小输入上限；不联网、不调模型。
+    """
+    from pathlib import Path
+
+    from configs import settings
+    from pipelines.processors.schema import PreparedSource
+    from pipelines.steps import step5_enhance
+    from routers.convert.schema import Detector
+
+    class _Ledger:
+        output_truncated = True
+
+    class _Client:
+        ledger = _Ledger()
+
+        @staticmethod
+        def chat(messages, **kwargs):
+            return "摘要"
+
+    prepared = PreparedSource(
+        path=Path("x.txt"),
+        source="x.txt",
+        file_name="x.txt",
+        mime=None,
+        size_bytes=0,
+        ext="txt",
+        detector=Detector.EXTENSION,
+        page_url="",
+    )
+    monkeypatch.setattr(settings, "MAX_MODEL_INPUT_CHARS", 2)
+
+    summary, hits = step5_enhance.summarize(_Client(), prepared, "正文很长", None, None, None, None)
+
+    assert summary == "摘要"
+    assert hits == ["llm_max_tokens", "max_model_input_chars"]
 
 
 # ---------- 降级路径 ----------

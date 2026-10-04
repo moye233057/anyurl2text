@@ -114,6 +114,11 @@ class Meta(BaseModel):
 
     pages: Optional[int] = Field(None, description="文档总页数")
     pages_used: Optional[int] = Field(None, description="实际处理的页数")
+    unprocessed_pages: List[int] = Field(
+        default_factory=list,
+        description="没处理到的页码（1 基，升序）；今天由 PDF 的整页渲染上限产生，"
+        "命中原因名在 limits_hit（rendered_page_max）",
+    )
     images: Optional[int] = Field(None, description="文档内嵌图总数")
     images_used: Optional[int] = Field(None, description="实际处理的内嵌图数")
     image: Optional[ImageMeta] = Field(None, description="源本身是图片时填充")

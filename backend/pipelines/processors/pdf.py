@@ -172,6 +172,9 @@ def extract_pdf(path: Path, ctx: ExtractContext) -> ExtractResult:
             result.pages_used = limit
             if pages > limit:
                 result.limits_hit.append("rendered_page_max")
+                # 缺了哪几页要能直接读出来：机器只看到 pages_used < pages 时，
+                # 没法知道缺的是哪一些，也没法把它们列给使用者。
+                result.unprocessed_pages = list(range(limit + 1, pages + 1))
             result.notes.append(
                 f"没有文字层，已渲染前 {limit} 页交给视觉模型；"
                 "整页渲染已覆盖页面上的图，不再单独抽内嵌图"

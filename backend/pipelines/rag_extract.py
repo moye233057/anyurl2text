@@ -7,13 +7,12 @@ RAG 抽取管线：给检索入库用的文件内容。
 """
 from typing import BinaryIO, NamedTuple, Optional
 
+import configs.limits as limits
 from configs.log_config import logger
 from pipelines.processors.catalogue import build_catalogue_ranges, extract_catalogue_lines
 from pipelines.processors.pdf_pages import extract_pdf_pages
 from pipelines.steps import step1_download, step3_prepare, step4_extract
 from routers.rag.schema import RagExtractResponse
-
-PREVIEW_FIRST_PAGES = 15
 
 
 class RagPipelineResult(NamedTuple):
@@ -78,15 +77,20 @@ class RagExtractPipeline:
         logger.info(f"rag extract：pymupdf4llm {pdf_path.name}")
         page_rows = extract_pdf_pages(pdf_path)
         logger.info(f"rag extract：pages={len(page_rows)}")
-        preview = page_rows[:PREVIEW_FIRST_PAGES]
+        # 上界值只在 configs/limits.py：这里读的是注册表里那条 preview_first_pages
+        preview = page_rows[: limits.PREVIEW_FIRST_PAGES]
         lines = extract_catalogue_lines(preview)
         ranges = build_catalogue_ranges(lines)
         if not lines or not ranges:
             logger.info("rag extract：抽不出目录行")
             return None
         logger.info(f"rag extract：catalogue lines={len(lines)} ranges={len(ranges)}")
+        # 目录只在前 N 页里找：文档更长时这是**少读了用户的页**，必须跟着响应报出去
+        hits = ["preview_first_pages"] if len(page_rows) > limits.PREVIEW_FIRST_PAGES else []
         return RagPipelineResult(
-            RagExtractResponse(kind="pdf", pages=page_rows, catalogue_ranges=ranges, error=None),
+            RagExtractResponse(
+                kind="pdf", pages=page_rows, catalogue_ranges=ranges, limits_hit=hits, error=None
+            ),
             200,
         )
 

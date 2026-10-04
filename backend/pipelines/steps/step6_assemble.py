@@ -75,6 +75,7 @@ def build_response(
         limits_hit=limits_hit,
         pages=result.pages,
         pages_used=result.pages_used,
+        unprocessed_pages=result.unprocessed_pages,
         images=result.images,
         images_used=result.images_used,
         entry_count=result.entry_count,

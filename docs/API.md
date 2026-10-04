@@ -86,6 +86,7 @@
 | `truncated` | 总是 | `content` 是否被字符上限截断。等价于 `limits_hit` 里含 `max_content_chars` |
 | `limits_hit` | 总是 | 本次命中的上界名，取自 `configs/limits.py` 的 `LIMIT_NAMES`（如 `max_links`、`max_rows_per_sheet`、`max_embedded_images`）；同一句命中说明按表里的模板进 `notes` |
 | `pages` / `pages_used` | 文档类 | 总页数与实际处理页数；扫描件超出渲染上限时两者不等 |
+| `unprocessed_pages` | 文档类 | **没处理到的页码**（1 基，升序）。今天只有扫描件超出整页渲染上限时非空，命中原因名在 `limits_hit`（`rendered_page_max`）——「哪几页没处理」是机器读得出的事实，不再只活在 `notes` 的一句中文里 |
 | `images` / `images_used` | 文档类 | 内嵌图**引用次数**与实际落盘处理数；同一张图被引多次只处理一次（按来源部件去重），所以源里有重复引用时两者会不等 |
 | `image` | 源本身是图片 | 尺寸 / 格式 / 色彩模式 / 帧数 / 常用 EXIF |
 | `audio` | 源是音频或视频 | 音轨参数：时长 / 采样率 / 声道 / 音轨格式。视频也填这一块——容器里能确定性读到的只有音轨 |
@@ -191,9 +192,13 @@
   "pages": [{ "page": 1, "text": "…" }],
   "text": null,                  // 无印刷目录时才有值
   "catalogue_ranges": [{ "title": "…", "start_page": 14, "end_page": 20 }],
+  "limits_hit": [],              // 恒存在：命中的上界名（如 preview_first_pages，目录只在前 15 页里找）
   "error": null                  // 恒存在；成功为 null
 }
 ```
+
+`limits_hit` 与 ConvertResponse 的 `meta.limits_hit` 用同一套名字（`configs/limits.py` 的 `LIMIT_NAMES`）：
+**这一口也要机器读得出「少读了哪一段」**，只是它没有 `meta`，所以放在顶层。
 
 PDF 抽出印刷目录：`kind=pdf`，带 `pages` 与 `catalogue_ranges`。否则：`kind` 为扩展名，带 `text`（extract 内核的交付文本，不截断、不调模型）。失败时 `kind=error` 或仍带扩展名，`error` 非空。
 

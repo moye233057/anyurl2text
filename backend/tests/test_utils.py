@@ -47,15 +47,33 @@ def peak(monkeypatch):
 # ---------- 文本解码 ----------
 
 def test_utf8_text_round_trips_exactly(work_dir):
-    """行为：合法 utf-8 原样解出，不经过探测、不产生替换字符。"""
+    """行为：合法 utf-8 原样解出，不经过探测、不产生替换字符，也不谎报命中上界。"""
     text = "第一行：中文\n第二行：emoji 🙂\n"
-    assert read_text_file(write(work_dir, "u8.txt", text.encode("utf-8"))) == text
+    decoded, hits = read_text_file(write(work_dir, "u8.txt", text.encode("utf-8")))
+    assert decoded == text
+    assert hits == [], "没超上限就不能报 max_text_bytes"
 
 
 def test_windows_bom_is_stripped(work_dir):
     """行为：带 BOM 的 utf-8 解出后不含 BOM——BOM 进了交付文本就是脏字符。"""
     path = write(work_dir, "bom.txt", b"\xef\xbb\xbf" + "正文".encode("utf-8"))
-    assert read_text_file(path) == "正文"
+    assert read_text_file(path)[0] == "正文"
+
+
+def test_text_over_the_byte_limit_is_read_truncated_and_reported(work_dir, monkeypatch):
+    """
+    行为：超过 `max_text_bytes` 时按上限截读，并把命中名交回调用方——不静默少读。
+
+    来源：`configs/limits.py` 的 `max_text_bytes`（TRUNCATE）+ ADR-0003「边界要机器可读」。
+    做法：把上限压到 8 字节，用 20 字节的文本触发——不写大文件、不动全局配置。
+    """
+    from configs import limits
+
+    monkeypatch.setattr(limits, "MAX_TEXT_BYTES", 8)
+    path = write(work_dir, "long.txt", b"0123456789abcdefghij")
+    decoded, hits = read_text_file(path)
+    assert decoded == "01234567"
+    assert hits == ["max_text_bytes"]
 
 
 def test_undecodable_bytes_do_not_raise(work_dir):
@@ -66,7 +84,7 @@ def test_undecodable_bytes_do_not_raise(work_dir):
     一个坏字节不该让整份文件读不出来。
     """
     path = write(work_dir, "broken.txt", b"\xff\xfe\x00\x01\x02 not utf-8 at all \xff")
-    text = read_text_file(path)
+    text, _ = read_text_file(path)
     assert isinstance(text, str)
     assert text, "读不出来也要给出内容，而不是空串"
 

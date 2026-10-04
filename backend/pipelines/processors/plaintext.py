@@ -45,10 +45,11 @@ def extract_plaintext(path: Path, ext: str) -> ExtractResult:
     输入：path — 文件路径；ext — 已识别的小写扩展名。
     输出：ExtractResult，content 为文本本身。
     """
+    text, hits = read_text_file(path)
     if ext == "json":
-        return ExtractResult(content=_pretty_json(read_text_file(path)), engines=["json"])
+        return ExtractResult(content=_pretty_json(text), engines=["json"], limits_hit=hits)
     if ext == "xml":
-        return ExtractResult(content=_pretty_xml(read_text_file(path)), engines=["ElementTree"])
+        return ExtractResult(content=_pretty_xml(text), engines=["ElementTree"], limits_hit=hits)
     if ext == "rtf":
-        return ExtractResult(content=rtf_to_text(read_text_file(path)), engines=["RTF 控制字解析"])
-    return ExtractResult(content=read_text_file(path), engines=["原文直读"])
+        return ExtractResult(content=rtf_to_text(text), engines=["RTF 控制字解析"], limits_hit=hits)
+    return ExtractResult(content=text, engines=["原文直读"], limits_hit=hits)

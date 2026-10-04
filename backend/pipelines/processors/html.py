@@ -38,7 +38,7 @@ def extract_html(path: Path, page_url: str = "") -> ExtractResult:
     输入：path — 落盘的 HTML 文件；page_url — 最终 URL，用于把相对链接补成绝对链接。
     输出：ExtractResult，content 为「标题 + 摘要 + 正文 + 链接」的可读文本。
     """
-    html = read_text_file(path)
+    html, text_hits = read_text_file(path)
     soup = BeautifulSoup(html, "html.parser")
 
     for tag in soup(["script", "style", "noscript", "iframe", "svg"]):
@@ -82,5 +82,5 @@ def extract_html(path: Path, page_url: str = "") -> ExtractResult:
     return ExtractResult(
         content="\n\n".join(block for block in blocks if block),
         engines=["BeautifulSoup"],
-        limits_hit=["max_links"] if total_links > limits.MAX_LINKS else [],
+        limits_hit=text_hits + (["max_links"] if total_links > limits.MAX_LINKS else []),
     )

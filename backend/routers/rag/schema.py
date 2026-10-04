@@ -40,4 +40,9 @@ class RagExtractResponse(BaseModel):
     catalogue_ranges: Optional[List[RagCatalogueRange]] = Field(
         None, description="印刷目录区间；仅命中时有值"
     )
+    limits_hit: List[str] = Field(
+        default_factory=list,
+        description="命中的上界名，取自 configs/limits.py 的 LIMIT_NAMES（如 preview_first_pages）；"
+        "与 ConvertResponse 的 meta.limits_hit 同一套名字",
+    )
     error: Optional[str] = Field(None, description="恒存在；成功为 null")

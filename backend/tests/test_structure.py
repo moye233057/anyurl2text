@@ -255,6 +255,44 @@ def test_enhance_functions_never_touch_content():
     assert not problems, "模型增强改了 content：\n" + "\n".join(problems)
 
 
+# ---------- 判据 6：上界的值只在注册表里写一次 ----------
+
+def test_limit_values_live_only_in_the_registry():
+    """
+    行为：上界的**值**只在 `configs/limits.py` 里写一次——别的生产模块再写一个同值常量，
+    或者又冒出一个 `MAX_*` 数字常量，就是第二处定义。
+
+    来源：`configs/limits.py`「两个数值来源在这里汇合……**不再有第三个来源**」
+    + 借鉴设计 P5「防漂移门禁 `check_limit_registry()`」。值撞车比名字撞车更隐蔽：
+    改了一处、另一处留着旧值，两份代码都「看起来对」，而用户看到的行为已经不一致。
+    `configs/`（唯一来源本身）不参与，`scripts/` 与 `tests/` 不是生产模块。
+    """
+    import configs.limits as limits
+
+    registered = {limit.value for limit in limits.LIMITS.values()}
+    assert registered, "注册表是空的，下面的比对会假绿"
+    problems = []
+    for path in production_modules():
+        relative_path = relative(path)
+        if relative_path.startswith("configs/"):
+            continue
+        for node in parse(path).body:
+            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Constant):
+                continue
+            value = node.value.value
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            names = [target.id for target in node.targets if isinstance(target, ast.Name)]
+            if not names:
+                continue
+            if value in registered or any(name.startswith("MAX_") for name in names):
+                problems.append(
+                    f"{relative_path}:{node.lineno} {names[0]} = {value} 是第二处上界定义"
+                    "（读 configs/limits.py 里的那一条）"
+                )
+    assert not problems, "上界的值只能在 configs/limits.py 里写：\n" + "\n".join(problems)
+
+
 # ---------- 判据本身的自检 ----------
 
 def test_the_rules_are_looking_at_real_modules():

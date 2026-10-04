@@ -119,6 +119,23 @@ def test_meta_reports_no_limit_hits_for_a_small_input():
     assert body["meta"]["limits_hit"] == []
 
 
+def test_meta_carries_every_channel_for_a_small_input():
+    """
+    行为：三条通道在正常响应里形状齐全——`limits_hit` 与 `unprocessed_pages` 是空列表，
+          `degrade_code` 与 `model_error` 为 null。
+
+    来源：ADR-0001「响应形状只有一份」（字段恒存在，调用方不必判两种形状）
+    + ADR-0003（降级/边界各走自己的通道，不挤进 `error`）。
+    """
+    status, body = extract("plain.txt")
+    assert status == 200
+    meta = body["meta"]
+    assert meta["limits_hit"] == []
+    assert meta["unprocessed_pages"] == []
+    assert meta["degrade_code"] is None
+    assert meta["model_error"] is None
+
+
 def test_plain_text_is_delivered_verbatim():
     """
     行为：交付文本就是源文本本身，不被加工、不被加前缀。
@@ -210,6 +227,7 @@ def test_degraded_is_a_boundary_not_a_failure():
     assert body["type"] == "file"
     assert body["meta"]["degraded"] is True
     assert body["meta"]["degrade_reason"], "降级必须说明缺的是什么"
+    assert body["meta"]["degrade_code"] == "legacy_office_requires_converter"
     assert body["meta"]["size_bytes"] > 0
 
 def test_query_does_not_change_delivered_text_and_is_acknowledged():

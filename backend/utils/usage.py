@@ -63,6 +63,9 @@ class UsageLedger:
     completion_tokens: int = 0
     reasoning_tokens: int = 0
     cost_cny: float = 0.0
+    # 本次请求里是否有一次调用的输出被 max_tokens 截断（SDK 的 finish_reason == "length"）。
+    # 它是「命中 llm_max_tokens」的判据，由 models/deepseek.py 标记、understand 报进 limits_hit。
+    output_truncated: bool = False
 
     def add(self, usage: Dict[str, Any]) -> None:
         """登记一次调用的 usage（已从 SDK 对象转成 dict）。"""

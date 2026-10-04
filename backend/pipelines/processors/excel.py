@@ -140,9 +140,9 @@ def _read_ods(path: Path) -> list:
 
 def _read_csv(path: Path) -> list:
     """读 CSV：先按编码探测解码，再交给 csv 解析一次（不二次拼接）。"""
-    text = read_text_file(path)
+    text, hits = read_text_file(path)
     rows = list(islice(csv.reader(io.StringIO(text)), limits.MAX_ROWS_TO_READ))
-    return [(path.stem or "csv", rows, ())]
+    return [(path.stem or "csv", rows, tuple(hits))]
 
 def extract_excel(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:
     """

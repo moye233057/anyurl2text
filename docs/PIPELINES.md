@@ -375,9 +375,10 @@ ODS 与 CSV 也在这个文件里：这一族都按行列渲染成同一种文�
 （图片等比缩放、ODF 补位次数）是常规归一化，命中不代表数据丢失，报出来只会变成噪声——
 它们登记在表里备查，但不报告。
 
-**还没接上的三个**（`configs/limits.py` 的 `NOT_REPORTED_YET`）：`max_text_bytes`、
-`preview_first_pages`、`llm_max_tokens`。它们语义上也会截断，只是强制点拿不到 `result`——
-`textfile.read_text_file()` 是返回字符串的工具函数、RAG 预览走自己的响应契约、
-`llm_max_tokens` 要看模型的 `finish_reason` 才判得出有没有截断。**别把这一节读成已全覆盖。**
+**这三个也都接上了**（2026-10-04，`NOT_REPORTED_YET` 这个名字随之删除）：`max_text_bytes` 由
+`textfile.read_text_file()` 与文本一起返回给处理器；`preview_first_pages` 报进 RAG 响应自己的
+`limits_hit`（`routers/rag/schema.py`）；`llm_max_tokens` 由账本的 `output_truncated`
+（模型的 `finish_reason == "length"`）标记、`understand` 报进 `meta.limits_hit`。
+**这一节现在可以读成已全覆盖**；加新上界时请照上面三条把报告链路一起接上。
 
 `.env` 变量与全部取值见 [RUNBOOK.md](./RUNBOOK.md) 的配置项全表，写死的上界见紧随其后的模块内常量表，判定见 [adr.md](./adr.md)。

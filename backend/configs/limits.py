@@ -13,6 +13,8 @@
 
 - 命中时处理器只把**名字**记进 `result.limits_hit`，不自己写文案；文案只有 `note` 一处模板。
 - `LIMIT_NAMES` 是名字白名单，`meta.limits_hit` 里出现表外的名字就是漂移。
+- 每条登记的上界都要有**报告链路**：命中时名字必须能到 `meta.limits_hit`（RAG 那口报进它自己的
+  `limits_hit`）。只有代码知道的上界，用户与调用方都看不见。
 - 阈值（判定用的下限，如「合计不足 30 字算没有文字层」）不是上界，不进表，见 `NON_LIMIT_THRESHOLDS`。
 
 为什么压得这么密：判据 2 是「总行 ≤ 250 且代码行 ≤ 150」（`tests/test_structure.py`），
@@ -116,12 +118,6 @@ LIMITS: Dict[str, Limit] = {
 
 # 名字白名单：meta.limits_hit 里出现表外的名字就是漂移
 LIMIT_NAMES = frozenset(LIMITS)
-
-# 已登记、但**还没**接进 meta.limits_hit 的上界。它们语义上会截断，只是强制点拿不到 result：
-# textfile.read_text_file 是返回字符串的工具函数，rag_extract 的预览走自己的响应契约，
-# llm_max_tokens 要看模型的 finish_reason 才判得出有没有截断。
-# 登记在这里是为了让「上界一览」不缺项——接上报名字之前，别把文档读成已全覆盖。
-NOT_REPORTED_YET = frozenset({"max_text_bytes", "preview_first_pages", "llm_max_tokens"})
 
 # 判定用的阈值不是上界：命中它们不产生截断，也不该出现在 limits_hit 里
 NON_LIMIT_THRESHOLDS = frozenset({

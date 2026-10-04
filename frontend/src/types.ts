@@ -47,6 +47,8 @@ export interface Meta {
   limits_hit: string[]
   pages?: number | null
   pages_used?: number | null
+  /** 没处理到的页码（1 基，升序）；今天由 PDF 整页渲染上限产生，命中原因名在 limits_hit */
+  unprocessed_pages: number[]
   images?: number | null
   images_used?: number | null
   entry_count?: number | null

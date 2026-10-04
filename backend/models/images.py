@@ -9,18 +9,15 @@ import base64
 from io import BytesIO
 from pathlib import Path
 
+import configs.limits as limits
 from utils.errors import LlmError
-
-# 送模型前把图缩到这个长边以内：模型侧本来就会把图缩到约 1300x1300 总像素，
-# 再大只是白白多传 base64。
-MAX_LONG_EDGE = 1600
 
 def encode_image(path: Path) -> str:
     """
     把本地图片编码成 data URL，必要时先缩放。
 
-    功能：长边超过 MAX_LONG_EDGE 时等比缩小，统一转 JPEG 再 base64；
-          这样既控制请求体大小，也不浪费模型侧的图片 token。
+    功能：长边超过 `limits.MAX_LONG_EDGE`（注册表中的唯一定义处）时等比缩小——模型侧本来就会把图
+          缩到约 1300x1300 总像素，再大只是白白多传 base64；统一转 JPEG 再 base64。
     应用场景：独立图片判型、文档内嵌图 OCR、扫描件页面识别三处共用。
     输入：path — 图片路径。
     输出：`data:image/jpeg;base64,...` 形式的字符串。
@@ -32,8 +29,8 @@ def encode_image(path: Path) -> str:
         with Image.open(path) as image:
             if image.mode not in ("RGB", "L"):
                 image = image.convert("RGB")
-            if max(image.size) > MAX_LONG_EDGE:
-                ratio = MAX_LONG_EDGE / max(image.size)
+            if max(image.size) > limits.MAX_LONG_EDGE:
+                ratio = limits.MAX_LONG_EDGE / max(image.size)
                 image = image.resize(
                     (max(1, int(image.width * ratio)), max(1, int(image.height * ratio))),
                     Image.LANCZOS,

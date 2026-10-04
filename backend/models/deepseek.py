@@ -119,7 +119,11 @@ class DeepSeekClient:
         raise LlmError(f"模型调用失败（已重试 {settings.LLM_MAX_RETRIES} 次）: {last_error}", "llm_call_failed")
 
     def _record_usage(self, response) -> None:
-        """把 SDK 响应里的 usage 转成 dict 记进账本。"""
+        """把 SDK 响应里的 usage 转成 dict 记进账本，并记下输出是否被 max_tokens 截断。"""
+        choices = getattr(response, "choices", None) or []
+        if choices and getattr(choices[0], "finish_reason", None) == "length":
+            # 输出被上限截断：账本留痕，understand 据此报 llm_max_tokens（不静默截断）
+            self.ledger.output_truncated = True
         usage = getattr(response, "usage", None)
         if usage is None:
             return

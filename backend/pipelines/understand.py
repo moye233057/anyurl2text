@@ -67,7 +67,7 @@ class UnderstandPipeline:
             if _has_model_work(prepared, result):
                 model_started = time.monotonic()
                 model_failed = False
-                input_truncated = False
+                model_hits = []
                 try:
                     # ── 步骤 4 的模型部分：按格式读素材（独立图片读字与描述 / 扫描页逐页 / 内嵌图批量）
                     outcome = step4_extract.enhance(prepared, result, client)
@@ -75,7 +75,7 @@ class UnderstandPipeline:
                     ocr_text = outcome.ocr_text
                     asr_text = outcome.asr_text
                     # ── 步骤 5：生成摘要
-                    summary, input_truncated = step5_enhance.summarize(
+                    summary, model_hits = step5_enhance.summarize(
                         client, prepared, result.content, ocr_text, asr_text, outcome.description, query
                     )
                 except LlmError as exc:
@@ -89,8 +89,7 @@ class UnderstandPipeline:
                 # 不写一句说明的话，summary 为 null 看起来像功能坏了。
                 if summary is None and not model_failed:
                     result.notes.append("模型阶段没有产出摘要：这份内容里既没有可加工的文本，也没有读出可用的图像信息")
-                if input_truncated:
-                    result.limits_hit.append("max_model_input_chars")
+                result.limits_hit.extend(model_hits)
             else:
                 result.notes.append("没有可供模型处理的内容，understand 跳过模型调用")
 
@@ -146,7 +145,7 @@ class UnderstandPipeline:
             if _has_model_work(prepared, result):
                 model_started = time.monotonic()
                 model_failed = False
-                input_truncated = False
+                model_hits = []
                 try:
                     # ── 步骤 4 的模型部分：按格式读素材
                     outcome = step4_extract.enhance(prepared, result, client)
@@ -154,7 +153,7 @@ class UnderstandPipeline:
                     ocr_text = outcome.ocr_text
                     asr_text = outcome.asr_text
                     # ── 步骤 5：生成摘要
-                    summary, input_truncated = step5_enhance.summarize(
+                    summary, model_hits = step5_enhance.summarize(
                         client, prepared, result.content, ocr_text, asr_text, outcome.description, query
                     )
                 except LlmError as exc:
@@ -166,8 +165,7 @@ class UnderstandPipeline:
                 model_ms = int((time.monotonic() - model_started) * 1000)
                 if summary is None and not model_failed:
                     result.notes.append("模型阶段没有产出摘要：这份内容里既没有可加工的文本，也没有读出可用的图像信息")
-                if input_truncated:
-                    result.limits_hit.append("max_model_input_chars")
+                result.limits_hit.extend(model_hits)
             else:
                 result.notes.append("没有可供模型处理的内容，understand 跳过模型调用")
 

@@ -73,6 +73,9 @@ class ExtractResult:
 
     pages: Optional[int] = None
     pages_used: Optional[int] = None
+    # 没处理到的页码（1 基，升序）。今天只有 PDF 的整页渲染上限会产生它：命中的上界名在
+    # limits_hit（rendered_page_max），这里补的是「具体哪几页」——「输出缺页」必须机器读得出。
+    unprocessed_pages: List[int] = field(default_factory=list)
     images: Optional[int] = None
     images_used: Optional[int] = None
     entry_count: Optional[int] = None
