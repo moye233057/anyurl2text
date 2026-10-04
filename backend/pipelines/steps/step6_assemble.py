@@ -79,6 +79,7 @@ def build_response(
         images=result.images,
         images_used=result.images_used,
         entry_count=result.entry_count,
+        table_header_rows=result.table_header_rows,
         image=result.image_meta,
         audio=result.audio_meta,
         ocr_text=ocr_text,

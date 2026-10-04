@@ -121,13 +121,13 @@ def _chapter_body(soup) -> tuple:
            然后按块级元素取文本并整理空行；表格走格位网格渲成制表符块后回填到原位置。
     应用场景：extract_epub 逐章调用；必须在取过标题之后再调用。
     输入：soup — 该章 XHTML 的 BeautifulSoup 对象。
-    输出：(正文文本, 命中的上界名列表)。
+    输出：(正文文本, 命中的上界名列表, 该章各表的表头行数列表)。
     """
     for tag in soup(DROP_TAGS + ("head",)):
         tag.decompose()
-    table_blocks, table_hits = html_tables.render_tables(soup)
+    table_blocks, table_hits, table_headers = html_tables.render_tables(soup)
     text = _clean((soup.body or soup).get_text(separator="\n"))
-    return html_tables.restore_blocks(text, table_blocks), table_hits
+    return html_tables.restore_blocks(text, table_blocks), table_hits, table_headers
 
 def _chapter_links(soup, chapter_path: str) -> list:
     """
@@ -200,12 +200,13 @@ def extract_epub(path: Path, ctx: ExtractContext) -> ExtractResult:
                 f"spine 里共 {len(chapters)} 章，超过容器条目上限，只读了前 {limits.MAX_ENTRIES} 章"
             )
         blocks, links, unreadable = [], [], 0
+        table_headers: list = []
         for index, chapter in enumerate(used, start=1):
             try:
                 markup = archive.read(chapter)
                 soup = BeautifulSoup(markup, "html.parser")
                 title = _chapter_title(soup)
-                body, chapter_hits = _chapter_body(soup)
+                body, chapter_hits, chapter_headers = _chapter_body(soup)
                 chapter_links = _chapter_links(soup, chapter)
             except Exception as exc:
                 # 单章坏掉不该让整份文档失败：跳过它、如实说明，其余章照常交付。
@@ -217,6 +218,7 @@ def extract_epub(path: Path, ctx: ExtractContext) -> ExtractResult:
             marker = f"=== 章节 {index}: {title} ===" if title else f"=== 章节 {index} ==="
             blocks.append(f"{marker}\n\n{body}")
             hits.extend(chapter_hits)
+            table_headers.extend(chapter_headers)
             links.extend(chapter_links)
         if unreadable and not blocks:
             return _degraded(f"EPUB 的 {unreadable} 个章节都读不出来（容器损坏或受保护）")
@@ -234,9 +236,14 @@ def extract_epub(path: Path, ctx: ExtractContext) -> ExtractResult:
     notes.append(
         f"已按 spine 顺序拼接 {len(used)} 章；`<link rel=stylesheet>` 与内联 `<style>` 的内容不进交付文本"
     )
+    if len(table_headers) > 1:
+        notes.append(
+            f"全书共 {len(table_headers)} 张表，meta.table_header_rows 只在交付文本只有一张表时给值"
+        )
     return ExtractResult(
         content="\n\n".join(block for block in blocks if block),
         engines=ENGINES,
         notes=notes,
         limits_hit=hits,
+        table_header_rows=table_headers[0] if len(table_headers) == 1 else None,
     )

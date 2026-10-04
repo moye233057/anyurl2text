@@ -79,6 +79,10 @@ class ExtractResult:
     images: Optional[int] = None
     images_used: Optional[int] = None
     entry_count: Optional[int] = None
+    # 交付文本里**唯一**一张表的表头行数，取自**源自己的标记**（网页 / EPUB 的 <th> 与 <thead>）。
+    # 没有表、有多张表、或该格式的源不标表头时是 None——与 0 区别开：0 表示「查过，源明确没标」。
+    # 不做「首行就是表头」这类启发式：猜错会吃掉一行数据，而本项目的取向是宁可回落也不猜。
+    table_header_rows: Optional[int] = None
     image_meta: Optional[ImageMeta] = None
     audio_meta: Optional[AudioMeta] = None
 

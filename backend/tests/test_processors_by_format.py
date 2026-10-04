@@ -539,10 +539,41 @@ def test_epub_chapter_table_goes_through_the_grid():
         "<p>后一段</p></body></html>",
         "html.parser",
     )
-    body, hits = _chapter_body(soup)
+    body, hits, headers = _chapter_body(soup)
     assert "甲\t乙" in body and "1\t2" in body, f"章节表格应渲成制表符行：{body!r}"
     assert "前一段" in body and "后一段" in body, "表格前后的段落不能丢"
     assert hits == []
+    assert headers == [1], f"章节里唯一一张表的表头行数应报出来：{headers}"
+
+
+@pytest.mark.capability_table
+def test_table_header_rows_come_from_the_source_markup(ctx, fixture_copy, work_dir):
+    """
+    行为：`meta.table_header_rows` 报的是**源自己标出**的表头行数（`<th>` / `<thead>`）——三种情况
+          各一条：标的（1）、没标的（0）、表不止一张（null）。
+
+    来源：`routers/convert/schema.py` 的 `table_header_rows` 字段说明（null 与 0 的区别就写在那里）
+          + ADR-0001（字段契约只有一个事实源）。
+    预期值来源：`page.html` 的表首行是 `<th>`（1 行表头）；本用例另写两张页：一张全 `<td>`、一张两张表。
+    """
+    marked, _ = fixture_copy("page.html")
+    assert dispatch("html", marked, ctx).table_header_rows == 1
+
+    unmarked = work_dir / "unmarked.html"
+    unmarked.write_text(
+        "<html><body><table><tr><td>甲</td><td>乙</td></tr><tr><td>1</td><td>2</td></tr></table></body></html>",
+        encoding="utf-8",
+    )
+    assert dispatch("html", unmarked, ctx).table_header_rows == 0, "源没标表头就是 0，不能拿首行当表头"
+
+    two = work_dir / "two.html"
+    two.write_text(
+        "<html><body><table><tr><th>甲</th></tr></table><table><tr><th>乙</th></tr></table></body></html>",
+        encoding="utf-8",
+    )
+    result = dispatch("html", two, ctx)
+    assert result.table_header_rows is None, "交付文本不止一张表时不给值"
+    assert any("2 张表" in note for note in result.notes), result.notes
 
 
 # ---------- 内嵌图：同一张图被引多次 ----------
