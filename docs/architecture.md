@@ -71,7 +71,7 @@ app → routers → pipelines → pipelines/steps → pipelines/processors → {
 
 叶子模块（自己不 import 项目内任何东西，所以任何层都能拿它当数据结构用，不会成环）：关键的几个是 `routers/convert/schema.py`、`routers/rag/schema.py`、`configs/formats.py`、`configs/settings.py`、`configs/errors.py`；`configs/log_config.py`、`pipelines/processors/catalogue.py`、`pipelines/processors/docx_links.py`、`pipelines/processors/pdf_pages.py`、`pipelines/processors/rtf.py`、`pipelines/processors/xlsx_merges.py`、`pipelines/steps/ole_directory.py` 与各 `__init__.py` 同样是叶子，实际共 22 个。完整清单：`python -m pytest tests/test_structure.py -s -k leaf` 会打印出来（`-s` 才看得见被 pytest 捕获的输出）。
 
-另外两条结构性规矩：`__init__.py` 里不放逻辑（只有模块 docstring）；单文件总行数 ≤ 250 且代码行（剥离 docstring / 注释 / 空行）≤ 150。
+另外两条结构性规矩：`__init__.py` 里不放逻辑（只有模块 docstring）；单文件总行数 ≤ 500 且代码行（剥离 docstring / 注释 / 空行）≤ 300（2026-10-04 从 250/150 抬起，余量足够，不必为腾预算而拆文件）。
 
 ## 5. 一次请求怎么走（落点视角）
 

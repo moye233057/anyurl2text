@@ -57,7 +57,7 @@ E:\miniconda\envs\multimodal\python.exe -m pytest tests -q    # 需要后端在�
 
 ## 改代码时的三条硬约束
 
-1. **单文件预算**（判据 2：总行 ≤ 250、代码行 ≤ 150，见 `backend/tests/test_structure.py`）。改 `pipelines/` 下的文件前先量行数——`image.py`、`understand.py`、`step1_download.py` 都贴着上限。
+1. **单文件预算**（判据 2：总行 ≤ 500、代码行 ≤ 300，见 `backend/tests/test_structure.py`）。2026-10-04 用户决定从 250/150 抬起，余量足够，**不必为了腾预算而拆文件**；但文件里真挤了多件事时仍按结构调整（拆叶子模块或表驱动），不许把两行合成一行、删注释、关检查。
 2. **上界与错误码各只有一个定义处**：`backend/configs/limits.py`、`backend/configs/errors.py`。新增上界、或抛出新的错误码，都要登记进那两个表的白名单，否则静态门禁会红（它就该红）。
 3. **`content` 不被模型产出改动**（ADR-0002）：`enhance_*` 只追加到 `summary` / `meta.*`，结构判据 5 会拦。
 

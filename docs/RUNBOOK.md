@@ -223,7 +223,7 @@ E:\miniconda\envs\multimodal\python.exe -m pytest tests -m "capability_table or 
 
 ### 结构自查报「文件超预算」或「依赖方向不对」
 
-结构判据在 `backend/tests/test_structure.py`；依赖方向与单文件预算（总行数 ≤ 250、代码行 ≤ 150）的理由见 [architecture.md](./architecture.md) 第 4 节，单文件预算**不适用于** `backend/scripts/`（一次性生成脚本，`make_fixtures.py` 近 500 行）与 `backend/tests/`。加东西前先想清楚它属于哪一层，别往 `pipelines/` 里塞格式实现。
+结构判据在 `backend/tests/test_structure.py`；依赖方向与单文件预算（总行数 ≤ 500、代码行 ≤ 300，2026-10-04 从 250/150 抬起）的理由见 [architecture.md](./architecture.md) 第 4 节，单文件预算**不适用于** `backend/scripts/`（一次性生成脚本，`make_fixtures.py` 近 500 行）与 `backend/tests/`。加东西前先想清楚它属于哪一层，别往 `pipelines/` 里塞格式实现。
 
 ### 改了前端代码，页面行为还是旧的
 

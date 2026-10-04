@@ -10,7 +10,7 @@ r"""
 
 1. **依赖单向**：每层只能 import 它下方的层；**叶子模块**（自己不 import 项目内任何东西）
    任何层都可以用——它们不可能造成循环。
-2. **单文件预算**：总行数 ≤ 250 且代码行（剥离 docstring、注释、空行）≤ 150。
+2. **单文件预算**：总行数 ≤ 500 且代码行（剥离 docstring、注释、空行）≤ 300。
 3. **扩展名覆盖**：`configs/formats.py` 声明的每个扩展名，在 `step4_extract.dispatch()` 里都有落点。
 4. **`__init__.py` 里不放逻辑**（只有模块 docstring 与 import）。
 5. **模型增强不碰 content**：`enhance_*` 函数体里不得对 `.content` 赋值或追加（ADR-0002）。
@@ -26,8 +26,8 @@ from typing import Dict, List, Set, Tuple
 import pytest
 
 BACKEND = Path(__file__).resolve().parent.parent
-MAX_FILE_LINES = 250
-MAX_CODE_LINES = 150
+MAX_FILE_LINES = 500
+MAX_CODE_LINES = 300
 NON_PRODUCTION = {"scripts", "tests"}
 
 # 能力域见 AGENTS.md「测试用例怎么写」；按域跑：python -m pytest tests -m capability_structure
@@ -157,7 +157,7 @@ def test_dependencies_point_one_way():
 
 def test_no_module_exceeds_the_line_budget():
     """
-    行为：单文件总行 ≤ 250 且代码行 ≤ 150。
+    行为：单文件总行 ≤ 500 且代码行 ≤ 300。
 
     来源：`architecture.md` 第 4 节。判据不适用于 `backend/scripts/`（一次性生成脚本，
     `make_fixtures.py` 近 500 行）与 `backend/tests/`。
