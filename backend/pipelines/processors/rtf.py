@@ -14,6 +14,7 @@ RTF 控制字解析器：把 RTF 源码还原成纯文本与表格。
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Union
 
+from pipelines.processors import cell_text
 from pipelines.processors.rtf_tables import CellSpec, RtfRow, build_lines
 from pipelines.processors.schema import ExtractResult
 from utils.textfile import read_text_file
@@ -64,15 +65,15 @@ def _cell_text(pieces: List[str]) -> str:
     """
     把一格的文字收干净。
 
-    功能：把格内累积的文字按空白切成词、再用单个空格拼回——格内的 `\\par`、`\\tab` 与源码里的
-          换行都在这里变成空格。
-    为什么必须收：一格只能占交付文本的一行一列，格内留一个制表符就凭空多出一列、留一个换行就把
+    功能：格内累积的文字按格位方言（`processors/cell_text.py`）收成一行——`\\par` / `\\line` / `\\tab`
+          与源码里的换行都变成**记号**（换行 → `<br>`、制表符 → 空格），段内空白压成单空格。
+    为什么必须收：一格只能占交付文本的一行一列，格内留一个真制表符就凭空多出一列、留一个真换行就把
           这一行 TSV 拆成两行。
     应用场景：`\\cell` / `\\row` 收格时调用。
     输入：pieces — 这一格累积的文字片段。
-    输出：单空格分隔的一行文字。
+    输出：单行文字（段落边界是 `<br>`）。
     """
-    return " ".join("".join(pieces).split())
+    return cell_text.from_text("".join(pieces))
 
 def _row_cells(defs: List[CellSpec], texts: List[str]) -> List[CellSpec]:
     """

@@ -1007,7 +1007,7 @@ def test_nested_table_text_survives_in_its_cell(ctx, work_dir):
     document.save(str(path))
 
     result = dispatch("docx", path, ctx)
-    assert "内甲 / 内乙 内1 / 内2" in result.content, f"嵌套表的文字没进正文：{result.content!r}"
+    assert "内甲 / 内乙<br>内1 / 内2" in result.content, f"嵌套表的文字没进正文：{result.content!r}"
     lines = [line for line in result.content.splitlines() if "\t" in line]
     assert {line.count("\t") for line in lines} == {1}, f"外层仍是 2 列：{lines}"
 
@@ -1085,7 +1085,7 @@ def test_pptx_multiline_cell_keeps_the_row_on_one_line(ctx, work_dir):
 
     来源：`excel._cell_text` / `docx._cell_text` 都是这么压的（行导向方言里换行会把一行切成两行，
           同表列数就对不上）；实测 python-pptx 的 `cell.text` 在合并后也会带出换行。
-    预期值来源：本用例写 2×2 表，左上格两段（「上半」/「下半」），断言它渲染成 `上半 下半` 一行。
+    预期值来源：本用例写 2×2 表，左上格两段（「上半」/「下半」），断言它渲染成 `上半<br>下半` 一行。
     """
     from pptx import Presentation
     from pptx.util import Inches
@@ -1103,7 +1103,7 @@ def test_pptx_multiline_cell_keeps_the_row_on_one_line(ctx, work_dir):
 
     lines = [line for line in dispatch("pptx", path, ctx).content.splitlines() if "\t" in line]
     assert {line.count("\t") for line in lines} == {1}, f"同表列数应一致：{lines}"
-    assert "上半 下半" in lines[0], lines
+    assert "上半<br>下半" in lines[0], lines
 
 
 @pytest.mark.capability_table
@@ -1133,6 +1133,131 @@ def test_pptx_text_left_in_a_covered_cell_is_merged_back(ctx, work_dir):
     result = dispatch("pptx", path, ctx)
     assert "合并标题 续格残留字" in result.content, result.content
     assert any("残留文字已并入合并单元格（1 处）" in note for note in result.notes), result.notes
+
+
+# ---------- 格内多段：一个格位里的换行写成 `<br>`（anydoc 的 render_cell 口径） ----------
+
+@pytest.mark.capability_table
+def test_docx_multi_paragraph_cell_keeps_its_line_break(ctx, work_dir):
+    """
+    行为：docx 一个格里有**两段**时，交付文本里是 `<br>`——段落边界保住，列位不动。
+
+    来源：`processors/cell_text.py` 的模块 docstring（格子方言照 anydoc 的 `render_cell`：
+          `src/render/markdown/table.rs:87-101`）。改前 `re.sub(r"\\s+", " ", ...)` 把两段压成空格，
+          下游分不清「地址的第二行」与「地址里的一个空格」。
+    预期值来源：本用例写一张 2×2 表，右上格两段（收货地址 / 邮编），所以第一行是
+          `项目\\t北京市海淀区中关村大街 1 号<br>邮编 100080`。
+    """
+    from docx import Document
+
+    path = work_dir / "multiline_cell.docx"
+    document = Document()
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "项目"
+    table.cell(0, 1).text = "北京市海淀区中关村大街 1 号"
+    table.cell(0, 1).add_paragraph("邮编 100080")
+    table.cell(1, 0).text = "联系人"
+    table.cell(1, 1).text = "张伟 13800000000"
+    document.save(str(path))
+
+    lines = [line for line in dispatch("docx", path, ctx).content.splitlines() if "\t" in line]
+    assert lines[0] == "项目\t北京市海淀区中关村大街 1 号<br>邮编 100080", lines
+    assert {line.count("\t") for line in lines} == {1}, f"同表列数必须一致：{lines}"
+
+
+@pytest.mark.capability_table
+def test_docx_soft_line_break_and_tab_inside_a_cell(ctx, work_dir):
+    """
+    行为：格内的软换行（`w:br`）也算一段边界 → `<br>`；格内的制表符仍换成空格（不能多出一列）。
+
+    来源：同 `cell_text.py`（真制表符会凭空多一列，真换行会把这一行拆两行）。
+    预期值来源：本用例手写 `w:t` / `w:br` / `w:tab` 三种行内元素，所以预期是
+          `上半<br>下半 尾`（软换行成记号、制表符成空格）。
+    """
+    from docx import Document
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    path = work_dir / "inline_breaks.docx"
+    document = Document()
+    table = document.add_table(rows=1, cols=1)
+    cell = table.cell(0, 0)._tc
+    for paragraph in list(cell.findall(qn("w:p"))):
+        cell.remove(paragraph)
+    paragraph = OxmlElement("w:p")
+    for tag, text in (("w:t", "上半"), ("w:br", ""), ("w:t", "下半"), ("w:tab", ""), ("w:t", "尾")):
+        node = OxmlElement(tag)
+        if text:
+            node.text = text
+        paragraph.append(node)
+    cell.append(paragraph)
+    document.save(str(path))
+
+    lines = [line for line in dispatch("docx", path, ctx).content.splitlines() if line.strip()]
+    assert lines[0] == "上半<br>下半 尾", lines
+
+
+@pytest.mark.capability_table
+def test_pptx_multi_paragraph_cell_keeps_its_line_break(ctx, work_dir):
+    """
+    行为：pptx 一个格里有多个段落时同样是 `<br>`，同表列数仍是 2 列。
+
+    来源：同 `cell_text.py`；python-pptx 的 `cell.text` 用 `\\n` 连段落、`\\v` 连软换行。
+    预期值来源：本用例写 1×2 表、左格两段（上半 / 下半），所以是 `上半<br>下半\\t右上`。
+    """
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    path = work_dir / "multiline_cell.pptx"
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+    table = slide.shapes.add_table(1, 2, Inches(1), Inches(1), Inches(4), Inches(1)).table
+    table.cell(0, 0).text = "上半"
+    table.cell(0, 0).text_frame.add_paragraph().text = "下半"
+    table.cell(0, 1).text = "右上"
+    presentation.save(str(path))
+
+    lines = [line for line in dispatch("pptx", path, ctx).content.splitlines() if "\t" in line]
+    assert lines[0] == "上半<br>下半\t右上", lines
+
+
+@pytest.mark.capability_table
+def test_ods_cell_with_a_newline_keeps_it_as_a_break(ctx, work_dir):
+    """
+    行为：电子表格一个格里写了换行（`\\n`）时同样是 `<br>`——一个格仍占一列。
+
+    来源：同 `cell_text.py`；openpyxl 读回来的字符串里就带 `\\n`。
+    预期值来源：本用例写一张 1×2 表，左格内容 `上半\\n下半`，所以是 `上半<br>下半\\t右列`。
+    """
+    import openpyxl
+
+    path = work_dir / "newline_cell.xlsx"
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet["A1"] = "上半\n下半"
+    sheet["B1"] = "右列"
+    book.save(str(path))
+
+    lines = [line for line in dispatch("xlsx", path, ctx).content.splitlines() if "\t" in line]
+    assert lines[0] == "上半<br>下半\t右列", lines
+
+
+@pytest.mark.capability_table
+def test_web_cell_line_break_survives_as_a_marker(ctx, work_dir):
+    """
+    行为：网页表格里 `<td>上半<br>下半</td>` 的换行保住成 `<br>`（不压成空格、也不拆行）。
+
+    来源：同 `cell_text.py`；`html_tables._cell_text` 先把 `<br>` 换成换行再走同一条格子方言。
+    预期值来源：本用例手写一行两格，左格带 `<br>`，所以是 `上半<br>下半\\t右格`。
+    """
+    path = work_dir / "cell_break.html"
+    path.write_text(
+        "<html><body><table><tr><td>上半<br>下半</td><td>右格</td></tr></table></body></html>",
+        encoding="utf-8",
+    )
+
+    lines = [line for line in dispatch("html", path, ctx).content.splitlines() if "\t" in line]
+    assert lines[0] == "上半<br>下半\t右格", lines
 
 
 # ---------- 内嵌图：同一张图被引多次 ----------

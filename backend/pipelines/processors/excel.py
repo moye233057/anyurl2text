@@ -19,14 +19,14 @@ from itertools import islice
 from pathlib import Path
 
 import configs.limits as limits
+from pipelines.processors import cell_text, table_kind
 from pipelines.processors.grid import GridBuilder, merge_rect, render_tsv
+from pipelines.processors.index_runs import column_letters, to_runs
 from pipelines.processors.ods_merges import align_values as align_ods_values
 from pipelines.processors.ods_merges import read_merge_rects as read_ods_merge_rects
+from pipelines.processors.ods_visibility import read_visibility as read_ods_visibility
 from pipelines.processors.schema import ExtractContext, ExtractResult, TableGrid
 from pipelines.processors.xlsx_merges import read_merge_rects
-from pipelines.processors import table_kind
-from pipelines.processors.index_runs import column_letters, to_runs
-from pipelines.processors.ods_visibility import read_visibility as read_ods_visibility
 from pipelines.processors.xlsx_visibility import read_visibility as read_xlsx_visibility
 from utils.textfile import read_text_file
 
@@ -66,6 +66,8 @@ def _cell_text(cell) -> str:
           "None"，把整列内容污染掉；浮点按 15 位有效数字格式化（`str()` 会把二进制误差的
           长尾整条写出来，0.1+0.2 就成了 0.30000000000000004，那是实现细节不是表里的内容），
           整数与字符串一律原样不动。
+    格内换行/制表符：换行写成 `<br>`（一个格里也能多段）、制表符换成空格——格位方言见
+          `processors/cell_text.py`（真制表符会凭空多一列、真换行会把这一行拆成两行）。
     应用场景：渲染表格时逐单元格调用。
     输入：cell — 各解析库给出的原始值（可能是 None、整数、浮点、日期或字符串）。
     输出：清理后的文本。
@@ -73,7 +75,7 @@ def _cell_text(cell) -> str:
     if cell is None:
         return ""
     text = f"{cell:.15g}" if isinstance(cell, float) else str(cell)
-    return text.replace("\t", " ").replace("\n", " ").strip()
+    return cell_text.from_text(text)
 
 def _sheet_grid(rows: list, merges: list) -> tuple:
     """

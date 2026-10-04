@@ -17,7 +17,7 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from PIL import Image
 
 import configs.settings as settings
-from pipelines.processors import table_kind
+from pipelines.processors import cell_text, table_kind
 from pipelines.processors.grid import GridBuilder, render_tsv
 from pipelines.processors.schema import CoveredSlot, EmbeddedAsset, ExtractContext, ExtractResult
 
@@ -79,8 +79,9 @@ def _table_text(shape) -> tuple:
     for row_index, row in enumerate(shape.table.rows):
         builder.next_row()
         for column_index, cell in enumerate(row.cells):
-            # 格内空白压成单空格：一个格里有多段时，换行会把这一行切成两行，同表列数就对不上了
-            text = re.sub(r"\s+", " ", cell.text or "").strip()
+            # 格内换行写成 `<br>`（格位方言见 `processors/cell_text.py`）：真换行会把这一行 TSV
+            # 切成两行、同表列数立刻对不上；压成空格则丢掉段落边界
+            text = cell_text.from_text(cell.text or "")
             if cell.is_spanned:
                 builder.covered()
                 if text:

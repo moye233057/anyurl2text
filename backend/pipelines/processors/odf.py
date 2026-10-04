@@ -22,7 +22,7 @@ import zipfile
 from pathlib import Path
 
 import configs.limits as limits
-from pipelines.processors import odf_table_rows, table_kind
+from pipelines.processors import cell_text, odf_table_rows, table_kind
 from pipelines.processors.grid import GridBuilder, render_tsv
 from pipelines.processors.schema import ExtractResult
 
@@ -65,8 +65,13 @@ def _count(element, attribute: str, cap: int = 0) -> int:
     return min(cap, value) if cap else value
 
 def _cell_text(cell) -> str:
-    """取单元格里的文字：把其中的段落（含嵌套列表项里的段落）拼成一行。"""
-    return " ".join(part for part in (_text_of(p) for p in cell.iter(TEXT_NS + "p")) if part)
+    """
+    取单元格里的文字：把其中的段落（含嵌套列表项里的段落）拼成一行，段落之间是 `<br>`。
+
+    格位方言见 `processors/cell_text.py`：格内**不能**留真换行（会把这一行 TSV 切两行），
+    段落边界用 `<br>` 记号保住（与 anydoc 的 `render_cell` 同形）。
+    """
+    return cell_text.join_lines(_text_of(p) for p in cell.iter(TEXT_NS + "p"))
 
 def _flush_gap(builder, pending: int) -> int:
     """

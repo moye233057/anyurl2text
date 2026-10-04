@@ -16,7 +16,7 @@ HTML 表格 → 制表符块：网页与 EPUB 章节共用这一份。
 from bs4 import BeautifulSoup, NavigableString
 
 import configs.limits as limits
-from pipelines.processors import table_kind
+from pipelines.processors import cell_text, table_kind
 from pipelines.processors.grid import GridBuilder, render_tsv
 
 # 哨兵行长这样：清洗会 strip 每一行，它因此必须是一个「strip 前后完全一样」的短标记
@@ -41,8 +41,15 @@ def _span(cell, attribute: str, fallback: int = 1) -> int:
     return max(1, value)
 
 def _cell_text(cell) -> str:
-    """单元格文本：块级元素之间补空格，再压掉换行——制表符方言里一个格位只能占一行。"""
-    return " ".join(cell.get_text(separator=" ").split())
+    """
+    单元格文本：`<br>` 保留成格内换行（`<br>` 记号），块级元素之间补空格，其余空白压掉。
+
+    为什么不能直接把 `<br>` 也压掉：格内换行是内容（地址、多值、一段里的软换行），而格位方言
+    （`processors/cell_text.py`）规定它写成 `<br>` 记号——那样既不出现真换行、列位也不动。
+    """
+    for br in cell.find_all("br"):
+        br.replace_with("\n")
+    return cell_text.from_text(cell.get_text(separator=" "))
 
 def _rows_of(table) -> list:
     """这张表的**直属**行：嵌套表的 `tr` 不属于外层，否则行号会整体错位。"""

@@ -24,6 +24,7 @@ from PIL import Image
 
 import configs.limits as limits
 import configs.settings as settings
+from pipelines.processors import cell_text, table_kind
 from pipelines.processors.docx_links import hyperlink_lines
 from pipelines.processors.grid import GridBuilder, fill_from_specs, render_tsv
 from pipelines.processors.schema import EmbeddedAsset, ExtractContext, ExtractResult
@@ -70,12 +71,29 @@ def _row_elements(tbl) -> list:
                 rows.extend(node for node in content if node.tag == qn("w:tr"))
     return rows
 
+def _inline_text(element) -> str:
+    """
+    段落里的行内文字：`w:t` 取文本、`w:tab` 变空格、`w:br` / `w:cr`（软换行）变换行。
+
+    为什么按元素逐个走而不是 `paragraph.text`：软换行与制表符都不是 `w:t`，
+    只拼 `w:t` 会把它们整个丢掉（本仓 `_cell_text` 以前就是这么丢的）。
+    """
+    chunks = []
+    for node in element.iter():
+        if node.tag == qn("w:t"):
+            chunks.append(node.text or "")
+        elif node.tag == qn("w:tab"):
+            chunks.append(" ")
+        elif node.tag in (qn("w:br"), qn("w:cr")):
+            chunks.append("\n")
+    return "".join(chunks)
+
 def _nested_table_text(tbl) -> str:
     """
     格内嵌套表的文字。
 
-    功能：逐行把格文字用 ` / ` 连起来、行与行用空格连——本仓正文方言把换行压成空格
-           （`_cell_text` 结尾的 `re.sub(r"\\s+", " ", ...)`），所以这里也不引入新记号。
+    功能：逐行把格文字用 ` / ` 连起来、**行与行用 `<br>` 连**（与 anydoc 的嵌套表渲染同形：
+          行内 ` / `、行间 `<br>`）；格位方言的规则见 `processors/cell_text.py`。
     为什么必须取：`w:tc` 里的 `w:tbl` 是**正常内容**，只看 `w:tc` 的直属段落会让整块文字消失。
     应用场景：`_cell_text` 遇到 `w:tc` 里的 `w:tbl` 时调用（可递归任意层）。
     输入：tbl — `w:tbl` 元素。
@@ -86,32 +104,34 @@ def _nested_table_text(tbl) -> str:
         cells = [_cell_text(tc) for tc in row.findall(qn("w:tc"))]
         if any(cells):
             lines.append(" / ".join(cells))
-    return " ".join(lines)
+    return cell_text.join_lines(lines)
 
 def _cell_text(tc) -> str:
     """
-    单元格文字：段落取文本、`w:sdt` 拆壳、**格内嵌套表也取**，最后把空白压成单空格。
+    单元格文字：段落取文本、`w:sdt` 拆壳、**格内嵌套表也取**，格内换行写成 `<br>`。
 
-    与旧实现（`"\\n".join(paragraph.text for paragraph in tc.p_lst)`）的差别就在后两条：
-    `tc.p_lst` 只认直属 `w:p`，内容控件里的段落与格内嵌套表都被跳过。
+    与旧实现（`"\\n".join(paragraph.text for paragraph in tc.p_lst)`）的差别：
+    `tc.p_lst` 只认直属 `w:p`，内容控件里的段落与格内嵌套表都被跳过；而格内换行以前被
+    `re.sub(r"\\s+", " ", ...)` 压成空格，段落边界（地址、多值、项目符号）因此丢掉。
     输入：tc — `w:tc` 元素。
-    输出：压过空白的单元格文字。
+    输出：格内文本（换行是 `<br>`，没有真换行与真制表符）。
     """
     parts: list = []
     for child in tc:
         if child.tag == qn("w:p"):
-            parts.append("".join(node.text or "" for node in child.iter(qn("w:t"))))
+            parts.append(cell_text.from_text(_inline_text(child)))
         elif child.tag == qn("w:tbl"):
             parts.append(_nested_table_text(child))
         elif child.tag == qn("w:sdt"):
             content = child.find(qn("w:sdtContent"))
-            if content is not None:
-                for node in content:
-                    if node.tag == qn("w:p"):
-                        parts.append("".join(text.text or "" for text in node.iter(qn("w:t"))))
-                    elif node.tag == qn("w:tbl"):
-                        parts.append(_nested_table_text(node))
-    return re.sub(r"\s+", " ", " ".join(parts)).strip()
+            if content is None:
+                continue
+            for node in content:
+                if node.tag == qn("w:p"):
+                    parts.append(cell_text.from_text(_inline_text(node)))
+                elif node.tag == qn("w:tbl"):
+                    parts.append(_nested_table_text(node))
+    return cell_text.join_lines(parts)
 
 def _row_specs(row, table) -> list:
     """一行的格位规格：[(文本, 横向跨度, 是否纵向继续格)]，行首缺格补空。"""

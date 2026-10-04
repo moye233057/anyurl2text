@@ -258,12 +258,12 @@ def test_nested_table_does_not_pollute_the_outer_grid(ctx, work_dir):
     来源：`NESTED` 源文本外层两列，第一格里嵌了一张 `\\itap2` 的两行小表（它自己写了 `\\cellx1000`
           与 `\\cellx2000`，与外层边界完全不同）。
     预期值来源：外层每行两个 `\\cellx`，所以两行外层行各 1 个制表符（嵌套边界不外泄）；内层四个格
-          的文字留在外层第一格里，按本仓的嵌套表方言串成 `甲 / 乙`（与 `docx._nested_table_text` 同形）。
+          的文字留在外层第一格里，按本仓的嵌套表方言串成 `甲 / 乙`、格内换行写成 `<br>`（见 `processors/cell_text.py`）。
     """
     path = write_rtf(work_dir, "nested.rtf", NESTED)
     lines = dispatch("rtf", path, ctx).content.split("\n")
     assert [line.count("\t") for line in lines[1:3]] == [1, 1]
-    assert lines[1] == "外左 内甲 / 内乙 内丙 / 内丁 尾\t外右"
+    assert lines[1] == "外左<br>内甲 / 内乙 内丙 / 内丁 尾\t外右"
     assert lines[2] == "外左二\t外右二"
 
 
@@ -274,12 +274,12 @@ def test_outer_row_still_closes_when_the_writer_leaves_itap_at_two(ctx, work_dir
     来源：`NESTED_STALE_ITAP` 源文本——嵌套行被 `\\nestrow` 收掉后，外层的 `\\cell` / `\\row`
           直接跟在中文后面，`\\itap` 还停在第 2 层（`\\itap` 是状态，写出器不一定重写它）。
     预期值来源：外层每行两个 `\\cellx`，所以外层是 1 个制表符；内层两格与「外左」「尾」的文字
-          都留在外层第一格里（内层两格按嵌套表方言串成 `内甲 / 内乙`）。
+          都留在外层第一格里（内层两格按嵌套表方言串成 `内甲 / 内乙`、格内换行是 `<br>`）。
     """
     path = write_rtf(work_dir, "nested_stale_itap.rtf", NESTED_STALE_ITAP)
     lines = dispatch("rtf", path, ctx).content.split("\n")
     assert [line.count("\t") for line in lines[1:2]] == [1]
-    assert lines[1] == "外左 内甲 / 内乙 尾\t外右"
+    assert lines[1] == "外左<br>内甲 / 内乙 尾\t外右"
 
 
 def test_control_word_abutting_chinese_text_keeps_the_text(ctx, work_dir):
