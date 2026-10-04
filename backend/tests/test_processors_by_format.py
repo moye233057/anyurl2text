@@ -13,7 +13,7 @@ r"""
 - `README.md`「支持哪些输入」表：承诺完整解析的格式、只给结构信息的格式、降级的格式
 - 样例的生成参数（`scripts/make_fixtures.py` 各阶段写死的页数 / 条目数）：
   manual.pdf 10 页有文字层、scanned.pdf 3 页无文字层、deck.pptx 6 页、report.docx 内嵌 1 张图、
-  bundle.zip 12 条目、demo.apk 6 条目
+  bundle.zip 12 条目、demo.apk 6 条目、sample.epub 3 章（spine 顺序与 manifest / zip 顺序都不同）
 - `CONTEXT.md` 的术语：「基础文件信息」「交付文本」「降级」
 """
 import pytest
@@ -36,6 +36,7 @@ DOCUMENT_FIXTURES = (
     "deck.pptx",
     "sample.odt",
     "sample.odp",
+    "sample.epub",
     "manual.pdf",
 )
 
@@ -632,6 +633,167 @@ def test_model_side_limits_are_reported_by_step5(monkeypatch):
     assert hits == ["llm_max_tokens", "max_model_input_chars"]
 
 
+# ---------- EPUB：按 spine 顺序拼章节 + 文档级链接消歧 ----------
+
+# 样例生成参数（`scripts/make_fixtures.py` 阶段 17）：三章，manifest 的声明顺序与 zip 的写入顺序
+# 都反着 spine（ch1 → ch2 → ch3）；每章一个独有的特征串，用来验「到底按哪个顺序拼」。
+EPUB_FIXTURE = "sample.epub"
+EPUB_MARKERS = ("=== 章节 1", "=== 章节 2", "=== 章节 3")
+EPUB_BODY_MARKS = ("第一章独有字样", "第二章独有字样", "第三章独有字样")
+# 阶段 17 把这个串只写进样式里（`<link rel=stylesheet>` 指向的 style.css 与 ch2 的内联 `<style>`）
+EPUB_CSS_SENTINEL = "epub-css-sentinel-only-in-stylesheet"
+# 三处内部引用提升后的文档级目标：跨章 `ch2.xhtml#sec`、章内自链 `#sec2`、`../` 跨目录回指 `#sec3`
+EPUB_LINK_SEC = "OEBPS/ch2.xhtml#sec"
+EPUB_LINK_SEC2 = "OEBPS/ch2.xhtml#sec2"
+EPUB_LINK_SEC3 = "OEBPS/ch2.xhtml#sec3"
+
+
+def _epub_link_lines(content: str) -> list:
+    """只取 `## 链接` 段里的链接行。"""
+    return [line for line in content.split("## 链接", 1)[1].splitlines() if line.strip()]
+
+
+def test_epub_chapters_follow_the_spine_order(ctx, fixture_copy):
+    """
+    行为：章节按 OPF 的 spine 顺序拼接——manifest 的声明顺序与 zip 的写入顺序都说了不算。
+
+    来源：本仓 EPUB 约定「spine 是阅读顺序的唯一依据」（`docs/PIPELINES.md` 的 EPUB 段）
+    + ADR-0003（容器要往里看一层，读对了才算完整解析）。
+    预期值来源：样例生成参数（阶段 17 的 manifest 与 zip 写入顺序都反着 spine）。
+    实测：按 manifest 或 zip 顺序拼会把 ch3 排到最前，三个独有特征串的先后立刻对不上。
+    """
+    content = run(EPUB_FIXTURE, ctx, fixture_copy).content
+    positions = [content.index(mark) for mark in EPUB_BODY_MARKS]
+    assert positions == sorted(positions), f"章节没按 spine 顺序：{positions}"
+    markers = [content.index(mark) for mark in EPUB_MARKERS]
+    assert markers == sorted(markers), "分章标记的顺序与正文顺序不一致"
+
+
+def test_epub_titles_come_from_title_then_heading_then_nothing(ctx, fixture_copy):
+    """
+    行为：分章标记的标题先取 `<title>`、再取第一个 h1–h6、都没有就只写章号。
+
+    来源：样例生成参数（阶段 17：ch1 有 `<title>`、ch2 只有 h1、ch3 两者都没有）。
+    预期值来源：样例里写死的那两个标题串与「都没有」这第三种情况。
+    """
+    content = run(EPUB_FIXTURE, ctx, fixture_copy).content
+    assert f"{EPUB_MARKERS[0]}: 第一章 竞赛规程 ===" in content
+    assert f"{EPUB_MARKERS[1]}: 第二章 组别设置 ===" in content, "没有 <title> 时应退回第一个 h1"
+    assert "=== 章节 3 ===" in content, "两者都没有时分章标记只写章号"
+
+
+def test_epub_internal_links_are_promoted_to_document_level_targets(ctx, fixture_copy):
+    """
+    行为：章内锚点与相对引用都提升成带章路径的文档级目标——拼成一整篇后每个目标唯一。
+
+    来源：EPUB 的 `#frag` 只在**单章内**有意义，跨章拼接后不带上章路径「指向哪儿」就是歧义
+    （本格式最大的难点）；决定记在 `docs/PIPELINES.md` 的 EPUB 段。
+    预期值来源：样例生成参数（阶段 17 的三处内部引用 + 一处外部地址 + 一条应被跳过的 mailto）；
+    章路径用它在容器里的完整路径（`OEBPS/ch2.xhtml`），与 zip 成员名同一命名空间。
+    """
+    lines = _epub_link_lines(run(EPUB_FIXTURE, ctx, fixture_copy).content)
+    assert f"第二章要点 -> {EPUB_LINK_SEC}" in lines
+    assert f"补充说明 -> {EPUB_LINK_SEC2}" in lines, "章内自链 `#sec2` 没有提升成文档级目标"
+    assert f"附录提要 -> {EPUB_LINK_SEC3}" in lines, "`../` 相对引用没有按该章所在目录解析"
+    assert "官网 -> https://example.com/race" in lines, "外部 http(s) 链接应原样输出"
+    targets = [line.rsplit(" -> ", 1)[-1] for line in lines]
+    assert not [target for target in targets if target.startswith("#")], f"还有裸锚点目标：{targets}"
+    assert targets.count(EPUB_LINK_SEC) == 1, "同一目标应去重（自链与跨章引用指向同一个位置）"
+    assert "mailto:" not in "".join(lines), "mailto 应被跳过"
+
+
+def test_epub_styles_never_reach_the_delivered_text(ctx, fixture_copy):
+    """
+    行为：`<link rel="stylesheet">` 与内联 `<style>` 的内容都不进交付文本。
+
+    来源：样式不是这份文档的内容；这条决定记在 `docs/PIPELINES.md` 的 EPUB 段。
+    预期值来源：样例生成参数（阶段 17 把 CSS 特征串只写进 style.css 与 ch2 的内联 `<style>`）。
+    实测：不丢 `<style>` 时这一串会作为正文出现在 ch2 里。
+    """
+    assert EPUB_CSS_SENTINEL not in run(EPUB_FIXTURE, ctx, fixture_copy).content
+
+
+def test_epub_extraction_is_byte_identical_on_repeat(ctx, fixture_copy):
+    """
+    行为：同一个文件两次抽取逐字节相同——不依赖 dict 顺序，也不依赖 zip 内的文件顺序。
+
+    来源：ADR-0002「两条路逐字节可对比」以「抽取本身是确定的」为前提。
+    预期值来源：同一个源抽取两次。
+    """
+    path, _ = fixture_copy(EPUB_FIXTURE)
+    assert dispatch("epub", path, ctx).content == dispatch("epub", path, ctx).content
+
+
+def test_epub_content_is_identical_on_both_paths(ctx, asset_ctx, fixture_copy):
+    """
+    行为：`prepare_assets` 两种取值下 `content` 逐字节相同——两个接口共用同一份抽取。
+
+    来源：ADR-0002「understand 复用 extract 的抽取内核，只做增量」。
+    预期值来源：同一个源的两次抽取；本格式没有模型素材，差异只可能来自「感知调用方是谁」。
+    做法：缝 A 里各跑一次 `dispatch` + `build_response`——`tests/test_extract_contract.py`
+    只覆盖 extract 那一口，epub 没有 HTTP 双路用例（understand 那一路要真模型，属贵缝）。
+    """
+    from pipelines.processors.schema import PreparedSource
+    from pipelines.steps.step6_assemble import build_response
+    from routers.convert.schema import Detector
+
+    path, _ = fixture_copy(EPUB_FIXTURE)
+    prepared = PreparedSource(
+        path=path,
+        source=EPUB_FIXTURE,
+        file_name=EPUB_FIXTURE,
+        mime="application/epub+zip",
+        size_bytes=path.stat().st_size,
+        ext="epub",
+        detector=Detector.MAGIC,
+        page_url="",
+    )
+    plain = build_response(prepared, dispatch("epub", path, ctx))
+    enhanced = build_response(prepared, dispatch("epub", path, asset_ctx))
+    assert plain.content == enhanced.content
+    assert plain.content.strip(), "两条路都应有非空正文"
+
+
+def test_epub_reports_the_entry_limit(monkeypatch, ctx, fixture_copy):
+    """
+    行为：spine 章数超过 `MAX_ENTRIES` 时只读前几章，命中名字进 `limits_hit`，并在 `notes` 里说明。
+
+    来源：`configs/limits.py` 的 `max_entries`（容器条目上限，与压缩包共用这一处定义）
+    + ADR-0003「不静默截断——少读了用户的章节必须声明」。
+    做法：把上限压到 2，用 3 章的样例触发——不新增样例、不动全局配置。
+    预期值来源：样例的 spine 有 3 章、上限 2 → 第三章不该出现在正文里。
+    """
+    from configs import limits
+
+    monkeypatch.setattr(limits, "MAX_ENTRIES", 2)
+    result = run(EPUB_FIXTURE, ctx, fixture_copy)
+    assert "max_entries" in result.limits_hit
+    assert EPUB_BODY_MARKS[1] in result.content
+    assert EPUB_BODY_MARKS[2] not in result.content, "超过上限的章节不该被读出来"
+    assert any("章" in note for note in result.notes), result.notes
+
+
+def test_a_plain_zip_renamed_to_epub_degrades(ctx, work_dir):
+    """
+    行为：普通 ZIP 改名成 `.epub` 走 epub 处理器时降级为 `epub_parse_failed`，不抛异常。
+
+    来源：ADR-0003（降级是能力边界，不是故障）+ `configs/errors.py` 的 `epub_parse_failed`
+    （触发点写的就是「EPUB 容器 / OPF / spine 读不出来」）。
+    预期值来源：本用例自己写的 ZIP——有 zip 结构、没有 `META-INF/container.xml`，
+    所以卡的是「定位 OPF」那一步，说明里要能看出是哪个文件缺了。
+    """
+    import zipfile
+
+    path = work_dir / "plain.epub"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("readme.txt", "这不是 EPUB")
+    result = dispatch("epub", path, ctx)
+    assert result.degraded is True
+    assert result.degrade_code == "epub_parse_failed"
+    assert result.content == ""
+    assert "container.xml" in result.degrade_reason, result.degrade_reason
+
+
 # ---------- 降级路径 ----------
 
 def test_legacy_office_degrades_to_basic_file_info(ctx, fixture_copy):
@@ -716,6 +878,7 @@ BROKEN_INPUT_CODES = (
     ("xlsx", "excel_parse_failed"),
     ("odt", "odf_parse_failed"),
     ("pdf", "pdf_parse_failed"),
+    ("epub", "epub_parse_failed"),
     ("png", "image_decode_failed"),
     ("apk", "install_package_parse_failed"),
 )

@@ -54,6 +54,7 @@ DOCUMENT_FIXTURES = (
     "deck.pptx",
     "sample.odt",
     "sample.odp",
+    "sample.epub",
     "manual.pdf",
 )
 

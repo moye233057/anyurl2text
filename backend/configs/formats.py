@@ -10,7 +10,7 @@
 
 DOCUMENT_EXTENSIONS = frozenset({
     "pdf", "docx", "pptx", "xlsx", "xlsm", "xls", "csv", "ods", "odt", "odp",
-    "rtf", "txt", "md", "markdown", "json", "xml",
+    "epub", "rtf", "txt", "md", "markdown", "json", "xml",
 })
 WEBPAGE_EXTENSIONS = frozenset({"html", "htm"})
 IMAGE_EXTENSIONS = frozenset({
@@ -61,6 +61,7 @@ EXTENSION_BY_MIME = {
     "application/vnd.oasis.opendocument.text": "odt",
     "application/vnd.oasis.opendocument.spreadsheet": "ods",
     "application/vnd.oasis.opendocument.presentation": "odp",
+    "application/epub+zip": "epub",
     "image/jpeg": "jpg",
     "image/png": "png",
     "image/gif": "gif",
@@ -123,12 +124,15 @@ M4A_BRANDS = (b"M4A ", b"M4B ", b"M4P ")
 # ---------- ZIP 容器内部的指纹（识别 docx / xlsx / pptx / odt / apk 这一族用）----------
 
 # 这些格式的文件头都是 PK\x03\x04，真实身份写在容器里，
-# 单看文件头只能判到「这是个 ZIP」。顺序即优先级，条目名要精确匹配根级部件。
+# 单看文件头只能判到「这是个 ZIP」。顺序即优先级，条目名要与容器里的完整路径精确匹配
+# （不限于根级部件——EPUB 的指纹就在 META-INF/ 下）。
 ZIP_ENTRY_FLAVORS = (
     ("word/document.xml", "docx"),
     ("xl/workbook.xml", "xlsx"),
     ("ppt/presentation.xml", "pptx"),
     ("AndroidManifest.xml", "apk"),
+    # EPUB 规范强制每个 EPUB 都带 container.xml（里面指向 OPF），普通 ZIP 不会有这个路径
+    ("META-INF/container.xml", "epub"),
 )
 # 带这个部件说明工作簿启用了宏，与 xlsx 同为 ZIP，只能靠容器内容区分
 ZIP_MACRO_ENTRY = "xl/vbaProject.bin"

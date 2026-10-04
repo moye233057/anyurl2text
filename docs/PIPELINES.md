@@ -99,6 +99,7 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 | 文档 | pdf / docx / pptx | `pdf.py` / `docx.py` / `pptx.py` |
 | 文档 | xlsx / xlsm / xls / ods / csv | `excel.py` |
 | 文档 | odt / odp | `odf.py` |
+| 文档 | epub | `epub.py` |
 | 文档 | txt / md / markdown / json / xml / rtf | `plaintext.py`（rtf 的解析器在 `rtf.py`） |
 | 网页 | html / htm | `html.py` |
 | 图片 | png / jpg / jpeg / gif / bmp / tif / tiff / webp / heic / heif / ico / svg | `image.py` |
@@ -338,7 +339,24 @@ CSV 的分隔符嗅探规则（确定性，实现只在 `excel._sniff_delimiter`
 
 `understand`：无素材，直接进摘要。
 
-### 3.12 降级（`extract_file_info()`）
+### 3.12 EPUB（`epub.py`）
+
+EPUB 也是 ZIP 容器，真实身份写在容器里：识别那一步读 `META-INF/container.xml`（`configs/formats.py` 的 `ZIP_ENTRY_FLAVORS` 最后一条）判到 `epub`，优先于普通 `zip`。
+
+`extract` 关键步骤：
+
+1. 打开 ZIP → 读 `META-INF/container.xml` 取 rootfile 的 `full-path`（OPF）；缺这个文件、容器损坏或受保护（DRM）→ 降级 `epub_parse_failed`。
+2. 解析 OPF：`manifest` 只用来建 `id → href` 表，**章节按 `spine` 的 `itemref` 顺序**取——manifest 的声明顺序与 zip 的写入顺序都不代表阅读顺序，按它们拼会把章节排错；不在 spine 里的项（封面、样式、目录页）一概不产出。href 相对 **OPF 所在目录**解析，所以 `OEBPS/content.opf` 里的 `ch1.xhtml` 指的是 `OEBPS/ch1.xhtml`。
+3. 每章是 XHTML，用 BeautifulSoup 取正文：`script` / `style` / `noscript` / `iframe` / `svg` 与 `<head>` 整块丢掉。**CSS 一律不进交付文本**——`<link rel="stylesheet">` 与内联 `<style>` 都不是这份文档的内容（`<title>` 已进了分章标记，留着会重复出现）。
+4. 章节块形如 `=== 章节 N: <标题> ===`；标题取该章 `<title>`，没有就退第一个 `h1`–`h6`，都没有只写章号。
+5. 链接：外部 `http(s)` 保留绝对地址；**内部引用提升成文档级目标**——EPUB 的 `#frag` 只在**单章内**有意义，跨章拼成一整篇之后不带上章路径，「这个锚点指向哪儿」就是歧义。所以章内自链 `#sec` → `ch2.xhtml#sec`，相对引用按该章所在目录解析（`../ch2.xhtml#sec2` → `ch2.xhtml#sec2`），`javascript` / `mailto` / `tel` 跳过。按目标去重后截到 `MAX_LINKS=100`（命中报 `max_links`），输出成末尾的 `## 链接` 段，与 `html.py` / `docx_links.py` 同形。
+6. 单章读不出来（容器截断、成员 CRC 坏、加密）**只跳过那一章**并在 `notes` 里点名章节与原因，其余章照常交付；一章都读不出来才整份降级。这里按 `except Exception` 接，因为 zipfile 对损坏数据抛的是 `zlib.error`、对加密成员抛 `RuntimeError`，都不在 `BadZipFile` 之下——按类型列举一定会漏（实测过）。spine 章数超过 `MAX_ENTRIES=500` 时只读前 500 章并报 `max_entries`。
+
+已知边界：只还原文字与链接，不还原样式与版式；`pages` 这一族不适用（为 `null`）。
+
+`understand`：本类不产生素材，`_has_model_work()` 靠非空 `content` 放行，直接进步骤 5 摘要。
+
+### 3.13 降级（`extract_file_info()`）
 
 触发条件四选一：文件名是 Office 锁文件 / 系统噪音文件（`~$` 前缀、`.DS_Store`、`Thumbs.db`，`degrade_code="temporary_lock_file"`）、扩展名为空（`Detector.UNKNOWN`）、命中老版 Office 集合（doc / ppt / wps，Linux 侧缺的是 LibreOffice 转换器）、`dispatch()` 里没有匹配的分支。
 

@@ -26,6 +26,7 @@ from models.deepseek import DeepSeekClient
 from pipelines.processors import (
     archive,
     docx,
+    epub,
     excel,
     html,
     image,
@@ -133,6 +134,8 @@ def dispatch(ext: str, path: Path, ctx: ExtractContext, page_url: str = "", sour
         return excel.extract_excel(path, ext, ctx)
     if ext in ("odt", "odp"):
         return odf.extract_odf(path, ext)
+    if ext == "epub":
+        return epub.extract_epub(path, ctx)
     if ext in ("txt", "md", "markdown", "json", "xml", "rtf"):
         return plaintext.extract_plaintext(path, ext)
 

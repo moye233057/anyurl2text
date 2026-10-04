@@ -22,6 +22,7 @@
     step14_make_repeated_images  同一张图被引多次的 docx / pptx / pdf，验证内嵌图按来源部件去重
     step15_make_structured_odt   带合并表格与两级列表的 odt，验证 ODT 按结构抽取
     step16_make_docx_hyperlinks  含超链接的 docx，验证链接的文字与地址都进交付文本
+    step17_make_epub             三章 EPUB（manifest 与 zip 顺序都反着 spine），验证按 spine 拼章节与文档级链接消歧
 
 运行方式：在 backend/ 下执行 python scripts/make_fixtures.py（无参数；`__main__` 只按序号调用各 step）
 使用前注意：
@@ -243,6 +244,95 @@ ODT_STRUCTURED_CONTENT_XML = """<?xml version="1.0" encoding="UTF-8"?>
  </office:body>
 </office:document-content>
 """
+
+# ---------- EPUB 样例（阶段 17）----------
+# 结构刻意做成「三种顺序互不相同」：spine 是 ch1 → ch2 → ch3，而 manifest 的声明顺序
+# （ch3 → style → ch1 → ch2）与 zip 的写入顺序（ch3 → ch1 → opf → container → css → ch2）
+# 都不是阅读顺序——这样「按 spine 拼章节」才是被测出来的，而不是碰巧对上。
+# OPF 放在 OEBPS/ 子目录、第三章放在 OEBPS/appendix/，href 相对 OPF 解析。
+EPUB_MIMETYPE = "application/epub+zip"
+# 这两个特征串只出现在样式里：抽取后它们**不该**出现在交付文本中
+EPUB_CSS_SENTINEL = "epub-css-sentinel-only-in-stylesheet"
+
+EPUB_CONTAINER_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+ <rootfiles>
+  <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+ </rootfiles>
+</container>
+"""
+
+EPUB_OPF = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
+ <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <dc:title>秋季越野赛竞赛规程</dc:title>
+  <dc:identifier id="bookid">urn:uuid:anyurl2text-epub-sample</dc:identifier>
+  <dc:language>zh</dc:language>
+ </metadata>
+ <manifest>
+  <item id="ch3" href="appendix/ch3.xhtml" media-type="application/xhtml+xml"/>
+  <item id="style" href="style.css" media-type="text/css"/>
+  <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+  <item id="ch2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
+ </manifest>
+ <spine>
+  <itemref idref="ch1"/>
+  <itemref idref="ch2"/>
+  <itemref idref="ch3"/>
+ </spine>
+</package>
+"""
+
+# 第一章：标题取自 `<title>`；head 里的 `<link rel="stylesheet">` 不该产出任何文本
+EPUB_CH1_XHTML = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+ <head>
+  <title>第一章 竞赛规程</title>
+  <link rel="stylesheet" type="text/css" href="style.css"/>
+ </head>
+ <body>
+  <p>第一章独有字样：本次比赛由示例体育协会主办。</p>
+  <p>下一章的小节见<a href="ch2.xhtml#sec">第二章要点</a>。</p>
+ </body>
+</html>
+"""
+
+# 第二章：没有 `<title>`，章标题退回第一个 h1；内联 `<style>` 里的 CSS 不该进正文；
+# 两个自链 `#sec` / `#sec2` 的锚点只在单章内有意义，拼成一整篇后必须提升成带章路径的目标
+EPUB_CH2_XHTML = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+ <head>
+  <meta charset="utf-8"/>
+ </head>
+ <body>
+  <h1>第二章 组别设置</h1>
+  <style type="text/css">.epub-css-sentinel-only-in-stylesheet { color: #ff0000; }</style>
+  <p>第二章独有字样：本次比赛设三个组别。</p>
+  <p>见<a href="#sec">本章要点</a>与<a href="#sec2">补充说明</a>。</p>
+ </body>
+</html>
+"""
+
+# 第三章：既没有 `<title>` 也没有 h1–h6，分章标记只写章号；它放在 appendix/ 子目录里，
+# 所以 `../ch2.xhtml#sec2` 这类相对引用要按该章所在目录解析
+EPUB_CH3_XHTML = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+ <head>
+  <meta charset="utf-8"/>
+ </head>
+ <body>
+  <p>第三章独有字样：附录与联系方式。</p>
+  <p>回看<a href="../ch2.xhtml#sec2">上一章补充</a>，另有<a href="../ch2.xhtml#sec3">附录提要</a>。</p>
+  <p>官网<a href="https://example.com/race">官网</a>；来信请寄<a href="mailto:race@example.com">邮箱</a>。</p>
+ </body>
+</html>
+"""
+
+EPUB_STYLE_CSS = f"body {{ font-family: serif; }}\n.{EPUB_CSS_SENTINEL} {{ color: #ff0000; }}\n"
+
 
 def _load_font(size: int):
     """找一个可用的中文字体；都找不到时返回 None，由调用方退回英文内容。"""
@@ -717,6 +807,34 @@ def step16_make_docx_hyperlinks() -> None:
     document.save(str(DATA_DIR / "hyperlink.docx"))
     print(f"[阶段16] 已写入 {DATA_DIR / 'hyperlink.docx'}（3 条链接、去重后 2 条）")
 
+def step17_make_epub() -> None:
+    """
+    造一个三章的 EPUB 样例，用于验证「按 spine 顺序拼章节」与文档级链接消歧。
+
+    功能：写一个合规的 EPUB 包——`mimetype` 是第一个条目且不压缩（EPUB 规范要求，别的阅读器
+           也这么判）；OPF 放在 `OEBPS/` 子目录下（href 相对它解析）；第一/二/三章分别自带
+           `<title>`、只有 h1、两者都没有，用来验章标题的三条分支；链接覆盖跨章引用、章内
+           自链、`../` 跨目录回指与外部 http(s)，另有一条 `mailto:` 应被跳过。
+    应用场景：验证 epub 的阅读顺序、链接消歧与「CSS 不进交付文本」。
+    输入：无（写 data/sample.epub）。
+    输出：无返回值；文件路径打印到 stdout。
+    """
+    target = DATA_DIR / "sample.epub"
+    # 写入顺序刻意打乱：它既不是 spine 顺序，也不是 manifest 的声明顺序
+    entries = (
+        ("OEBPS/appendix/ch3.xhtml", EPUB_CH3_XHTML),
+        ("OEBPS/ch1.xhtml", EPUB_CH1_XHTML),
+        ("OEBPS/content.opf", EPUB_OPF),
+        ("META-INF/container.xml", EPUB_CONTAINER_XML),
+        ("OEBPS/style.css", EPUB_STYLE_CSS),
+        ("OEBPS/ch2.xhtml", EPUB_CH2_XHTML),
+    )
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(zipfile.ZipInfo("mimetype"), EPUB_MIMETYPE, compress_type=zipfile.ZIP_STORED)
+        for name, content in entries:
+            archive.writestr(name, content)
+    print(f"[阶段17] 已写入 {target}（3 章按 spine 顺序；manifest 与 zip 写入顺序都反着）")
+
 if __name__ == "__main__":
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     # 阶段1：先造图片（后续文档与演示要内嵌它们）→ screenshot.png / photo.png
@@ -751,4 +869,6 @@ if __name__ == "__main__":
     step15_make_structured_odt()
     # 阶段16：含超链接的 docx（同一地址写两次 + 一条没有文字的链接）→ hyperlink.docx
     step16_make_docx_hyperlinks()
+    # 阶段17：三章 EPUB（manifest 与 zip 写入顺序都反着 spine）→ sample.epub
+    step17_make_epub()
     print(f"\n全部完成，输出目录：{DATA_DIR}")

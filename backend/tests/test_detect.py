@@ -155,11 +155,12 @@ def test_detect_magic_returns_none_when_nothing_matches(head):
         (["ppt/presentation.xml"], "pptx"),
         (["AndroidManifest.xml"], "apk"),
         (["Payload/Demo.app/Info.plist"], "ipa"),
+        (["META-INF/container.xml"], "epub"),
         (["readme.txt", "data/whatever.bin"], None),
     ],
 )
 def test_detect_zip_flavor_reads_root_level_markers(entries, expected, work_dir):
-    """行为：ZIP 头分不出家族，靠根级部件指纹定 docx / xlsx / pptx / apk / ipa；认不出返回 None。"""
+    """行为：ZIP 头分不出家族，靠容器内固定部件指纹定 docx / xlsx / pptx / apk / ipa / epub；认不出返回 None。"""
     assert detect_zip_flavor(make_zip(work_dir, "probe.zip", entries)) == expected
 
 
@@ -186,6 +187,26 @@ def test_broken_zip_falls_back_instead_of_raising(work_dir):
     assert detect_zip_flavor(path) is None
 
 
+def test_epub_fingerprint_does_not_swallow_the_archive_family(work_dir):
+    """
+    行为：EPUB 指纹只认带 `META-INF/container.xml` 的 ZIP；普通 ZIP 仍判成 zip，
+          走压缩包那一路——哪怕它的名字是 `.epub`。
+
+    来源：ADR-0003「容器格式必须往里看一层」的反面约束——往里看一层不等于把归档族吃掉；
+    `docs/PIPELINES.md` §2.2 的 ZIP 行「以上都不命中或容器读不出 → 维持 zip」。
+    预期值来源：指纹本身（EPUB 规范强制每个 EPUB 都带 container.xml，普通 ZIP 不会有这个路径）。
+    """
+    make_zip(work_dir, "plain.zip", ["readme.txt", "data/table.csv"])
+    path = work_dir / "plain.zip"
+    assert detect_zip_flavor(path) is None
+    assert resolve_extension(path, "plain.zip", None, b"PK\x03\x04") == ("zip", Detector.MAGIC)
+    # 名字与 Content-Type 都说是 epub，但容器里没有那个部件——维持 zip，名字说了不算
+    assert resolve_extension(path, "not-really.epub", "application/epub+zip", b"PK\x03\x04") == (
+        "zip",
+        Detector.MAGIC,
+    )
+
+
 # ---------- Content-Type ----------
 
 @pytest.mark.parametrize(
@@ -195,6 +216,7 @@ def test_broken_zip_falls_back_instead_of_raising(work_dir):
         ("application/pdf; charset=utf-8", "pdf"),
         ("APPLICATION/PDF", "pdf"),
         ("text/plain", "txt"),
+        ("application/epub+zip", "epub"),
         ("application/octet-stream", ""),
         ("", ""),
         (None, ""),
@@ -403,7 +425,7 @@ def test_the_repo_legacy_doc_sample_is_still_judged_doc(fixture_copy):
 
 @pytest.mark.parametrize(
     ("entries", "expected"),
-    [(["word/document.xml"], "docx"), (["readme.txt"], "zip")],
+    [(["word/document.xml"], "docx"), (["META-INF/container.xml"], "epub"), (["readme.txt"], "zip")],
 )
 def test_zip_head_looks_one_level_inside_the_container(entries, expected, work_dir):
     """行为：ZIP 头一律往里看一层；认不出家族才维持「这是个 ZIP」，此时名字说了不算。"""
@@ -420,6 +442,7 @@ def test_zip_head_looks_one_level_inside_the_container(entries, expected, work_d
         ("pdf", Modality.DOCUMENT),
         ("docx", Modality.DOCUMENT),
         ("csv", Modality.DOCUMENT),
+        ("epub", Modality.DOCUMENT),
         ("html", Modality.WEBPAGE),
         ("png", Modality.IMAGE),
         ("svg", Modality.IMAGE),
