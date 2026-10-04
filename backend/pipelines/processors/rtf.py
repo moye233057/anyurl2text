@@ -136,6 +136,38 @@ def _close_nested_row(pieces: List[str]) -> None:
         pieces[:] = [trimmed[:-1].rstrip()]
     pieces.append(" ")
 
+def _skip_fallback(source: str, index: int, count: int) -> int:
+    """
+    跳过 `\\uN` 后面的 fallback 字符，返回新的下标。
+
+    功能：按 `\\ucN` 声明的个数（默认 1）往前吃；一个 `\\'hh` 十六进制转义算**一个** fallback 单位，
+    一个控制字也按一个单位整词吃掉，其余字符一个一个吃。
+    为什么不能只跳 `?`：Word 常写 `?`，但 `\\uc1` 配 `\\'hh` 或直接跟普通字符（`\\uc1` + `c1`）
+    都是合法写法——漏跳会让这些字符漏进正文（`data/sample.rtf` 里就漏出过一个「c1」）。
+    应用场景：`_rtf_blocks` 处理 `\\uN` 时调用。
+    输入：source — RTF 源码；index — `\\uN` 之后的下标；count — 要跳几个单位。
+    输出：新的下标（不会超过 len(source)）。
+    """
+    while count > 0 and index < len(source):
+        if source[index] == "\\" and index + 1 < len(source) and source[index + 1] == "'":
+            index += 2
+            digits = 0
+            while digits < 2 and index < len(source) and source[index] in "0123456789abcdefABCDEF":
+                index += 1
+                digits += 1
+        elif source[index] == "\\" and index + 1 < len(source) and source[index + 1].isascii() and source[index + 1].isalpha():
+            index += 2
+            while index < len(source) and source[index].isascii() and source[index].isalpha():
+                index += 1
+            while index < len(source) and (source[index].isdigit() or source[index] == "-"):
+                index += 1
+            if index < len(source) and source[index] == " ":
+                index += 1
+        else:
+            index += 1
+        count -= 1
+    return index
+
 def _rtf_blocks(source: str) -> List[Union[str, RtfTable]]:
     """
     把 RTF 源码解析成「正文段 / 表格段」的顺序列表。
@@ -152,6 +184,7 @@ def _rtf_blocks(source: str) -> List[Union[str, RtfTable]]:
     hex_buffer = bytearray()
     depth = 0
     skip_depth = None
+    unicode_skip = 1                # `\ucN` 声明 `\uN` 后面跟几个 fallback 字符；RTF 默认 1
     index = 0
     length = len(source)
 
@@ -251,10 +284,28 @@ def _rtf_blocks(source: str) -> List[Union[str, RtfTable]]:
             while index < length and source[index].isdigit():
                 digits += source[index]
                 index += 1
-            # \uN 后面通常跟一个「当前代码页的替代字符」，必须跳过，否则正文会多出乱码
-            if index < length and source[index] == "?":
-                index += 1
-            if digits and skip_depth is None:
+            if not digits:
+                # 走到这里说明这不是 `\uN`，而是以 u 开头的**别的控制字**——`\ucN` 最常见。
+                # 改前这里直接 continue，`\uc1` 的 "c1" 就留在源码里当成正文吐出来了
+                # （`data/sample.rtf` 的第一行原本是「c1」）。
+                word = "u"
+                while index < length and source[index].isalpha() and source[index].isascii():
+                    word += source[index]
+                    index += 1
+                param = ""
+                while index < length and (source[index].isdigit() or source[index] == "-"):
+                    param += source[index]
+                    index += 1
+                if index < length and source[index] == " ":
+                    index += 1
+                if word == "uc":
+                    # `\ucN`：`\uN` 后面跟几个 fallback 字符（0 = 没有）；RTF 里它是状态，一直生效
+                    unicode_skip = max(0, _int_param(param, 1))
+                continue
+            # `\uN` 后面跟的是「当前代码页的替代字符」，按 `\ucN` 声明的个数跳过（默认 1 个）——
+            # 只认 `?` 是不够的：`\uc1` 配 `\'hh`、或直接跟一个普通字符都合法，漏跳会漏进正文。
+            index = _skip_fallback(source, index, unicode_skip)
+            if skip_depth is None:
                 code = sign * int(digits)
                 pieces.append(chr(code + 65536 if code < 0 else code))
             continue

@@ -159,7 +159,7 @@ pytest 的缓存是关掉的（`backend/pytest.ini` 里的 `-p no:cacheprovider`
 |---|---|---|
 | `capability_detect` | 105 | `(扩展名, 判据来源, 模态)`——决定这个文件送哪个处理器、响应的 `type` |
 | `capability_document` | 30 | 正文内容 / 页数 / 内嵌图数 / 文本框节 |
-| `capability_table` | 64 | 合并单元格不重复、行宽一致、分隔符、数值格式、网格不变式与边界形状、网页/EPUB/docx/ODF/RTF 的源标表头行数、表类型（data / layout）、隐藏工作表与隐藏行列照抽、ODF 行内空列与行尾空格、xlsx 覆盖位与 ODS 重复列坐标、PPTX 残留文字 |
+| `capability_table` | 66 | 合并单元格不重复、行宽一致、分隔符、数值格式、网格不变式与边界形状、网页/EPUB/docx/ODF/RTF 的源标表头行数、表类型（data / layout）、隐藏工作表与隐藏行列照抽、ODF 行内空列与行尾空格、xlsx 覆盖位与 ODS 重复列坐标、PPTX 残留文字 |
 | `capability_media` | 7 | 图片结构信息、内嵌图去重与名额、音轨参数 |
 | `capability_container` | 2 | 压缩包 / 安装包的条目清单 |
 | `capability_links` | 3 | 链接是否进交付文本、去重与上限 |

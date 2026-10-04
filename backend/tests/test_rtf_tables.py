@@ -6,9 +6,10 @@ r"""
 由边界反推」，与 `test_processors_by_format.py` 的按格式矩阵不是一件事；这里的样例是手写 RTF
 源文本，预期值直接从源文本读得出来（哪一格写了什么、哪几格被合并吞掉），不依赖对实现的理解。
 
-接线现状（本轮文件边界）：`plaintext.extract_plaintext` 的 rtf 分支仍调 `rtf_to_text`（只交文本），
-填 `table_header_rows` 与汇总上界名的入口是 `rtf.extract_rtf`。本文件因此分两处断言：
-**内容与列位走 `dispatch`**（真实交付路径），**表头行数与 limits_hit 走 `extract_rtf`**。
+接线现状：`plaintext.extract_plaintext` 的 rtf 分支**在读盘之前**就交给 `rtf.extract_rtf(path)`，
+所以 `dispatch("rtf", …)` 与 `extract_rtf` 给的是同一份结果（内容、列位、`table_header_rows`、
+`limits_hit`）。本文件里两边都断言过：内容与列位大多走 `dispatch`（真实交付路径），
+表头行数另有直接对 `extract_rtf` 的断言（同一函数，两处入口都钉住）。
 """
 import pytest
 
@@ -308,3 +309,36 @@ def test_table_over_the_row_limit_is_truncated_and_reported(ctx, work_dir, monke
     lines = dispatch("rtf", path, ctx).content.split("\n")
     assert lines[1:4] == ["一甲\t一乙", "二甲\t二乙", "... 其余 3 行未列出"]
     assert "max_table_rows" in extract_rtf(path).limits_hit
+
+
+# ---------- `\ucN`：`\uN` 后面的 fallback 字符要按声明跳过 ----------
+
+def test_unicode_fallback_is_skipped_by_the_uc_declaration(ctx, work_dir):
+    """
+    行为：`\\uN` 后面的 fallback 字符按 `\\ucN` 声明的个数跳过——问号、`\\'hh`、普通字符都不漏进正文。
+
+    来源：RTF 规范（`\\ucN` 声明 `\\uN` 之后有几个「当前代码页的替代字符」，默认 1）。
+    预期值来源：四份手写源文本——`\\uc1 \\u31179?`（问号）、`\\uc1 \\u31179\\'c4`（十六进制转义）、
+          `\\uc0 \\u31179`（声明 0 个）、默认不写 `\\uc` 时跟一个普通字符；四种都只该得到「秋」。
+    """
+    cases = {
+        "question.rtf": r"{\rtf1\ansi\uc1 \u31179?}",
+        "hex.rtf": r"{\rtf1\ansi\uc1 \u31179\'c4}",
+        "none.rtf": r"{\rtf1\ansi\uc0 \u31179}",
+        "default.rtf": r"{\rtf1\ansi \u31179x}",
+    }
+    for name, source in cases.items():
+        content = dispatch("rtf", write_rtf(work_dir, name, source), ctx).content
+        assert content.strip() == "秋", f"{name} 的正文是 {content!r}，fallback 没跳干净"
+
+
+def test_sample_rtf_does_not_leak_the_uc_parameter(ctx, fixture_copy):
+    """
+    行为：真实样例 `data/sample.rtf` 的正文第一行不再是控制字参数「c1」。
+
+    来源：该样例开头的 `{\\rtf1\\ansi\\uc1`——改前解析器把 `\\uc1` 当成「`\\u` 没跟数字」直接跳过，
+          `c1` 留在源码里被当正文吐出来（第一行就是「c1」）。
+    预期值来源：样例里第一段正文是「秋季越野赛 2026 报名说明」，所以首行必须是它。
+    """
+    path, _ = fixture_copy("sample.rtf")
+    assert dispatch("rtf", path, ctx).content.splitlines()[0] == "秋季越野赛 2026 报名说明"

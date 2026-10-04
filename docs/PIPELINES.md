@@ -266,7 +266,7 @@ CSV 的分隔符嗅探规则（确定性，实现只在 `excel._sniff_delimiter`
 | txt / md / markdown | 原文直读。**Markdown 不做 HTML 转换**——标题层级、列表、表格、链接都是信息，再加工只会掉信息 |
 | json | `json.loads` 后 `indent=2` 美化；解析失败原样返回，不因格式问题丢内容 |
 | xml | `ET.fromstring` + `ET.indent` + `tostring` 缩进输出并**保留属性**；解析失败原样返回 |
-| rtf | `rtf.py` 逐字符解析控制字：处理 `\uN`（含负值 UTF-16 码位）与 `\'hh` 十六进制转义（按 utf-8 → gbk → cp1252 → latin-1 解码），**整组跳过** `fonttbl` / `colortbl` / `stylesheet` / `pict` 等可忽略目的地（否则字体名会混进正文），`\par` / `\line` 还原成换行，最后折叠连续空行。**表格另走 `rtf_tables.build_lines`**：`\trowd` / `\cellx` / `\cell` / `\row` 按 anydoc 的边界聚类还原成网格列——右边界先归一化成严格递增，再把**全部行的右边界**贪心聚类成列（容差 10 twips，**与簇的种子比**，否则 `\cellx` 的 1-2 twips 抖动会把整行并成一簇），横向合并折成列跨度（文本首尾直拼）、纵向链按**精确列区间**相等匹配、无主的续格变回可见格；`\trhdr` 是源自己标的表头行（进 `meta.table_header_rows`）。列位由 `grid.py` 渲染，与 docx 同一份；`plaintext.py` 在读盘之前把 rtf 交给 `extract_rtf(path)`（表头行数与行数上限要随结果带回） |
+| rtf | `rtf.py` 逐字符解析控制字：处理 `\uN`（含负值 UTF-16 码位）——**按 `\ucN` 声明跳过 fallback 字符**（默认 1 个；问号、`\'hh` 转义、普通字符都算一个单位，只认 `?` 会让 `\uc1` 的参数漏成正文）——与 `\'hh` 十六进制转义（按 utf-8 → gbk → cp1252 → latin-1 解码），**整组跳过** `fonttbl` / `colortbl` / `stylesheet` / `pict` 等可忽略目的地（否则字体名会混进正文），`\par` / `\line` 还原成换行，最后折叠连续空行。**表格另走 `rtf_tables.build_lines`**：`\trowd` / `\cellx` / `\cell` / `\row` 按 anydoc 的边界聚类还原成网格列——右边界先归一化成严格递增，再把**全部行的右边界**贪心聚类成列（容差 10 twips，**与簇的种子比**，否则 `\cellx` 的 1-2 twips 抖动会把整行并成一簇），横向合并折成列跨度（文本首尾直拼）、纵向链按**精确列区间**相等匹配、无主的续格变回可见格；`\trhdr` 是源自己标的表头行（进 `meta.table_header_rows`）。列位由 `grid.py` 渲染，与 docx 同一份；`plaintext.py` 在读盘之前把 rtf 交给 `extract_rtf(path)`（表头行数与行数上限要随结果带回） |
 
 `understand`：无素材，直接进摘要。
 
