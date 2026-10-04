@@ -47,7 +47,8 @@
 | OLE 复合文档的目录流名读取（判 doc / xls / ppt 的第二层依据） | `backend/pipelines/steps/ole_directory.py` | 已实现 |
 | 处理器输入产出结构 + 各格式共用的读素材实现 | `backend/pipelines/processors/schema.py`、`processors/reading.py` | 已实现 |
 | 一格式一个文件的处理器 | `backend/pipelines/processors/{pdf,docx,pptx,excel,odf,ofd,plaintext,rtf,html,image,media,archive,install_package}.py` | 已实现 |
-| 表格格位建模：合并单元格的唯一表示与唯一渲染 | `backend/pipelines/processors/grid.py`、`processors/xlsx_merges.py`（xlsx 合并区从包内 XML 读）、`processors/ods_merges.py`（ods 合并区，以及值行按覆盖位对齐）、`processors/html_tables.py`（网页与 EPUB 章节的 `<table>`） | 已实现 |
+| 表格格位建模：合并单元格的唯一表示与唯一渲染 | `backend/pipelines/processors/grid.py`、`processors/xlsx_merges.py`（xlsx 合并区从包内 XML 读）、`processors/ods_merges.py`（ods 合并区，以及值行按覆盖位对齐）、`processors/html_tables.py`（网页与 EPUB 章节的 `<table>`）、`processors/rtf_tables.py`（RTF 按右边界聚类还原网格列）、`processors/index_runs.py`（下标 → 半开区间的唯一换算）、`processors/odf_table_rows.py`（ODF 的行收集：含表头行组 / 行组容器） | 已实现 |
+| 表格的可见性、类型与格内文本（三条只此一份的口径） | `processors/xlsx_visibility.py`（xlsx/xlsm 包内 XML 的隐藏工作表与行列）、`processors/ods_visibility.py`（ODS 的隐藏全在样式里）、`processors/table_kind.py`（`data` / `layout`，照 anydoc 的 `TableKind`）、`processors/cell_text.py`（格内换行写成 `<br>`、制表符换空格） | 已实现 |
 | DOCX 超链接的收集（叶子模块：`docx.py` 贴着单文件预算，把它拆出来） | `backend/pipelines/processors/docx_links.py` | 已实现 |
 | EPUB 抽取：容器 → OPF → 按 spine 拼章节 + 内部引用提升成文档级目标 | `backend/pipelines/processors/epub.py` | 已实现 |
 | OFD 抽取：容器 → `OFD.xml` → 文档根 → 按 `Pages/Page` 声明的页序逐页取正文 | `backend/pipelines/processors/ofd.py` | 已实现 |
@@ -69,7 +70,7 @@
 app → routers → pipelines → pipelines/steps → pipelines/processors → { models , utils } → configs
 ```
 
-叶子模块（自己不 import 项目内任何东西，所以任何层都能拿它当数据结构用，不会成环）：关键的几个是 `routers/convert/schema.py`、`routers/rag/schema.py`、`configs/formats.py`、`configs/settings.py`、`configs/errors.py`；`configs/log_config.py`、`pipelines/processors/catalogue.py`、`pipelines/processors/docx_links.py`、`pipelines/processors/pdf_pages.py`、`pipelines/processors/rtf.py`、`pipelines/processors/xlsx_merges.py`、`pipelines/steps/ole_directory.py` 与各 `__init__.py` 同样是叶子，实际共 22 个。完整清单：`python -m pytest tests/test_structure.py -s -k leaf` 会打印出来（`-s` 才看得见被 pytest 捕获的输出）。
+叶子模块（自己不 import 项目内任何东西，所以任何层都能拿它当数据结构用，不会成环）：关键的几个是 `routers/convert/schema.py`、`routers/rag/schema.py`、`configs/formats.py`、`configs/settings.py`、`configs/errors.py`；`configs/log_config.py`、`pipelines/processors/catalogue.py`、`pipelines/processors/docx_links.py`、`pipelines/processors/pdf_pages.py`、`pipelines/processors/xlsx_merges.py`、`pipelines/processors/cell_text.py`（格内换行的方言）、`pipelines/processors/index_runs.py`（下标 → 半开区间）、`pipelines/processors/odf_table_rows.py`（ODF 的行收集）、`pipelines/processors/table_kind.py`（`data` / `layout`）、`pipelines/steps/ole_directory.py` 与各 `__init__.py` 同样是叶子，实际共 **25** 个（2026-10-04：`rtf.py` 因为要 import `cell_text` / `rtf_tables` 已不再是叶子）。完整清单：`python -m pytest tests/test_structure.py -s -k leaf` 会打印出来（`-s` 才看得见被 pytest 捕获的输出）。
 
 另外两条结构性规矩：`__init__.py` 里不放逻辑（只有模块 docstring）；单文件总行数 ≤ 500 且代码行（剥离 docstring / 注释 / 空行）≤ 300（2026-10-04 从 250/150 抬起，余量足够，不必为腾预算而拆文件）。
 
