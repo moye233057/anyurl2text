@@ -107,7 +107,11 @@ function buildMetaRows(result: ConvertResponse): Rows {
     if (audio.format) rows.push(['音轨格式', audio.format])
   }
   if (meta.engine.length) rows.push(['解析器', meta.engine.join(', ')])
-  if (meta.truncated) rows.push(['截断', 'content 已被字符上限截断'])
+  // 命中的上界只报**机器名**：给人看的那句说明由后端按模板写进 notes，两处不复述同一句话
+  if (meta.limits_hit.length) rows.push(['命中上界', meta.limits_hit.join(', ')])
+  // 「哪几页没处理」是结构化事实，别让人从 pages_used 与页数自己推
+  if (meta.unprocessed_pages.length) rows.push(['未处理页', meta.unprocessed_pages.join(', ')])
+  if (meta.degrade_code) rows.push(['降级码', meta.degrade_code])
   return rows
 }
 
@@ -188,7 +192,16 @@ export default function ResultPanel({
               <span className="v">{result.meta.source}</span>
             </div>
             {result.meta.degrade_reason && (
-              <div className="note-box">降级原因：{result.meta.degrade_reason}</div>
+              <div className="note-box">
+                降级原因：{result.meta.degrade_reason}
+                {result.meta.degrade_code && <code>{result.meta.degrade_code}</code>}
+              </div>
+            )}
+            {result.meta.model_error && (
+              <div className="note-box">
+                模型阶段失败：{result.meta.model_error.message}
+                <code>{result.meta.model_error.code}</code>
+              </div>
             )}
             <KvGrid rows={buildMetaRows(result)} />
             {result.meta.notes.length > 0 && (
