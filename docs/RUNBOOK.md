@@ -48,7 +48,7 @@
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `ANYURL2TEXT_HOST` | `127.0.0.1` | 监听地址；要让局域网访问改成 `0.0.0.0` |
-| `RELOAD` | `false` | 开发期自动重载：改 `backend/` 下的 `.py` 立即生效。`python app.py` 与 `start.py` 起的后端都认这个开关 | 改后端代码不想每次手动重启时打开。注意它只监视 `.py`：改 `.env` 仍要重启 |
+| `RELOAD` | `true` | 自动重载：改 `backend/` 下的 `.py` 立即生效。`python app.py` 与 `start.py` 起的后端都认这个开关 | 不想多一个监督进程就设 `false`（那时改完要手动重启）。注意它只监视 `.py`：改 `.env` 仍要重启 |
 | `REQUEST_BUDGET_SEC` | 120 | 单请求总时间预算 |
 | `CONNECT_TIMEOUT_SEC` / `READ_TIMEOUT_SEC` | 10 / 30 | 连接与读取超时（秒） |
 | `MAX_DOWNLOAD_BYTES` | 209715200（200 MB） | 下载与上传的内容上限 |
@@ -152,9 +152,9 @@ pytest 的缓存是关掉的（`backend/pytest.ini` 里的 `-p no:cacheprovider`
 
 ### 改了后端代码没生效
 
-后端**默认不热重载**：改完要重启 `python app.py` 或 `python start.py`。别拿还在跑的旧进程当成新代码已通过。
+后端**默认开了自动重载**（`RELOAD` 默认 `true`）：改完 `backend/` 下的 `.py` 会自动重载，日志里出现 `Reloading...`，直接在这个服务上跑验收就行。别拿还在跑的旧进程当成新代码已通过。
 
-想省掉这一步，在 `.env` 里设 `RELOAD=true`（默认 `false`），重启一次后端即生效，此后改 `backend/` 下的 `.py` 会自动重载，日志里出现 `Reloading...`。四条边界：
+想退回手动重启就把 `RELOAD` 设成 `false`，再重启 `python app.py` 或 `python start.py`。两种情况下的四条边界一样：
 
 - **只监视 `.py`**：改 `.env`、`frontend/`、样例文件都不触发重载，仍要手动重启。
 - **它多起一个监督进程**（父进程看文件、子进程才是服务）。`start.py` 用 `taskkill /T` 收树，Ctrl+C 仍能一次收干净；手工起的进程要按 Ctrl+C 停，别只关窗口。
