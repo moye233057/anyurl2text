@@ -50,6 +50,11 @@ MAX_ROWS_PER_SHEET = 5000
 MAX_ROWS_TO_READ = MAX_ROWS_PER_SHEET + 1
 # 链接清单上限：html 抽 `<a href>`、docx 抽 `w:hyperlink`，两者共用这一条
 MAX_LINKS = 100
+# 隐藏行列的**登记段数**上限：限制的只是 notes 的篇幅（`第 2-4、6 行` 这样一段一段写）；
+# 隐藏内容本身一律照抽，不因隐藏少读一个格子（用户 2026-10-04 拍板，见 01 §1.2）。
+# 取值 24 是**挑过的**：判据 6 按值比对，20 会撞 `excel.py` 的 `CSV_SNIFF_LINES`、
+# 30 会撞 `pdf.py` 的 `TEXT_LAYER_MIN_CHARS`——那两条与本条无关，撞上就是假红。
+MAX_VISIBILITY_RANGES = 24
 # 文本类（txt/md/json/xml/csv…）读取上限
 MAX_TEXT_BYTES = 20 * 1024 * 1024
 # RAG 预览取前几页
@@ -120,6 +125,8 @@ LIMITS: Dict[str, Limit] = {
         "ODF 的 number-*-repeated 超过 {value} 次，按 {value} 次处理"),
     "max_links": Limit(MAX_LINKS, "count", TRUNCATE, False, "html.extract_html / docx.extract_docx",
         "链接超过 {value} 条，清单已截断"),
+    "max_visibility_ranges": Limit(MAX_VISIBILITY_RANGES, "count", CLAMP, False, "excel._visibility_notes",
+        "隐藏行列的连续段超过 {value} 段，只登记前 {value} 段（内容照抽，不影响正文）"),
     "max_text_bytes": Limit(MAX_TEXT_BYTES, "bytes", TRUNCATE, False, "textfile.read_text_file",
         "文本超过 {value} 字节，超出部分未读取"),
     "preview_first_pages": Limit(PREVIEW_FIRST_PAGES, "count", TRUNCATE, False, "rag_extract._try_catalogue",

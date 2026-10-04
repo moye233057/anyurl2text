@@ -226,11 +226,14 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 `extract` 关键步骤：
 
 1. 按扩展名选解析器：`xlsx/xlsm` → openpyxl（先 `read_only=True, data_only=True`，失败退回常规模式）；`xls` → xlrd；`ods` → `pyexcel_ods.get_data`；`csv` → 先 `read_text_file` 探测编码解码，再嗅探分隔符后交给 `csv.reader`。解析异常直接降级。
-2. 只读可见工作表（`sheet_state == "visible"`）；逐行**边读边停**，读到 `MAX_ROWS_TO_READ=5001` 行即止（多读一行是为了让渲染层能区分「还有后续行」与「这就是最后一行」）。
+2. **隐藏工作表照读**——`sheet_state` 只管界面显示，不是「没有内容」（用户 2026-10-04 拍板：隐藏内容一律照抽，例外只有「会把系统打爆」与「解析超过 60 秒」）。逐行**边读边停**，读到 `MAX_ROWS_TO_READ=5001` 行即止（多读一行是为了让渲染层能区分「还有后续行」与「这就是最后一行」）。
 3. `_render_rows()` 统一渲染，四种格式只有这一套方言：`=== SHEET: 名 ===` 加制表符分隔的行；列宽从格位网格读（**合并区覆盖的空列也算列宽**，不会再被当空尾列裁掉）；跳过整行全空的行；单表超 `MAX_ROWS_PER_SHEET=5000` 行截断并说明。**行尾缺格补空**（OOXML 允许一行提前结束、pptx 生产者也常省略尾部续格，不补的话这一行的制表符个数与同表其他行不同、后面所有列位都错开）；**CSV / TSV 除外**——锯齿行是源文件里的真实形状，传 `pad_short_rows=False` 保真。格位网格另有**三条预算**——跨度展开 `max_grid_expansion`、格位数 `max_grid_slots`、文字量 `max_grid_text_chars`：命中时**不落该格**并把名字交回 `limits_hit`；四条表格路径（docx / odf / excel / pptx）都会上报（2026-10-04 修掉了 excel / pptx「只交网格、不交命中的名字」的静默）。
 4. 合并区按容器分家、都归到同一份格位网格：`xlsx / xlsm` 由 `xlsx_merges.py` 从包内 XML 读（`read_only=True` 的 worksheet 没有 `merged_cells`，只在常规模式读会让两条读取路径对同一文件给出不同 `content`，违反 ADR-0002）；`xls` 取 xlrd 的 `merged_cells`——**它只在 `formatting_info=True` 时才有值**，且坐标是开区间且行在前，要过 `grid.merge_rect` 换算；`ods` 由 `ods_merges.py` 从 `content.xml` 读（`pyexcel-ods` 丢跨度），并把「不给覆盖位留位置」的值行按覆盖位对齐（该库对 `covered-table-cell` 不产出值，不对齐则后面的值整体左移）。
 5. 空单元格输出空串（openpyxl 的空单元格是 `None`，直接 `str()` 会写出字面量 `None` 污染整列）；**浮点**单元格按 15 位有效数字写（`f"{value:.15g}"`）——`str(0.1 + 0.2)` 会写出 `0.30000000000000004` 这种二进制误差长尾，而整数与字符串一律原样不动（整数因此不会平白多出小数点）。
-6. `pages / pages_used` 记工作表数；没有可见内容时写一条 `notes`。
+6. `pages / pages_used` 记工作表数（含隐藏表）；没有内容时写一条 `notes`。
+7. **隐藏状态另登记进 `notes`**（内容照抽，登记是为了不静默）：整表隐藏的工作表写明 `hidden` / `veryHidden`，隐藏行与隐藏列按连续段写，例如 `隐藏内容照抽：工作表「可见表」有隐藏行（第 2 行、第 4-5 行）、隐藏列（B 列）`。`xlsx / xlsm` 由 `xlsx_visibility.py` 从包内 XML 读——**`read_only=True` 的 worksheet 没有 `row_dimensions` / `column_dimensions`**（实测同一份文件常规模式给出 `hidden_rows=[2]`、只读模式是空的），而值必须走只读模式，所以隐藏状态自己解包；`xls` 取 xlrd 的 `visibility` / `rowinfo_map` / `colinfo_map`（BOUNDSHEET 编码：0 可见、1 隐藏、2 非常隐藏）。登记段数超过 `max_visibility_ranges=24` 时只登记前 24 段并报出该上界名——**钳的只是登记，正文一格不少**。
+
+ODS 的隐藏是**样式**说了算（`table:display="false"`），`pyexcel-ods` 照读不筛，所以 `hidden.ods` 的内容不少；它的可见性登记是已知未做（`01-表格格位建模.md` §1.2）。
 
 ODS 与 CSV 也在这个文件里：这一族都按行列渲染成同一种文本表格，不必为了名字精确再拆开。
 

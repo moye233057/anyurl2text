@@ -25,6 +25,8 @@
     step17_make_epub             三章 EPUB（manifest 与 zip 顺序都反着 spine），验证按 spine 拼章节与文档级链接消歧
     step18_make_ofd              两页 OFD（页序取自文档根、zip 写入顺序相反），验证按页序逐页取正文
     step19_make_tsv              制表符分隔的表格（一格含逗号与分号），验证 .tsv 按制表符分列
+    step20_make_table_edge_cases 行尾缺格的 3x3 表 + .ods / .xls 的合并区，验证格位网格的边界形状
+    step21_make_hidden_fixtures  隐藏工作表与隐藏行列（xlsx / xls / ods），验证隐藏内容照抽 + notes 登记
 
 运行方式：在 backend/ 下执行 python scripts/make_fixtures.py（无参数；`__main__` 只按序号调用各 step）
 使用前注意：
@@ -1060,6 +1062,109 @@ def step20_make_table_edge_cases() -> None:
     book.save(str(target))
     print(f"[阶段20] 已写入 {target}（3x3 横纵合并 + 只有尾部合并的第二张表）")
 
+# 隐藏内容样例（阶段 21）：可见性只影响界面显示，本项目一律照抽，只把可见性登记进 notes
+HIDDEN_SHEET = "隐藏表"
+VERY_HIDDEN_SHEET = "非常隐藏表"
+HIDDEN_CELLS = (
+    ("头A", "头B"),
+    ("隐藏行里的格子", "隐藏行列交叉"),
+    ("第三行", None),
+    ("隐藏连续行一", "隐藏连续行乙"),
+    ("隐藏连续行二", "隐藏连续行丙"),
+)
+# 0 基：第 2 行单独一段，第 4-5 行连成一段；列 B 一整列
+HIDDEN_ROW_INDEXES = (1, 3, 4)
+HIDDEN_COLUMN_INDEXES = (1,)
+HIDDEN_SHEET_CELL = "隐藏表的格子"
+VERY_HIDDEN_SHEET_CELL = "非常隐藏表的格子"
+
+
+def _column_letter(index: int) -> str:
+    """0 基列号 → 列字母（本阶段只用得到 A / B，不引项目里的同名工具）。"""
+    return chr(ord("A") + index)
+
+
+def step21_make_hidden_fixtures() -> None:
+    """
+    造「隐藏工作表 / 隐藏行列」样例，用于验证隐藏内容照抽 + 可见性登记。
+
+    功能：`hidden.xlsx`——可见表（隐藏第 2 行与第 4-5 行、隐藏 B 列）+ `隐藏表`（hidden）+
+           `非常隐藏表`（veryHidden）；`hidden.xls`——同样的形状用 xlwt 写（老版 .xls 的
+           BOUNDSHEET 可见性编码与 OOXML 不同，是另一条读取路径）；`hidden.ods`——隐藏表用
+           `table:display="false"` 的样式（ODF 的隐藏是样式说了算，不是元素属性）。
+    应用场景：验证「隐藏不是丢弃内容的理由」（用户 2026-10-04 拍板），以及 notes 里
+            「哪张表 / 哪些行列被隐藏」的登记——判据是隐藏格子的文字出现在正文里。
+    输入：无（写 data/hidden.xlsx、data/hidden.xls、data/hidden.ods）。
+    输出：无返回值；文件路径打印到 stdout。
+    """
+    import openpyxl
+
+    book = openpyxl.Workbook()
+    visible = book.active
+    visible.title = "可见表"
+    for row_index, values in enumerate(HIDDEN_CELLS, start=1):
+        for column_index, value in enumerate(values, start=1):
+            if value is not None:
+                visible.cell(row=row_index, column=column_index, value=value)
+    for row_index in HIDDEN_ROW_INDEXES:
+        visible.row_dimensions[row_index + 1].hidden = True
+    for column_index in HIDDEN_COLUMN_INDEXES:
+        visible.column_dimensions[_column_letter(column_index)].hidden = True
+    hidden = book.create_sheet(HIDDEN_SHEET)
+    hidden.cell(row=1, column=1, value=HIDDEN_SHEET_CELL)
+    hidden.sheet_state = "hidden"
+    very_hidden = book.create_sheet(VERY_HIDDEN_SHEET)
+    very_hidden.cell(row=1, column=1, value=VERY_HIDDEN_SHEET_CELL)
+    very_hidden.sheet_state = "veryHidden"
+    target = DATA_DIR / "hidden.xlsx"
+    book.save(str(target))
+    print(f"[阶段21] 已写入 {target}（隐藏第 2、4-5 行与 B 列 + hidden / veryHidden 两张表）")
+
+    import xlwt
+
+    legacy = xlwt.Workbook()
+    legacy_visible = legacy.add_sheet("可见表")
+    for row_index, values in enumerate(HIDDEN_CELLS, start=0):
+        for column_index, value in enumerate(values, start=0):
+            if value is not None:
+                legacy_visible.write(row_index, column_index, value)
+    for row_index in HIDDEN_ROW_INDEXES:
+        # xlwt 的 `hidden` 走 BIFF 的 ROW 记录，xlrd 侧在 `rowinfo_map` 里读回来
+        legacy_visible.row(row_index).hidden = 1
+    for column_index in HIDDEN_COLUMN_INDEXES:
+        legacy_visible.col(column_index).hidden = 1
+    legacy_hidden = legacy.add_sheet(HIDDEN_SHEET)
+    legacy_hidden.write(0, 0, HIDDEN_SHEET_CELL)
+    # BOUNDSHEET 的可见性编码：0 可见、1 隐藏、2 非常隐藏
+    legacy_hidden.visibility = 1
+    target = DATA_DIR / "hidden.xls"
+    legacy.save(str(target))
+    print(f"[阶段21] 已写入 {target}（同形状的老版 .xls，可见性走 BOUNDSHEET 记录）")
+
+    from odf.opendocument import OpenDocumentSpreadsheet
+    from odf.style import Style, TableProperties
+    from odf.table import Table, TableCell, TableRow
+    from odf.text import P
+
+    spreadsheet = OpenDocumentSpreadsheet()
+    hidden_style = Style(name="hiddenTable", family="table")
+    hidden_style.addElement(TableProperties(display="false"))
+    spreadsheet.automaticstyles.addElement(hidden_style)
+    for name, text, style in (
+        ("可见表", "头A", None),
+        (HIDDEN_SHEET, HIDDEN_SHEET_CELL, hidden_style.getAttribute("name")),
+    ):
+        table = Table(name=name, stylename=style) if style else Table(name=name)
+        row = TableRow()
+        cell = TableCell(valuetype="string")
+        cell.addElement(P(text=text))
+        row.addElement(cell)
+        table.addElement(row)
+        spreadsheet.spreadsheet.addElement(table)
+    target = DATA_DIR / "hidden.ods"
+    spreadsheet.save(str(target))
+    print(f"[阶段21] 已写入 {target}（隐藏表用 table:display=\"false\" 的样式）")
+
 if __name__ == "__main__":
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     # 阶段1：先造图片（后续文档与演示要内嵌它们）→ screenshot.png / photo.png
@@ -1100,6 +1205,8 @@ if __name__ == "__main__":
     step18_make_ofd()
     # 阶段19：制表符分隔的表格（一格含逗号与分号）→ sample.tsv
     step19_make_tsv()
-    # 阶段20：表格边界形状（行尾缺格）→ merged_tail.docx
+    # 阶段20：表格边界形状（行尾缺格）→ merged_tail.docx / merged.ods / merged.xls
     step20_make_table_edge_cases()
+    # 阶段21：隐藏工作表与隐藏行列 → hidden.xlsx / hidden.xls / hidden.ods
+    step21_make_hidden_fixtures()
     print(f"\n全部完成，输出目录：{DATA_DIR}")

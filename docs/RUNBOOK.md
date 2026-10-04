@@ -77,7 +77,10 @@
 | `MAX_ROWS_TO_READ` | 5001（`MAX_ROWS_PER_SHEET + 1`） | `backend/configs/limits.py` | 读取上限比渲染上限多一行，用来区分「还有后续行」与「这是最后一行」 |
 | `MAX_TABLE_ROWS` | 2000 | `backend/configs/limits.py` | 单个表格最多渲染的行数（docx 与 odf 共用这一处，不再各写一份） |
 | `MAX_GRID_EXPANSION` | 200000 | `backend/configs/limits.py` | 表格跨度展开的格位总量上限 |
+| `MAX_GRID_SLOTS` | 1000000 | `backend/configs/limits.py` | 单张表的格位数上限（实测一个格位约 100 字节，100 万格位约 100 MB） |
+| `MAX_GRID_TEXT_CHARS` | 5000000 | `backend/configs/limits.py` | 单张表的文字量上限（交付侧的 `max_content_chars` 是组装时事后截断，峰值已经发生） |
 | `MAX_REPEATED_SLOTS` | 100 | `backend/configs/limits.py` | odf 的 `number-*-repeated` 重复次数上限 |
+| `MAX_VISIBILITY_RANGES` | 24 | `backend/configs/limits.py` | 隐藏行列的**登记段数**上限：只钳 `notes` 篇幅，隐藏工作表与隐藏行列的内容一律照抽 |
 | `MAX_TEXT_BYTES` | 20971520（20 MB） | `backend/configs/limits.py` | 文本类文件的体积上限，超过则只读头部，避免超级大的日志整份进内存 |
 | `MAX_LONG_EDGE` | 1600 | `backend/configs/limits.py` | 送模型前图片长边缩到多少像素 |
 | `PREVIEW_FIRST_PAGES` | 15 | `backend/configs/limits.py` | RAG 预览取前几页 |
@@ -104,7 +107,7 @@ python scripts/make_fixtures.py
 
 输出到 `backend/data/`，与随仓库提供的文本类样例同级：`plain.txt`、`table.csv`、`sample.json`、`feed.xml`、`page.html`、`sample.rtf`、`notes.md` 这 7 个是**仓库自带的手写样例**，脚本既不生成也不覆盖它们（`notes.md` 还是 `/extract` 验收用例的必需样例）。需要后端依赖已安装（脚本用到 python-docx / python-pptx / openpyxl / pymupdf / pillow）。
 
-生成的东西：带表格与内嵌图的 docx、含空单元格的 xlsx、六页 pptx、**含合并单元格的 docx / xlsx / pptx（`merged.*`，横向与纵向各一处）**、**表格边界形状（阶段 20：`merged_tail.docx` 行尾缺格；`merged.ods` / `merged.xls` 横纵合并各一处，各带一张只有尾部合并的表）**、**同一张图被引 3 次的 docx / pptx / pdf（`repeated.*`，另有一张只引 1 次）**、**带合并表格与两级列表的 `structured.odt`**、**含超链接的 `hyperlink.docx`（同一地址写两次 + 一条没有文字的链接，验证链接去重与截断）**、**三章的 `sample.epub`（spine 顺序与 manifest / zip 顺序都故意不同，另带跨章与章内引用、样式表）**、十页有文字层的 PDF、**三页无文字层的扫描件**、odt、odp、**两页的 `sample.ofd`（页序取自文档根、zip 写入顺序相反，第 2 页带一个图像对象）**、**制表符分隔的 `sample.tsv`（一格含逗号与分号）**、压缩包、APK 结构样本、老版 `.doc` 头样本、16kHz 单声道 wav、由它封装的 mp4。
+生成的东西：带表格与内嵌图的 docx、含空单元格的 xlsx、六页 pptx、**含合并单元格的 docx / xlsx / pptx（`merged.*`，横向与纵向各一处）**、**表格边界形状（阶段 20：`merged_tail.docx` 行尾缺格；`merged.ods` / `merged.xls` 横纵合并各一处，各带一张只有尾部合并的表）**、**隐藏工作表与隐藏行列（阶段 21：`hidden.xlsx` 隐藏第 2、4-5 行与 B 列 + hidden / veryHidden 各一张表；`hidden.xls` 同形状走 BOUNDSHEET；`hidden.ods` 的隐藏表走样式 `table:display="false"`）**、**同一张图被引 3 次的 docx / pptx / pdf（`repeated.*`，另有一张只引 1 次）**、**带合并表格与两级列表的 `structured.odt`**、**含超链接的 `hyperlink.docx`（同一地址写两次 + 一条没有文字的链接，验证链接去重与截断）**、**三章的 `sample.epub`（spine 顺序与 manifest / zip 顺序都故意不同，另带跨章与章内引用、样式表）**、十页有文字层的 PDF、**三页无文字层的扫描件**、odt、odp、**两页的 `sample.ofd`（页序取自文档根、zip 写入顺序相反，第 2 页带一个图像对象）**、**制表符分隔的 `sample.tsv`（一格含逗号与分号）**、压缩包、APK 结构样本、老版 `.doc` 头样本、16kHz 单声道 wav、由它封装的 mp4。
 
 `.apk` 与 `.doc` 只是**结构样本**，用来验证类型识别与降级分支，不是真的安装包与 Word 文档。
 音视频样例是一段**正弦音、没有说话声**，只用于验证结构信息与「抽音轨 → 送本机 ASR」这条链；要验收转写质量请自备一段真实录音。
@@ -156,13 +159,13 @@ pytest 的缓存是关掉的（`backend/pytest.ini` 里的 `-p no:cacheprovider`
 |---|---|---|
 | `capability_detect` | 105 | `(扩展名, 判据来源, 模态)`——决定这个文件送哪个处理器、响应的 `type` |
 | `capability_document` | 26 | 正文内容 / 页数 / 内嵌图数 / 文本框节 |
-| `capability_table` | 33 | 合并单元格不重复、行宽一致、分隔符、数值格式、网格不变式与边界形状、网页/EPUB 表格与表头行数 |
+| `capability_table` | 37 | 合并单元格不重复、行宽一致、分隔符、数值格式、网格不变式与边界形状、网页/EPUB 表格与表头行数、隐藏工作表与隐藏行列照抽 |
 | `capability_media` | 7 | 图片结构信息、内嵌图去重与名额、音轨参数 |
 | `capability_container` | 2 | 压缩包 / 安装包的条目清单 |
 | `capability_links` | 3 | 链接是否进交付文本、去重与上限 |
 | `capability_epub` | 8 | spine 顺序、章节标记、内部引用消歧、CSS 不进正文 |
 | `capability_degrade` | 18 | 降级码是不是那一个、HTTP 仍是 200 |
-| `capability_limits` | 14 | 命的哪条上界、文案是否来自同一模板 |
+| `capability_limits` | 15 | 命的哪条上界、文案是否来自同一模板 |
 | `capability_errors` | 14 | 码表白名单、`error` 对象、模型失败通道、`internal` 兜底 |
 | `capability_http` | 13 | 真实服务上的代表格式 + 契约形状（**只抽查代表，不重复进程内矩阵**） |
 | `capability_utils` | 25 | 解码顺序、峰谷计价、账本累计 |

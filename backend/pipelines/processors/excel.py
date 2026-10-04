@@ -24,7 +24,12 @@ from pipelines.processors.ods_merges import align_values as align_ods_values
 from pipelines.processors.ods_merges import read_merge_rects as read_ods_merge_rects
 from pipelines.processors.schema import ExtractContext, ExtractResult, TableGrid
 from pipelines.processors.xlsx_merges import read_merge_rects
+from pipelines.processors.xlsx_visibility import column_letters, to_runs
+from pipelines.processors.xlsx_visibility import read_visibility as read_xlsx_visibility
 from utils.textfile import read_text_file
+
+# 老版 .xls 的 BOUNDSHEET 可见性编码（xlrd 的 `sheet.visibility`）
+XLS_SHEET_STATES = {0: "visible", 1: "hidden", 2: "veryHidden"}
 
 def _render_rows(sheets: list, pad_short_rows: bool = True) -> tuple:
     """
@@ -100,8 +105,18 @@ def _sheet_grid(rows: list, merges: list) -> tuple:
             builder.place(_cell_text(row[col_index]), col_span, row_span)
     return builder.finish(), list(builder.limit_hits)
 
-def _read_xlsx(path: Path) -> list:
-    """用 openpyxl 读 xlsx/xlsm；read_only 失败时退回常规模式（部分文件的样式表会让只读模式报错）。"""
+def _read_xlsx(path: Path) -> tuple:
+    """
+    用 openpyxl 读 xlsx/xlsm；read_only 失败时退回常规模式（部分文件的样式表会让只读模式报错）。
+
+    功能：整表逐行读出，另交一份隐藏状态（工作表 / 行列）供 `notes` 登记。
+    应用场景：`extract_excel` 读 xlsx / xlsm 时调用。
+    输入：path — 文件路径。
+    输出：(sheets, visibility)——sheets 为 [(表名, 行列表, 合并矩形), ...]，
+          visibility 见 `xlsx_visibility.read_visibility`。
+    说明：**隐藏工作表照读**（隐藏只是界面上没显示，不是没内容；用户 2026-10-04 拍板）。
+          实测只读模式同样会吐出隐藏行、隐藏列的值，所以这条读取路径不必改。
+    """
     import openpyxl
 
     try:
@@ -112,8 +127,6 @@ def _read_xlsx(path: Path) -> list:
         merges = read_merge_rects(path)
         sheets = []
         for index, sheet in enumerate(workbook.worksheets):
-            if getattr(sheet, "sheet_state", "visible") != "visible":
-                continue
             # 边读边停：整表先读进内存的话，几十万行的表会把内存打爆，
             # 渲染层的行数上限那时已经来不及了
             rows = []
@@ -122,18 +135,20 @@ def _read_xlsx(path: Path) -> list:
                 if len(rows) >= limits.MAX_ROWS_TO_READ:
                     break
             sheets.append((sheet.title, rows, merges[index] if index < len(merges) else []))
-        return sheets
+        return sheets, read_xlsx_visibility(path)
     finally:
         workbook.close()
 
-def _read_xls(path: Path) -> list:
+def _read_xls(path: Path) -> tuple:
     """
-    用 xlrd 读老版 .xls，合并区取它的 `merged_cells`。
+    用 xlrd 读老版 .xls，合并区取它的 `merged_cells`，隐藏状态取它的 visibility / rowinfo / colinfo。
 
     两个坑都实测过：① 坐标是**开区间且行在前**（`(rlo, rhi, clo, chi)`），要过 `grid.merge_rect`
     换算成本项目统一的半开形态；② `merged_cells` **只在 `formatting_info=True` 时才有值**——
     默认打开时它恒为空列表（这一点谁也不会从签名上看出来）。万一某份文件的格式化记录带不动，
-    退回默认模式：值照读，只是合并区丢失。
+    退回默认模式：值照读，只是合并区与隐藏行列都丢失（内容不少，只是不登记）。
+
+    输出：(sheets, visibility)——隐藏行列在这里也换算成 0 基半开区间，与 xlsx 侧同一形态。
     """
     import xlrd
 
@@ -142,6 +157,7 @@ def _read_xls(path: Path) -> list:
     except Exception:
         book = xlrd.open_workbook(str(path))
     sheets = []
+    visibility = {}
     for sheet in book.sheets():
         rows = [sheet.row_values(index) for index in range(min(sheet.nrows, limits.MAX_ROWS_TO_READ))]
         # xlrd 给的是 (rlo, rhi, clo, chi)：**行在前、开区间**，且列不是紧挨着行的那个位置——
@@ -155,14 +171,22 @@ def _read_xls(path: Path) -> list:
             if rect
         ]
         sheets.append((sheet.name, rows, rects))
-    return sheets
+        visibility[sheet.name] = {
+            "state": XLS_SHEET_STATES.get(sheet.visibility, "visible"),
+            "hidden_rows": to_runs([key for key, info in sheet.rowinfo_map.items() if info.hidden]),
+            "hidden_cols": to_runs([key for key, info in sheet.colinfo_map.items() if info.hidden]),
+        }
+    return sheets, visibility
 
-def _read_ods(path: Path) -> list:
+def _read_ods(path: Path) -> tuple:
     """
     用 pyexcel_ods 读 ODS 的值；合并区另从包内 XML 读，值行再按覆盖位对齐。
 
     两步都不能省：该库丢跨度（合并区要自己解包读），而且它对 `covered-table-cell` 不产出值
     （含纵向合并的行会少项、后面的值整体左移，要按覆盖位插空对齐）。
+
+    隐藏表照读（实测 `table:display="false"` 的表也在返回里），所以这里没有隐藏状态可登记；
+    ODS 的 visible 登记是**已知未做**，见 01 §1.2。输出 (sheets, {})。
     """
     from pyexcel_ods import get_data
 
@@ -174,7 +198,7 @@ def _read_ods(path: Path) -> list:
     for name, rows in data.items():
         rects = merges.get(name, [])
         sheets.append((name, align_ods_values(rows, rects)[: limits.MAX_ROWS_TO_READ], rects))
-    return sheets
+    return sheets, {}
 
 # CSV 分隔符嗅探：候选顺序即平局时的优先级，逗号在最前——普通逗号 CSV 的产出因此逐字节不变
 CSV_DELIMITERS = (",", ";", "\t", "|")
@@ -203,17 +227,71 @@ def _sniff_delimiter(text: str) -> str:
             best, best_score = delimiter, score
     return best
 
-def _read_csv(path: Path) -> list:
+def _read_csv(path: Path) -> tuple:
     """读 CSV / TSV：先按编码探测解码，再嗅探分隔符（.tsv 会在这一步选中制表符），最后交给 csv 解析一次。"""
     text, hits = read_text_file(path)
     rows = list(islice(csv.reader(io.StringIO(text), delimiter=_sniff_delimiter(text)), limits.MAX_ROWS_TO_READ))
-    return [(path.stem or "csv", rows, tuple(hits))]
+    return [(path.stem or "csv", rows, tuple(hits))], {}
+
+def _run_text(run: tuple, kind: str) -> str:
+    """一个半开区间 → 人读的区间串：行是 `第 2 行` / `第 2-4 行`，列是 `B 列` / `B-D 列`（都按 1 基显示）。"""
+    start, end = run
+    if kind == "row":
+        return f"第 {start + 1} 行" if end - start == 1 else f"第 {start + 1}-{end} 行"
+    first, last = column_letters(start), column_letters(end - 1)
+    return f"{first} 列" if first == last else f"{first}-{last} 列"
+
+def _runs_text(runs: list, kind: str) -> tuple:
+    """
+    区间列表 → 登记串，段数超过上界时截断。
+
+    功能：按 `limits.MAX_VISIBILITY_RANGES` 取前若干段拼成 `第 2-4、6 行`；被截断时补一句
+          「等 N 段」并报出上界名——登记本身也不能无上限地长（内容另说，内容一律照抽）。
+    应用场景：`_visibility_notes` 逐表调用。
+    输入：runs — 半开区间列表；kind — "row" 或 "col"。
+    输出：(登记串, 是否命中上界)。
+    """
+    limit = limits.MAX_VISIBILITY_RANGES
+    text = "、".join(_run_text(run, kind) for run in runs[:limit])
+    if len(runs) <= limit:
+        return text, False
+    return f"{text} 等 {len(runs)} 段", True
+
+def _visibility_notes(visibility: dict) -> tuple:
+    """
+    隐藏状态 → `notes` 登记 + 命中的上界名。
+
+    功能：整表隐藏的工作表登记一条（写明 hidden / veryHidden），隐藏行、隐藏列各登记一条
+          （按连续段合并，如 `第 2-4、6 行`、`B-D 列`）。**只登记，不扣内容**——
+          隐藏只是界面上没显示，不是没有内容（用户 2026-10-04 拍板）。
+    应用场景：`extract_excel` 组装 notes 时调用。
+    输入：visibility — 见 `xlsx_visibility.read_visibility`；xls / ods / csv 的形态一致或为空。
+    输出：(notes 列表, 命中的上界名列表)。
+    """
+    notes = []
+    hits = []
+    for name, info in visibility.items():
+        state = info.get("state", "visible")
+        if state != "visible":
+            notes.append(f"隐藏内容照抽：工作表「{name}」整表为 {state} 状态")
+        parts = []
+        for kind, key in (("row", "hidden_rows"), ("col", "hidden_cols")):
+            runs = info.get(key) or []
+            if not runs:
+                continue
+            text, truncated = _runs_text(runs, kind)
+            parts.append(f"隐藏{'行' if kind == 'row' else '列'}（{text}）")
+            if truncated and "max_visibility_ranges" not in hits:
+                hits.append("max_visibility_ranges")
+        if parts:
+            notes.append(f"隐藏内容照抽：工作表「{name}」有" + "、".join(parts))
+    return notes, hits
 
 def extract_excel(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:
     """
-    抽取表格类文件的全部可见单元格。
+    抽取表格类文件的全部单元格（含隐藏工作表与隐藏行列）。
 
-    功能：按扩展名选解析器，统一渲染成制表符分隔的文本表格。
+    功能：按扩展名选解析器，统一渲染成制表符分隔的文本表格；隐藏内容照抽，可见性状态进 `notes`。
     应用场景：dispatch 分派表格组时调用。
     输入：path — 文件路径；ext — 已识别的小写扩展名；ctx — 抽取上下文（本类不使用）。
     输出：ExtractResult，content 为按表分块的文本。
@@ -221,13 +299,17 @@ def extract_excel(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:
     """
     try:
         if ext in ("xlsx", "xlsm"):
-            sheets, engine = _read_xlsx(path), "openpyxl"
+            sheets, visibility = _read_xlsx(path)
+            engine = "openpyxl"
         elif ext == "xls":
-            sheets, engine = _read_xls(path), "xlrd"
+            sheets, visibility = _read_xls(path)
+            engine = "xlrd"
         elif ext == "ods":
-            sheets, engine = _read_ods(path), "pyexcel-ods"
+            sheets, visibility = _read_ods(path)
+            engine = "pyexcel-ods"
         elif ext in ("csv", "tsv"):
-            sheets, engine = _read_csv(path), "csv"
+            sheets, visibility = _read_csv(path)
+            engine = "csv"
         else:
             return ExtractResult(
                 degraded=True,
@@ -244,9 +326,10 @@ def extract_excel(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:
         )
 
     content, hits = _render_rows(sheets, pad_short_rows=ext not in ("csv", "tsv"))
-    notes = []
+    notes, visibility_hits = _visibility_notes(visibility)
+    hits.extend(visibility_hits)
     if not content:
-        notes.append("表内没有可见单元格内容（可能是空表或整表被隐藏）")
+        notes.append("表内没有单元格内容（空表，或所有格子都是空的）")
     return ExtractResult(
         content=content,
         engines=[engine],

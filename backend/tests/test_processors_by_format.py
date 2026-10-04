@@ -826,6 +826,99 @@ def test_spreadsheet_and_slide_paths_report_the_grid_expansion_limit(monkeypatch
     assert result.content.strip(), "命中上界不该把整张表丢掉"
 
 
+# ---------- 隐藏工作表与隐藏行列：内容照抽、可见性登记 ----------
+
+@pytest.mark.capability_table
+def test_hidden_sheets_are_still_extracted(ctx, fixture_copy):
+    """
+    行为：整表隐藏（hidden / veryHidden）的工作表里的文字照样进正文——隐藏只是界面上没显示。
+
+    来源：用户 2026-10-04 拍板（`01-表格格位建模.md` §1.2）。修前 `excel.py` 会整张跳过
+          `sheet_state != "visible"` 的表：`hidden.xlsx` 的 3 张表只抽到 1 张。
+    预期值来源：`scripts/make_fixtures.py` 阶段 21 写死的内容——两张隐藏表各一格文字 + 表数 3。
+    """
+    result = run("hidden.xlsx", ctx, fixture_copy)
+    assert "隐藏表的格子" in result.content
+    assert "非常隐藏表的格子" in result.content
+    assert result.pages == 3, result.pages
+    assert any("「隐藏表」整表为 hidden" in note for note in result.notes), result.notes
+    assert any("「非常隐藏表」整表为 veryHidden" in note for note in result.notes), result.notes
+    assert result.degraded is False, result.degrade_reason
+
+
+@pytest.mark.capability_table
+def test_hidden_rows_and_columns_are_still_extracted(ctx, fixture_copy):
+    """
+    行为：隐藏行、隐藏列里的格子照样进正文，并把「哪几行哪几列被隐藏」登记进 notes。
+
+    来源：同 §1.2——隐藏行列本来就是照抽的，缺的是登记（不静默）。
+    预期值来源：阶段 21 的样例生成参数：0 基隐藏行 (1, 3, 4) 即 1 基的第 2、4-5 行，隐藏列 (1) 即 B 列。
+    """
+    result = run("hidden.xlsx", ctx, fixture_copy)
+    for text in ("隐藏行里的格子", "隐藏行列交叉", "隐藏连续行一", "隐藏连续行二"):
+        assert text in result.content, f"隐藏格子 {text!r} 没进正文：{result.content!r}"
+    assert any(
+        "隐藏行（第 2 行、第 4-5 行）" in note and "隐藏列（B 列）" in note for note in result.notes
+    ), result.notes
+
+
+@pytest.mark.capability_table
+def test_hidden_visibility_is_registered_for_legacy_xls(ctx, fixture_copy):
+    """
+    行为：老版 .xls 走另一条读取路径（BOUNDSHEET 的可见性编码 + `rowinfo_map` / `colinfo_map`），
+          隐藏表与隐藏行列同样照抽、同样登记。
+
+    来源：同 §1.2；`hidden.xls` 与 `hidden.xlsx` 是同一形状的两种容器，产出的正文应当一致。
+    预期值来源：阶段 21 的样例生成参数（同 xlsx 那份：隐藏第 2、4-5 行与 B 列、一张隐藏表）。
+    """
+    result = run("hidden.xls", ctx, fixture_copy)
+    assert "隐藏表的格子" in result.content
+    assert "隐藏行列交叉" in result.content
+    assert result.pages == 2, result.pages
+    assert any("「隐藏表」整表为 hidden" in note for note in result.notes), result.notes
+    assert any("隐藏行（第 2 行、第 4-5 行）" in note and "隐藏列（B 列）" in note for note in result.notes), result.notes
+
+
+@pytest.mark.capability_table
+def test_hidden_ods_table_content_survives(ctx, fixture_copy):
+    """
+    行为：ODS 的隐藏是**样式**说了算（`table:display="false"`），隐藏表的内容照样进正文。
+
+    来源：同 §1.2；实测 `pyexcel-ods` 不按 visible 过滤（阶段 21 的 `hidden.ods`）。
+          这一族的**登记**仍是已知未做（`01-表格格位建模.md` §1.2），所以本用例只验内容不丢。
+    预期值来源：阶段 21 写死的两格文字 + 表数 2（可见表 + 隐藏表）。
+    """
+    result = run("hidden.ods", ctx, fixture_copy)
+    assert "隐藏表的格子" in result.content
+    assert result.pages == 2, result.pages
+
+
+@pytest.mark.capability_limits
+def test_hidden_row_registration_is_capped_and_reported(ctx, work_dir):
+    """
+    行为：隐藏行的连续段超过 `max_visibility_ranges` 时只登记前若干段并报出上界名；正文照抽不受影响。
+
+    来源：`configs/limits.py` 的 `max_visibility_ranges`（2026-10-04 新增——备注的篇幅也要有上界，
+          否则「隔行隐藏」这种畸形文件能把 notes 写爆；它钳的只是登记，内容一律照抽）。
+    预期值来源：本用例写 25 个「各自单独一段」的隐藏行（第 1、3、5…49 行），必然超过 24 段。
+    """
+    import openpyxl
+
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "隔行隐藏"
+    for row_index in range(1, 50, 2):
+        sheet.cell(row=row_index, column=1, value=f"第{row_index}行")
+        sheet.row_dimensions[row_index].hidden = True
+    path = work_dir / "hidden_runs.xlsx"
+    book.save(str(path))
+
+    result = dispatch("xlsx", path, ctx)
+    assert "max_visibility_ranges" in result.limits_hit, result.limits_hit
+    assert "第49行" in result.content, "命中的是登记的上界，正文不该跟着少内容"
+    assert any("等 25 段" in note for note in result.notes), result.notes
+
+
 # ---------- CSV 分隔符嗅探 ----------
 
 CSV_DIALECTS = ((";", "分号"), ("\t", "制表符"), ("|", "竖线"))
