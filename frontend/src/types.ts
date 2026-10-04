@@ -70,6 +70,15 @@ export interface Timings {
   total_ms: number
 }
 
+export interface ErrorInfo {
+  /** 稳定错误码，见后端 configs/errors.py；是契约的一部分，不随文案改 */
+  code: string
+  /** 面向使用者的说明，措辞可能随时变 */
+  message: string
+  /** 出错的是哪个入参或字段；无明确归属时为 null */
+  param?: string | null
+}
+
 export interface ConvertResponse {
   type: Modality
   content: string
@@ -77,7 +86,7 @@ export interface ConvertResponse {
   meta: Meta
   usage?: Usage | null
   timings: Timings
-  error?: string | null
+  error?: ErrorInfo | null
 }
 
 export interface Health {

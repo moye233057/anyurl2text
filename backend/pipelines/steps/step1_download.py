@@ -23,6 +23,7 @@ from urllib.parse import unquote, urljoin, urlsplit
 
 import httpx
 
+import configs.errors as errors
 import configs.settings as settings
 from configs.log_config import logger
 
@@ -30,15 +31,23 @@ REDIRECT_STATUS = (301, 302, 303, 307, 308)
 
 class FetchError(Exception):
     """
-    下载失败。
+    下载或上传阶段的失败。
 
     status_code 是给 HTTP 层映射用的语义：入参问题 422、体积超限 413、
     超时 504、其余上游 / 网络问题 502。字符串匹配错误类型是脆的，所以在这里就带上。
+
+    code 是**稳定机器名**（见 `configs/errors.py`），给程序看、不许改。构造时就校验它在白名单里：
+    打错一个字当场炸掉，而不是等前端发现分不了组。param 指出哪个入参/字段出错。
     """
 
-    def __init__(self, message: str, status_code: int = 502) -> None:
+    def __init__(self, message: str, status_code: int = 502,
+                 code: str = "download_network_error", param: Optional[str] = None) -> None:
+        if code not in errors.HARD_FAILURE_CODES:
+            raise ValueError(f"未登记的错误码: {code}（见 configs/errors.py）")
         super().__init__(message)
         self.status_code = status_code
+        self.code = code
+        self.param = param
 
 @dataclass
 class FetchedFile:
@@ -64,7 +73,7 @@ def _assert_public_host(host: str) -> None:
     try:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror as exc:
-        raise FetchError(f"域名解析失败: {host}", 502) from exc
+        raise FetchError(f"域名解析失败: {host}", 502, "download_dns_failed", "url") from exc
 
     for info in infos:
         try:
@@ -79,15 +88,15 @@ def _assert_public_host(host: str) -> None:
             or ip.is_multicast
             or ip.is_unspecified
         ):
-            raise FetchError(f"拒绝访问内网或保留地址: {host} -> {ip}", 422)
+            raise FetchError(f"拒绝访问内网或保留地址: {host} -> {ip}", 422, "download_private_host", "url")
 
 def _assert_safe_url(url: str) -> None:
     """校验协议与主机，供每一跳复用。"""
     parsed = urlsplit(url)
     if parsed.scheme not in ("http", "https"):
-        raise FetchError(f"只支持 http/https，收到: {parsed.scheme or '(空)'}", 422)
+        raise FetchError(f"只支持 http/https，收到: {parsed.scheme or '(空)'}", 422, "download_scheme_unsupported", "url")
     if not parsed.hostname:
-        raise FetchError("URL 缺少主机名", 422)
+        raise FetchError("URL 缺少主机名", 422, "download_host_missing", "url")
     _assert_public_host(parsed.hostname)
 
 def _budgeted_timeout(deadline: float) -> httpx.Timeout:
@@ -125,7 +134,9 @@ def _stream_to_file(
     declared = response.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > settings.MAX_DOWNLOAD_BYTES:
         raise FetchError(
-            f"文件过大: {int(declared)} 字节，超过上限 {settings.MAX_DOWNLOAD_BYTES} 字节", 413
+            f"文件过大: {int(declared)} 字节，超过上限 {settings.MAX_DOWNLOAD_BYTES} 字节",
+            413,
+            "download_declared_too_large",
         )
 
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -138,12 +149,13 @@ def _stream_to_file(
                 if not chunk:
                     continue
                 if time.monotonic() > deadline:
-                    raise FetchError("下载超时：超出请求时间预算", 504)
+                    raise FetchError("下载超时：超出请求时间预算", 504, "download_budget_exhausted")
                 written += len(chunk)
                 if written > settings.MAX_DOWNLOAD_BYTES:
                     raise FetchError(
                         f"文件过大: 已写出 {written} 字节，超过上限 {settings.MAX_DOWNLOAD_BYTES} 字节",
                         413,
+                        "download_stream_too_large",
                     )
                 sink.write(chunk)
     except BaseException:
@@ -175,7 +187,7 @@ def download(url: str, dest_dir: Path) -> FetchedFile:
     deadline = time.monotonic() + settings.REQUEST_BUDGET_SEC
     current = (url or "").strip()
     if not current:
-        raise FetchError("URL 不能为空", 422)
+        raise FetchError("URL 不能为空", 422, "download_url_empty", "url")
     current = current.replace(" ", "%20")
 
     headers = {"User-Agent": settings.USER_AGENT, "Accept": "*/*"}
@@ -188,21 +200,23 @@ def download(url: str, dest_dir: Path) -> FetchedFile:
                         location = response.headers.get("location")
                         if not location:
                             raise FetchError(
-                                f"HTTP {response.status_code} 重定向但缺少 Location", 502
+                                f"HTTP {response.status_code} 重定向但缺少 Location",
+                                502,
+                                "download_redirect_missing_location",
                             )
                         current = urljoin(current, location)
                         logger.info(f"fetch 重定向 -> {current}")
                         continue
                     if response.status_code >= 400:
-                        raise FetchError(f"下载失败，HTTP {response.status_code}", 502)
+                        raise FetchError(f"下载失败，HTTP {response.status_code}", 502, "download_http_error")
                     fetched = _stream_to_file(response, current, dest_dir, deadline)
                     logger.info(
                         f"fetch 完成 size={fetched.size_bytes} content_type={fetched.content_type}"
                     )
                     return fetched
     except httpx.TimeoutException as exc:
-        raise FetchError("下载超时", 504) from exc
+        raise FetchError("下载超时", 504, "download_timeout") from exc
     except httpx.HTTPError as exc:
-        raise FetchError(f"网络错误: {exc}", 502) from exc
+        raise FetchError(f"网络错误: {exc}", 502, "download_network_error") from exc
 
-    raise FetchError(f"重定向次数超过上限 {settings.MAX_REDIRECTS}", 502)
+    raise FetchError(f"重定向次数超过上限 {settings.MAX_REDIRECTS}", 502, "download_redirect_limit")

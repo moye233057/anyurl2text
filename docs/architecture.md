@@ -48,6 +48,7 @@
 | 一格式一个文件的处理器 | `backend/pipelines/processors/{pdf,docx,pptx,excel,odf,plaintext,rtf,html,image,media,archive,install_package}.py` | 已实现 |
 | 表格格位建模：合并单元格的唯一表示与唯一渲染 | `backend/pipelines/processors/grid.py`、`processors/xlsx_merges.py`（xlsx 合并区从包内 XML 读） | 已实现 |
 | 限额的单一定义处：值 + 命中行为 + 强制点 + 命中文案模板 | `backend/configs/limits.py` | 已实现 |
+| 稳定错误码表（机器名白名单，`error.code` 的契约） | `backend/configs/errors.py` | 已实现（目前只落硬失败那一组） |
 | RAG 分页与印刷目录规则 | `backend/pipelines/processors/pdf_pages.py`、`processors/catalogue.py` | 已实现 |
 | 模型出口（一模型一文件）+ 图片编码 + 提示词模板 | `backend/models/deepseek.py`、`paddle_ocr.py`、`qwen3_asr.py`、`images.py`、`prompts/` | 已实现 |
 | 通用件：文本解码与文件头、`LlmError`、计价记账、抽音轨 | `backend/utils/textfile.py`、`errors.py`、`usage.py`、`ffmpeg.py` | 已实现 |
@@ -64,7 +65,7 @@
 app → routers → pipelines → pipelines/steps → pipelines/processors → { models , utils } → configs
 ```
 
-叶子模块（自己不 import 项目内任何东西，所以任何层都能拿它当数据结构用，不会成环）：关键的几个是 `routers/convert/schema.py`、`routers/rag/schema.py`、`configs/formats.py`、`configs/settings.py`、`utils/textfile.py`、`utils/errors.py`；`configs/log_config.py`、`pipelines/processors/catalogue.py`、`pipelines/processors/pdf_pages.py`、`pipelines/processors/rtf.py` 与各 `__init__.py` 同样是叶子，实际共 21 个。完整清单：`python -m pytest tests/test_structure.py -s -k leaf` 会打印出来（`-s` 才看得见被 pytest 捕获的输出）。
+叶子模块（自己不 import 项目内任何东西，所以任何层都能拿它当数据结构用，不会成环）：关键的几个是 `routers/convert/schema.py`、`routers/rag/schema.py`、`configs/formats.py`、`configs/settings.py`、`configs/errors.py`、`utils/errors.py`；`configs/log_config.py`、`pipelines/processors/catalogue.py`、`pipelines/processors/pdf_pages.py`、`pipelines/processors/rtf.py` 与各 `__init__.py` 同样是叶子，实际共 21 个。完整清单：`python -m pytest tests/test_structure.py -s -k leaf` 会打印出来（`-s` 才看得见被 pytest 捕获的输出）。
 
 另外两条结构性规矩：`__init__.py` 里不放逻辑（只有模块 docstring）；单文件总行数 ≤ 250 且代码行（剥离 docstring / 注释 / 空行）≤ 150。
 

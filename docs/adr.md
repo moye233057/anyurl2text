@@ -10,7 +10,7 @@
 
 ## ADR-0001 · 2026-09-11 · 响应契约另起一套，摘要不与正文混放
 
-响应恒为 7 个字段 `type / content / summary / meta / usage / timings / error`：`summary` 只由 understand 产出，`content` 是抽取出的原文、任何接口任何参数下都不被覆盖、也不追加实现细节前缀，`error` 恒存在（成功为 `null`）——调用方不必判两种响应形状。这样「同一份源、两种代价」才能逐字节对比，摘要与原文也各有各的位置。否掉 `{type, content, inputTokens, outputTokens}` 那套契约：那条契约带 query 时用摘要覆盖正文（原文永久丢失）、把引擎实现细节硬编码进正文、成功 4 键失败 5 键、`usage` 里塞的不是 token。
+响应恒为 7 个字段 `type / content / summary / meta / usage / timings / error`：`summary` 只由 understand 产出，`content` 是抽取出的原文、任何接口任何参数下都不被覆盖、也不追加实现细节前缀，`error` 恒存在（成功为 `null`）——调用方不必判两种响应形状。`error` 非空时是**结构化的** `{code, message, param}`：`message` 是给使用者看的文案、会改；`code` 是给程序看的稳定机器名（码表在 `configs/errors.py`，不再靠字符串匹配错误类型）。这样「同一份源、两种代价」才能逐字节对比，摘要与原文也各有各的位置。否掉 `{type, content, inputTokens, outputTokens}` 那套契约：那条契约带 query 时用摘要覆盖正文（原文永久丢失）、把引擎实现细节硬编码进正文、成功 4 键失败 5 键、`usage` 里塞的不是 token。
 
 ## ADR-0002 · 2026-09-12 · understand 复用 extract 的抽取内核，只做增量
 

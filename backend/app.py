@@ -81,7 +81,9 @@ async def reject_oversized_body(request: Request, call_next):
         if request.url.path.startswith("/rag"):
             body = RagExtractResponse(kind="error", error=message).model_dump(mode="json")
             return JSONResponse(status_code=413, content=body)
-        result = error_response("(请求体在解析前被拒绝)", message, 0, 413)
+        result = error_response(
+            "(请求体在解析前被拒绝)", message, 0, 413, "request_body_too_large", "upload"
+        )
         return JSONResponse(status_code=413, content=result.response.model_dump(mode="json"))
     return await call_next(request)
 

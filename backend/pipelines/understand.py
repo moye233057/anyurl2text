@@ -50,7 +50,7 @@ class UnderstandPipeline:
             prepared, download_ms = step3_prepare.prepare_from_url(url)
         except step1_download.FetchError as exc:
             return step6_assemble.error_response(
-                url, str(exc), int((time.monotonic() - started) * 1000), exc.status_code
+                url, str(exc), int((time.monotonic() - started) * 1000), exc.status_code, exc.code, exc.param
             )
         try:
             # ── 步骤 4：按扩展名跑处理器（prepare_assets=True：准备内嵌图与扫描页素材）
@@ -125,7 +125,7 @@ class UnderstandPipeline:
             prepared, upload_ms = step3_prepare.prepare_from_upload(stream, file_name)
         except step1_download.FetchError as exc:
             return step6_assemble.error_response(
-                file_name, str(exc), int((time.monotonic() - started) * 1000), exc.status_code
+                file_name, str(exc), int((time.monotonic() - started) * 1000), exc.status_code, exc.code, exc.param
             )
         try:
             # ── 步骤 4：按扩展名跑处理器（prepare_assets=True）

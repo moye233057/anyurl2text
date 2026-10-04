@@ -12,7 +12,7 @@ import configs.limits as limits
 import configs.settings as settings
 from pipelines.steps.step2_detect import modality_from_extension
 from pipelines.processors.schema import ExtractResult, PreparedSource
-from routers.convert.schema import ConvertResponse, Meta, Modality, Timings, truncate_content
+from routers.convert.schema import ConvertResponse, ErrorInfo, Meta, Modality, Timings, truncate_content
 
 class PipelineResult(NamedTuple):
     """
@@ -96,15 +96,19 @@ def build_response(
         error=error,
     )
 
-def error_response(source: str, reason: str, total_ms: int, status: int = 502) -> PipelineResult:
+def error_response(
+    source: str, reason: str, total_ms: int, status: int, code: str, param: Optional[str] = None
+) -> PipelineResult:
     """
     组装失败响应。
 
-    功能：error 字段恒存在，成功时才是 None，调用方不必判两种响应形状；
-          同时带上语义化状态码，供路由直接返回。
+    功能：error 字段恒存在，成功时才是 None，调用方不必判两种响应形状；错误带上稳定的
+           `code`（`configs/errors.py` 的白名单）与可选的 `param`，同时带上语义化状态码供路由直接返回。
     应用场景：两个管线在入口阶段失败时调用。
     输入：source — 原始输入；reason — 面向使用者的原因；total_ms — 已耗时；
-          status — HTTP 状态码（入参 422、超限 413、超时 504、上游 502）。
+          status — HTTP 状态码（入参 422、超限 413、超时 504、上游 502）；
+          code — 稳定错误码（必填：每个失败点都得自己声明是哪个码，不给默认值）；
+          param — 出错的入参/字段。
     输出：PipelineResult。
     """
     return PipelineResult(
@@ -115,7 +119,7 @@ def error_response(source: str, reason: str, total_ms: int, status: int = 502) -
             meta=Meta(source=source),
             usage=None,
             timings=Timings(total_ms=total_ms),
-            error=reason,
+            error=ErrorInfo(code=code, message=reason, param=param),
         ),
         status,
     )

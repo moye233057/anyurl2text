@@ -127,6 +127,8 @@ def prepare_from_upload(stream: BinaryIO, file_name: str) -> Tuple[PreparedSourc
                     raise FetchError(
                         f"上传文件过大: 已写入 {written} 字节，超过上限 {settings.MAX_DOWNLOAD_BYTES} 字节",
                         413,
+                        "upload_too_large",
+                        "upload",
                     )
                 sink.write(chunk)
         ext, detector = resolve_extension(target, file_name, None, read_head(target))

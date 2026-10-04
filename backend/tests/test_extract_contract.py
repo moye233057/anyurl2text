@@ -88,6 +88,25 @@ def test_declared_document_formats_extract_text(name):
     assert body["meta"]["degraded"] is False
     assert body["content"].strip(), f"{name} 应抽出非空正文"
 
+def test_failures_carry_a_structured_error_with_a_stable_code():
+    """
+    行为：入口阶段失败时 `error` 是 `{code, message, param}`，`code` 是稳定机器名。
+
+    来源：`configs/errors.py` 的码表 + ADR-0001「error 恒存在」。
+    实测（2026-10-04）：修前 `error` 只是一句中文，前端只能靠字符串匹配分组，改一个字就断。
+    这里用回环地址触发——`ALLOW_PRIVATE_HOSTS` 默认关，422 在发起连接之前就返回，不联网也不花钱。
+    """
+    response = httpx.post(
+        f"{BASE_URL}/extract", json={"url": "http://127.0.0.1/private"}, timeout=TIMEOUT
+    )
+    body = response.json()
+    assert response.status_code == 422
+    assert body["type"] == "error"
+    assert body["error"]["code"] == "download_private_host"
+    assert body["error"]["param"] == "url"
+    assert body["error"]["message"], "面向使用者的文案不能为空"
+
+
 def test_meta_reports_no_limit_hits_for_a_small_input():
     """
     行为：普通输入不谎报命中——`meta.limits_hit` 恒存在且为空列表。

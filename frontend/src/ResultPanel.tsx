@@ -156,7 +156,10 @@ export default function ResultPanel({
 
       {!loading && result && showError && (
         <div className="region-body">
-          <div className="error-box">{result.error}</div>
+          <div className="error-box">
+            <div>{result.error?.message}</div>
+            <code>{result.error?.code}</code>
+          </div>
           <Block title="统计信息">
             <KvGrid rows={buildStatsRows(result)} />
           </Block>

@@ -32,7 +32,7 @@ class ExtractPipeline:
             prepared, download_ms = step3_prepare.prepare_from_url(url)
         except step1_download.FetchError as exc:
             return step6_assemble.error_response(
-                url, str(exc), int((time.monotonic() - started) * 1000), exc.status_code
+                url, str(exc), int((time.monotonic() - started) * 1000), exc.status_code, exc.code, exc.param
             )
         try:
             # ── 步骤 4：按扩展名跑处理器，产出 content（交付文本）与素材清单
@@ -67,7 +67,7 @@ class ExtractPipeline:
             prepared, upload_ms = step3_prepare.prepare_from_upload(stream, file_name)
         except step1_download.FetchError as exc:
             return step6_assemble.error_response(
-                file_name, str(exc), int((time.monotonic() - started) * 1000), exc.status_code
+                file_name, str(exc), int((time.monotonic() - started) * 1000), exc.status_code, exc.code, exc.param
             )
         try:
             # ── 步骤 4：按扩展名跑处理器

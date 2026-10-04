@@ -134,6 +134,19 @@ class Timings(BaseModel):
     model_ms: int = 0
     total_ms: int = 0
 
+class ErrorInfo(BaseModel):
+    """
+    一次失败的结构化说明。
+
+    `code` 是**稳定机器名**（`configs/errors.py` 的 `HARD_FAILURE_CODES`），给程序看、不许改；
+    `message` 是给使用者看的文案，会改。`param` 指出哪个入参或字段出错（`url` / `upload`），
+    没有明确归属时为 null。
+    """
+
+    code: str = Field(..., description="稳定错误码，见 configs/errors.py；是契约的一部分，不随文案改")
+    message: str = Field(..., description="面向使用者的说明，可能随时改措辞")
+    param: Optional[str] = Field(None, description="出错的是哪个入参或字段；无明确归属时为 null")
+
 class ConvertResponse(BaseModel):
     """两个接口统一的响应体。"""
 
@@ -143,7 +156,9 @@ class ConvertResponse(BaseModel):
     meta: Meta
     usage: Optional[Usage] = None
     timings: Timings
-    error: Optional[str] = None
+    error: Optional[ErrorInfo] = Field(
+        None, description="恒存在；成功与降级都是 null，失败时是 {code, message, param}"
+    )
 
 def truncate_content(text: str, limit: int) -> tuple:
     """
