@@ -14,6 +14,7 @@ r"""
 
 预期值来源：`configs/formats.py` 的清单本身 + 造出来的已知字节——不是跑一遍看输出。
 """
+import struct
 import zipfile
 
 import pytest
@@ -28,12 +29,14 @@ from configs.formats import (
     VIDEO_EXTENSIONS,
     WEBPAGE_EXTENSIONS,
 )
+from pipelines.steps.ole_directory import stream_names
 from pipelines.steps.step2_detect import (
     detect_magic,
     detect_zip_flavor,
     extension_from_mime,
     extension_from_name,
     modality_from_extension,
+    read_head,
     resolve_extension,
 )
 from routers.convert.schema import Detector, Modality
@@ -258,6 +261,144 @@ def test_ole_head_defers_the_family_split_to_name_or_content_type(name, mime, ex
     """
     path = write(work_dir, "ole.bin", OLE_HEAD)
     assert resolve_extension(path, name, mime, OLE_HEAD) == expected
+
+
+# ---------- OLE 目录里的流名（容器头之外的第二层依据） ----------
+
+OLE_SECTOR = 512
+OLE_ENTRY_KINDS = {"storage": 1, "stream": 2, "root": 5}
+
+
+def ole_entry(name: str, kind: str = "stream") -> bytes:
+    """造一个 128 字节目录项：识别只读名字与条目类型，其余字段按规范填占位值。"""
+    raw = name.encode("utf-16-le") + b"\x00\x00"
+    entry = bytearray(128)
+    entry[0 : len(raw)] = raw
+    struct.pack_into("<H", entry, 64, len(raw))                       # 名字字节数（含结束符）
+    entry[66] = OLE_ENTRY_KINDS[kind]                                 # 条目类型
+    entry[67] = 1                                                     # 红黑树颜色位
+    struct.pack_into("<III", entry, 68, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF)   # 无左右兄弟、无子
+    struct.pack_into("<I", entry, 116, 0xFFFFFFFE)                    # 起始扇区：本用例不读流内容
+    return bytes(entry)
+
+
+def make_ole(work_dir, name: str, streams: list, split: bool = False):
+    """
+    造一个最小 OLE 复合文档：头（512 字节）+ FAT 扇区 + 目录扇区。
+
+    布局固定为「扇区 0 = FAT，扇区 1 起是目录流」；`split=True` 时把目录拆成两节并让 FAT 链
+    从第 1 节指向第 2 节——每扇区只装 4 个 128 字节目录项，所以第 5 个条目必然落在第二节。
+    """
+    directory = [ole_entry("Root Entry", "root")] + [ole_entry(text) for text in streams]
+    if split:
+        sectors = [b"".join(directory[:4]), b"".join(directory[4:])]
+        while sectors[-1] == b"":
+            sectors.pop()
+    else:
+        sectors = [b"".join(directory)]
+    # 每个扇区都要补齐到整扇区：OLE 里扇区是定长的，截短的目录扇区不是合法容器
+    sectors = [chunk.ljust(OLE_SECTOR, b"\x00") for chunk in sectors]
+
+    fat = [0xFFFFFFFD]                                     # 第 0 节是 FAT 自己
+    for index in range(len(sectors)):
+        fat.append(index + 2 if index + 1 < len(sectors) else 0xFFFFFFFE)
+    fat_sector = b"".join(struct.pack("<I", value) for value in fat).ljust(OLE_SECTOR, b"\xff")
+
+    header = bytearray(OLE_SECTOR)
+    header[0:8] = OLE_HEAD[:8]
+    struct.pack_into("<H", header, 28, 0xFFFE)             # 字节序标记
+    struct.pack_into("<H", header, 30, 9)                  # 扇区大小 = 2^9 = 512
+    struct.pack_into("<H", header, 32, 6)                  # 迷你扇区大小 = 2^6
+    struct.pack_into("<I", header, 44, 1)                  # FAT 占 1 节
+    struct.pack_into("<I", header, 48, 1)                  # 目录流首个扇区号
+    struct.pack_into("<I", header, 56, 4096)               # 迷你流阈值
+    struct.pack_into("<I", header, 60, 0xFFFFFFFE)         # 没有迷你 FAT
+    struct.pack_into("<I", header, 68, 0xFFFFFFFE)         # 没有 DIFAT 链
+    struct.pack_into("<I", header, 76, 0)                  # DIFAT[0] 指向扇区 0
+    for offset in range(80, OLE_SECTOR, 4):
+        struct.pack_into("<I", header, offset, 0xFFFFFFFF)  # 其余 DIFAT 项空闲
+
+    path = work_dir / name
+    path.write_bytes(bytes(header) + fat_sector + b"".join(sectors))
+    return path
+
+
+@pytest.mark.parametrize(
+    ("stream", "expected"),
+    [
+        ("WordDocument", "doc"),
+        ("Workbook", "xls"),
+        ("Book", "xls"),
+        ("PowerPoint Document", "ppt"),
+    ],
+)
+def test_ole_directory_stream_names_split_the_family(stream, expected, work_dir):
+    """
+    行为：OLE 头本身分不出家族，读目录里的流名——WordDocument → doc、Workbook / Book → xls、
+          PowerPoint Document → ppt；此时名字扩展名说了不算。
+
+    来源：ADR-0003「容器格式必须往里看一层，否则完整解析是空头承诺」。
+    预期值来源：ADR-0003 与 `ole_directory.py` 写明的流名映射，不是跑一遍看输出。
+    """
+    path = make_ole(work_dir, "payload.bin", [stream])
+    assert resolve_extension(path, "payload.bin", None, OLE_HEAD) == (expected, Detector.MAGIC)
+
+
+def test_ole_directory_walks_the_whole_fat_chain(work_dir):
+    """
+    行为：目录流跨扇区时后面的扇区也要走到——流名落在第二节目录扇区里照样认得出。
+
+    来源：OLE 规范（头里只有目录流**首节**，后续节靠 FAT 链）+ `ole_directory._directory_bytes`。
+    预期值来源：本用例自己拼的容器布局（5 个条目、每扇区 4 项，所以 Workbook 必在第 2 节）；
+    只看第一节的实现会读不到它、退回扩展名而返回 ole。
+    """
+    path = make_ole(work_dir, "chained.bin", ["Data1", "Data2", "Data3", "Workbook"], split=True)
+    assert resolve_extension(path, "chained.bin", None, OLE_HEAD) == ("xls", Detector.MAGIC)
+
+
+@pytest.mark.parametrize(
+    ("streams", "name", "mime", "expected"),
+    [
+        (["Data"], "a.xls", None, ("xls", Detector.EXTENSION)),
+        (["Data"], "blob", "application/msword", ("doc", Detector.CONTENT_TYPE)),
+        (["Data"], "blob", None, ("ole", Detector.MAGIC)),
+        ([], "a.doc", None, ("doc", Detector.EXTENSION)),
+    ],
+)
+def test_unrecognised_ole_directory_keeps_the_old_fallback(streams, name, mime, expected, work_dir):
+    """
+    行为：目录里没有一个认识的流名、或目录根本读不出时，维持旧退回逻辑
+          （名字扩展名 → Content-Type → 维持 ole）；改名扩展名仍不可信。
+
+    来源：ADR-0003 的既有行为——流名只是**多一层依据**，不许把现在能判对的弄坏。
+    预期值来源：旧行为的映射表（流名认不出时的三条退回路径）。
+    """
+    path = make_ole(work_dir, "ole.bin", streams) if streams else write(work_dir, "ole.bin", OLE_HEAD)
+    assert resolve_extension(path, name, mime, OLE_HEAD) == expected
+
+
+def test_ole_reader_returns_nothing_instead_of_raising(work_dir):
+    """
+    行为：不是 OLE、被截断、空文件时 `stream_names` 返回空列表，绝不抛异常。
+
+    来源：`ole_directory.py` 的约定——识别这一层不许把解析异常带出去（ADR-0003）。
+    预期值来源：三种已知的坏输入，与实现无关。
+    """
+    assert stream_names(write(work_dir, "garbage.bin", PLAIN_TEXT)) == []
+    assert stream_names(write(work_dir, "cut.bin", OLE_HEAD)) == []
+    assert stream_names(write(work_dir, "empty.bin", b"")) == []
+
+
+def test_the_repo_legacy_doc_sample_is_still_judged_doc(fixture_copy):
+    """
+    行为：仓库样例 `legacy.doc`（OLE 头 + 填充，没有可用目录）仍判成 doc——读不出目录就退回扩展名。
+
+    来源：「不许把现在能判对的弄坏」+ 样例生成参数（`make_fixtures.py` 阶段 9 造的是 OLE 头样本，
+    不是真的 Word 文档，所以它走的正是退回分支）。
+    预期值来源：文件名 `.doc`。
+    """
+    path, _ = fixture_copy("legacy.doc")
+    assert resolve_extension(path, path.name, None, read_head(path)) == ("doc", Detector.EXTENSION)
 
 
 @pytest.mark.parametrize(

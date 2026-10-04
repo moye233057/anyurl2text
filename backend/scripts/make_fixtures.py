@@ -21,6 +21,7 @@
     step13_make_merged       含合并单元格的 docx / xlsx / pptx，验证表格格位建模
     step14_make_repeated_images  同一张图被引多次的 docx / pptx / pdf，验证内嵌图按来源部件去重
     step15_make_structured_odt   带合并表格与两级列表的 odt，验证 ODT 按结构抽取
+    step16_make_docx_hyperlinks  含超链接的 docx，验证链接的文字与地址都进交付文本
 
 运行方式：在 backend/ 下执行 python scripts/make_fixtures.py（无参数；`__main__` 只按序号调用各 step）
 使用前注意：
@@ -257,6 +258,30 @@ def _load_font(size: int):
 def _page_lines(font) -> list:
     """按字体可用性选中文或英文正文。"""
     return PAGE_LINES_CJK if font is not None else PAGE_LINES_ASCII
+
+def _add_hyperlink(paragraph, text: str, url: str) -> None:
+    """
+    往段落里追加一个**外部**超链接。
+
+    功能：python-docx 没有公开的 add_hyperlink，所以按 OOXML 手工拼——建一条外部关系拿到
+          rId，再把 `w:hyperlink`（带 r:id）挂到段落末尾。
+    应用场景：阶段 16 造含超链接的 docx；测试要自己造这类文档时也可照这个写法。
+    输入：paragraph — python-docx 段落对象；text — 链接文字（可为空）；url — 目标地址。
+    输出：无。
+    """
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    rel_id = paragraph.part.relate_to(url, RT.HYPERLINK, is_external=True)
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), rel_id)
+    run = OxmlElement("w:r")
+    node = OxmlElement("w:t")
+    node.text = text
+    run.append(node)
+    hyperlink.append(run)
+    paragraph._p.append(hyperlink)
 
 def _draw_page(lines: list, font) -> Image.Image:
     """把若干行文字画成一页白底图。"""
@@ -671,6 +696,27 @@ def step15_make_structured_odt() -> None:
         archive.writestr("styles.xml", ODF_STYLES_XML)
     print(f"[阶段15] 已写入 {target}（3 列 4 行合并表 + 两级列表）")
 
+def step16_make_docx_hyperlinks() -> None:
+    """
+    造一个含超链接的 docx，用于验证「超链接的文字与地址都进交付文本」。
+
+    功能：同一段落里放三条链接——地址 A 写两次（验证按地址去重）、再加一条没有文字的
+          地址 B（验证「没有文字时只给 URL」）；去重后应剩 2 条。
+    应用场景：验证 `docx._hyperlink_lines` 的抽取、去重与 `MAX_LINKS` 截断。
+    输入：无（写 data/hyperlink.docx）。
+    输出：无返回值；文件路径打印到 stdout。
+    """
+    from docx import Document
+
+    document = Document()
+    document.add_paragraph("下面三个超链接里，前两个指向同一个地址。")
+    paragraph = document.add_paragraph()
+    _add_hyperlink(paragraph, "示例站点", "https://example.com/a")
+    _add_hyperlink(paragraph, "同一个地址", "https://example.com/a")
+    _add_hyperlink(paragraph, "", "https://example.com/b")
+    document.save(str(DATA_DIR / "hyperlink.docx"))
+    print(f"[阶段16] 已写入 {DATA_DIR / 'hyperlink.docx'}（3 条链接、去重后 2 条）")
+
 if __name__ == "__main__":
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     # 阶段1：先造图片（后续文档与演示要内嵌它们）→ screenshot.png / photo.png
@@ -703,4 +749,6 @@ if __name__ == "__main__":
     step14_make_repeated_images()
     # 阶段15：结构化 ODT（带合并的表格 + 两级列表）→ structured.odt
     step15_make_structured_odt()
+    # 阶段16：含超链接的 docx（同一地址写两次 + 一条没有文字的链接）→ hyperlink.docx
+    step16_make_docx_hyperlinks()
     print(f"\n全部完成，输出目录：{DATA_DIR}")

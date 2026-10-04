@@ -31,7 +31,7 @@ python -m pytest tests -m model -q   # 贵缝：两条路 content 逐字节一�
    如果这种格式的**模型处理与通用素材读取不同**（例如独立图片要先判型），再在同一个文件里写
    `enhance_<格式>(client, …) -> EnhanceOutcome`；通用情况不用写，`pipelines/processors/reading.py` 的 `enhance_assets()` 已经覆盖。
 2. `backend/pipelines/steps/step4_extract.py` 的 `dispatch()` —— 在对应分组里加一行指向它；有专属模型增强时不用改这里（`enhance()` 会按格式找到 `<格式>.enhance_*`，没有的走通用读素材）。
-3. `backend/configs/formats.py` —— 把扩展名加进对应的格式集合（`IMAGE_EXTENSIONS` 等）；如果是容器格式，`MAGIC_PREFIXES` 里补一行魔数。**容器头常常分不出家族成员**（OLE 里的 doc/xls/ppt、ZIP 里的 docx/xlsx/odt/apk），这种情况还要补一条容器内部指纹表——ZIP 补 `ZIP_ENTRY_FLAVORS` 或 `ODF_EXTENSION_BY_MIMETYPE`，OLE 补 `pipelines/steps/step2_detect.py` 的 `resolve_extension()` 里的分支；漏了这步，新格式会被判成容器本身（`zip` / `ole`），处理器永远进不去（ADR 0003）。
+3. `backend/configs/formats.py` —— 把扩展名加进对应的格式集合（`IMAGE_EXTENSIONS` 等）；如果是容器格式，`MAGIC_PREFIXES` 里补一行魔数。**容器头常常分不出家族成员**（OLE 里的 doc/xls/ppt、ZIP 里的 docx/xlsx/odt/apk），这种情况还要补一条容器内部指纹表——ZIP 补 `ZIP_ENTRY_FLAVORS` 或 `ODF_EXTENSION_BY_MIMETYPE`，OLE 补 `pipelines/steps/ole_directory.py` 的 `STREAM_EXTENSIONS`（目录流名 → 扩展名），并在 `resolve_extension()` 里接上退回分支；漏了这步，新格式会被判成容器本身（`zip` / `ole`），处理器永远进不去（ADR 0003）。
 
 **完成标准**：
 

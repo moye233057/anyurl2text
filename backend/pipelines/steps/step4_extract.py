@@ -58,6 +58,14 @@ def _degrade_reason(ext: str) -> str:
         return "老版 Office 格式需要 LibreOffice 转换器，本机不具备，只能给出文件信息"
     return "没有可用于该格式的纯代码解析路径，只能给出文件信息"
 
+# 系统噪音文件：它们不是任何文档的容器，命中就按降级处理
+NOISE_FILE_NAMES = (".ds_store", "thumbs.db")
+
+def _is_temporary_noise(name: str) -> bool:
+    """这个文件名是不是噪音：Office 临时锁文件（`~$` 前缀）或系统噪音文件（.DS_Store / Thumbs.db）。"""
+    lowered = (name or "").strip().lower()
+    return lowered.startswith("~$") or lowered in NOISE_FILE_NAMES
+
 def extract_file_info(path: Path, reason: str, degrade_code: str, extra_notes: list = None) -> ExtractResult:
     """
     产出降级的基础文件信息（ADR 0003）。
@@ -84,17 +92,26 @@ def extract_file_info(path: Path, reason: str, degrade_code: str, extra_notes: l
         degrade_code=degrade_code,
     )
 
-def dispatch(ext: str, path: Path, ctx: ExtractContext, page_url: str = "") -> ExtractResult:
+def dispatch(ext: str, path: Path, ctx: ExtractContext, page_url: str = "", source_name: str = "") -> ExtractResult:
     """
     按扩展名把文件交给对应的处理器。
 
-    功能：先处理必须降级的类型，再按「文档 / 网页 / 图片 / 压缩包与安装包」分派；
-          认不出的扩展名落到基础文件信息。
+    功能：先拦掉不是文档本体的噪音文件（Office 锁文件与系统噪音文件），再处理必须降级的类型，
+          最后按「文档 / 网页 / 图片 / 压缩包与安装包」分派；认不出的扩展名落到基础文件信息。
     应用场景：`run_extraction()` 调用；加一种格式就在下面的链条里加一行。
     输入：ext — 已识别的小写扩展名；path — 落盘文件；ctx — 处理器上下文；
-          page_url — 网页的最终 URL，用于把相对链接补成绝对链接。
+          page_url — 网页的最终 URL，用于把相对链接补成绝对链接；
+          source_name — 原始文件名（下载落盘名会被改成 `dl_xxxx.docx`，噪音判定要看它）。
     输出：ExtractResult。
     """
+    # 噪音按**原始文件名**判：`~$report.docx` 的扩展名是正常的 docx，落盘后名字却已经被换掉
+    if _is_temporary_noise(source_name) or _is_temporary_noise(path.name):
+        return extract_file_info(
+            path,
+            "这是 Office 锁文件（~$ 前缀）或系统噪音文件（.DS_Store / Thumbs.db），不是文档本体",
+            degrade_code="temporary_lock_file",
+        )
+
     if not ext:
         return extract_file_info(
             path, "无法识别文件类型，只能给出文件信息", degrade_code="unsupported_type"
@@ -171,6 +188,10 @@ def run_extraction(prepared: PreparedSource, prepare_assets: bool) -> Tuple[Extr
     """
     ctx = ExtractContext(work_dir=prepared.path.parent, prepare_assets=prepare_assets)
     started = time.monotonic()
-    result = dispatch(prepared.ext, prepared.path, ctx, page_url=prepared.page_url)
+    result = dispatch(
+        prepared.ext, prepared.path, ctx,
+        page_url=prepared.page_url,
+        source_name=prepared.file_name,
+    )
     parse_ms = int((time.monotonic() - started) * 1000)
     return result, parse_ms

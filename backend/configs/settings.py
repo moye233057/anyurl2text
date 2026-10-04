@@ -39,6 +39,10 @@ DOWNLOAD_CHUNK_BYTES = 65536
 # 不要在任何对外可访问的部署里打开。
 ALLOW_PRIVATE_HOSTS = os.getenv("ALLOW_PRIVATE_HOSTS", "false").strip().lower() in ("1", "true", "yes", "on")
 
+# 是否接受 http:// 源。默认 true = http 与 https 都收，与既有行为完全一致；
+# 置 false 后 http:// 在发起连接之前就被 422 拒掉（码 `download_http_not_allowed`），只收 https。
+ALLOW_HTTP_SOURCE = os.getenv("ALLOW_HTTP_SOURCE", "true").strip().lower() in ("1", "true", "yes", "on")
+
 USER_AGENT = os.getenv(
     "ANYURL2TEXT_USER_AGENT",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",

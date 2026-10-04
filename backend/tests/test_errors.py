@@ -122,6 +122,58 @@ def test_entry_validation_carries_the_documented_code(url, code, param, status):
     assert str(caught.value), "面向使用者的文案不能为空"
 
 
+# ---------- ALLOW_HTTP_SOURCE：只收 https 的开关（默认保持现状） ----------
+
+def test_http_source_can_be_switched_off(monkeypatch):
+    """
+    行为：`ALLOW_HTTP_SOURCE=false` 时 `http://` 带 `download_http_not_allowed` 与 422 被拒，
+          文案里说清怎么放回来；这个码在硬失败白名单里。
+
+    来源：`configs/errors.py` 里该码注明的触发点（`step1_download._assert_safe_url`）
+    + `docs/RUNBOOK.md` 配置项全表的语义。
+    做法：置开关为 false 后直接调 `download()`——判定发生在 DNS 与连接之前，全程不联网。
+    预期值来源：配置项本身的语义与码表，不是跑一遍看输出。
+    """
+    monkeypatch.setattr(step1_download.settings, "ALLOW_HTTP_SOURCE", False)
+    with pytest.raises(step1_download.FetchError) as caught:
+        step1_download.download("http://example.com/x", Path("."))
+    assert caught.value.code == "download_http_not_allowed"
+    assert caught.value.status_code == 422
+    assert caught.value.param == "url"
+    assert "ALLOW_HTTP_SOURCE" in str(caught.value), "文案要告诉使用者怎么放开"
+    assert caught.value.code in errors.HARD_FAILURE_CODES
+
+
+def test_https_still_passes_when_http_is_switched_off(monkeypatch):
+    """
+    行为：开关置 false 只拒 `http://`，`https://` 照旧通过地址判定——不把整条 URL 入口连坐。
+
+    来源：`ALLOW_HTTP_SOURCE` 的语义（只收 https）。
+    做法：把主机判定换成探针，只走到「地址判定」这一层，不 DNS、不连接。
+    预期值来源：`https://example.com/x` 的主机名。
+    """
+    monkeypatch.setattr(step1_download.settings, "ALLOW_HTTP_SOURCE", False)
+    visited = []
+    monkeypatch.setattr(step1_download, "_assert_public_host", lambda host: visited.append(host))
+    step1_download._assert_safe_url("https://example.com/x")
+    assert visited == ["example.com"]
+
+
+def test_http_is_allowed_by_default(monkeypatch):
+    """
+    行为：默认（开关为 true）下 `http://` 不会被这一条拒掉——与改动前的行为完全一致。
+
+    来源：`settings.py` 的默认值 `true`（本项改造的硬要求是「默认保持现状」）。
+    做法：同上，主机判定换探针，不联网；顺带把默认值本身钉住。
+    预期值来源：`ALLOW_HTTP_SOURCE` 的默认值 true。
+    """
+    assert step1_download.settings.ALLOW_HTTP_SOURCE is True, "默认必须是 true"
+    visited = []
+    monkeypatch.setattr(step1_download, "_assert_public_host", lambda host: visited.append(host))
+    step1_download._assert_safe_url("http://example.com/x")
+    assert visited == ["example.com"]
+
+
 # ---------- 第 3 组：模型阶段失败进 meta.model_error ----------
 
 class _FakeLedger:

@@ -48,14 +48,17 @@ def _cell_text(cell) -> str:
     单元格值 → 文本。
 
     功能：空单元格返回空串——openpyxl 的空单元格是 None，直接 str() 会写出字面量
-          "None"，把整列内容污染掉。
+          "None"，把整列内容污染掉；浮点按 15 位有效数字格式化（`str()` 会把二进制误差的
+          长尾整条写出来，0.1+0.2 就成了 0.30000000000000004，那是实现细节不是表里的内容），
+          整数与字符串一律原样不动。
     应用场景：渲染表格时逐单元格调用。
-    输入：cell — 各解析库给出的原始值（可能是 None、数字、日期或字符串）。
+    输入：cell — 各解析库给出的原始值（可能是 None、整数、浮点、日期或字符串）。
     输出：清理后的文本。
     """
     if cell is None:
         return ""
-    return str(cell).replace("\t", " ").replace("\n", " ").strip()
+    text = f"{cell:.15g}" if isinstance(cell, float) else str(cell)
+    return text.replace("\t", " ").replace("\n", " ").strip()
 
 def _sheet_grid(rows: list, merges: list) -> TableGrid:
     """
@@ -138,10 +141,37 @@ def _read_ods(path: Path) -> list:
     data = get_data(str(path))
     return [(name, rows[: limits.MAX_ROWS_TO_READ], ()) for name, rows in data.items()]
 
+# CSV 分隔符嗅探：候选顺序即平局时的优先级，逗号在最前——普通逗号 CSV 的产出因此逐字节不变
+CSV_DELIMITERS = (",", ";", "\t", "|")
+# 只看前若干**非空**行：够判一个文件的方言，又不会被超长文件拖慢
+CSV_SNIFF_LINES = 20
+
+def _sniff_delimiter(text: str) -> str:
+    """
+    在前若干非空行上挑一个 CSV 分隔符。
+
+    功能：逐个候选分隔符解析样本行，只考虑「确实把行列开了」（某行多于 1 列）的候选，
+          在其中选**列数最一致**的那个（一致 = 与出现次数最多的列数相同的行最多）；
+          平局按候选顺序决定（逗号优先），一个都不满足就退回逗号。
+    应用场景：`_read_csv` 读文件前调用一次——分号 / 制表符 / 竖线分隔的 CSV 用默认逗号会读成一列。
+    输入：text — 已解码的 CSV 文本。
+    输出：选中的分隔符，恒为 CSV_DELIMITERS 之一，所以规则是确定性的、不依赖 locale。
+    """
+    sample = [line for line in text.splitlines() if line.strip()][:CSV_SNIFF_LINES]
+    best, best_score = ",", 0
+    for delimiter in CSV_DELIMITERS:
+        counts = [len(row) for row in csv.reader(sample, delimiter=delimiter) if len(row) > 1]
+        if not counts:
+            continue
+        score = max(counts.count(count) for count in set(counts))
+        if score > best_score:
+            best, best_score = delimiter, score
+    return best
+
 def _read_csv(path: Path) -> list:
-    """读 CSV：先按编码探测解码，再交给 csv 解析一次（不二次拼接）。"""
+    """读 CSV：先按编码探测解码，再嗅探分隔符，最后交给 csv 解析一次（不二次拼接）。"""
     text, hits = read_text_file(path)
-    rows = list(islice(csv.reader(io.StringIO(text)), limits.MAX_ROWS_TO_READ))
+    rows = list(islice(csv.reader(io.StringIO(text), delimiter=_sniff_delimiter(text)), limits.MAX_ROWS_TO_READ))
     return [(path.stem or "csv", rows, tuple(hits))]
 
 def extract_excel(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:

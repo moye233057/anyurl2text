@@ -6,7 +6,8 @@
 文件头最可靠但只覆盖容器格式，认不出时先信文件名（URL 路径）里的后缀，最后才用最容易
 撒谎的 Content-Type（CDN 常给 application/octet-stream 这种没信息量的类型）。
 
-容器头只能定到「容器」，还要往里看一层：OLE 头分不出 doc / xls / ppt，
+容器头只能定到「容器」，还要往里看一层：OLE 头读目录里的流名分 doc / xls / ppt
+（读法见 `ole_directory.py`，读不出才退回扩展名与 Content-Type），
 ZIP 头分不出普通压缩包与 docx / xlsx / pptx / odt / ods / odp / apk / ipa 这一族，
 两者都在 resolve_extension 里结合容器内部结构落到具体格式。
 
@@ -36,6 +37,7 @@ from configs.formats import (
     ZIP_ENTRY_FLAVORS,
     ZIP_MACRO_ENTRY,
 )
+from pipelines.steps.ole_directory import legacy_office_extension
 from routers.convert.schema import Detector, Modality
 
 # 复合归档后缀要整体判断，否则 .tar.gz 会被当成 .gz
@@ -188,8 +190,9 @@ def resolve_extension(
 
     功能：按「文件头优先于名字扩展名优先于 Content-Type」定序；
           文件头只认容器格式，认不出时退回另两者；
-          两类容器还要再看一层内部结构——OLE 头靠扩展名或 Content-Type 分
-          doc / xls / ppt，ZIP 靠容器条目指纹分 docx / xlsx / pptx / odt / apk 一族（ADR 0003）。
+          两类容器还要再看一层内部结构——OLE 头读目录流名分 doc / xls / ppt
+          （读不出才退回扩展名与 Content-Type），ZIP 靠容器条目指纹分
+          docx / xlsx / pptx / odt / apk 一族（ADR 0003）。
     应用场景：fetch 落盘后、分派处理器之前调用一次。
     输入：path — 已落盘的文件；name — 原始文件名或 URL；mime — 响应 Content-Type；
           head — 文件前若干字节。
@@ -197,7 +200,10 @@ def resolve_extension(
     """
     magic_ext = detect_magic(head)
     if magic_ext == "ole":
-        # OLE 头无法区分 doc/xls/ppt，交给扩展名或 Content-Type 决定
+        # OLE 头分不出 doc/xls/ppt，先看容器目录里的流名；读不出或不认识才退回名字与 Content-Type
+        ole_ext = legacy_office_extension(path)
+        if ole_ext:
+            return ole_ext, Detector.MAGIC
         name_ext = extension_from_name(name)
         if name_ext in ("doc", "xls", "ppt", "wps"):
             return name_ext, Detector.EXTENSION

@@ -108,6 +108,8 @@ export interface Health {
   /** 抽音轨用的 ffmpeg 由 imageio-ffmpeg 提供；false 表示音频/视频这一类降级 */
   ffmpeg_available: boolean
   allow_private_hosts: boolean
+  /** 是否接受 http:// 源；false 时只收 https，http:// 在发起连接之前就被 422 拒掉 */
+  allow_http_source: boolean
   max_download_bytes: number
   max_content_chars: number
 }

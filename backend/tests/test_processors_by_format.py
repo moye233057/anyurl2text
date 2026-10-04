@@ -20,6 +20,7 @@ import pytest
 
 from configs import errors
 from pipelines.processors.schema import ExtractContext
+from pipelines.steps.step2_detect import extension_from_name
 from pipelines.steps.step4_extract import dispatch
 
 # README「支持哪些输入」里列为「完整解析」的文档格式，每种都有配套样例
@@ -415,6 +416,131 @@ def test_spreadsheet_reports_the_row_limit(ctx, work_dir):
     assert dispatch("csv", path, ctx).limits_hit == ["max_rows_per_sheet"]
 
 
+# ---------- CSV 分隔符嗅探 ----------
+
+CSV_DIALECTS = ((";", "分号"), ("\t", "制表符"), ("|", "竖线"))
+
+
+@pytest.mark.parametrize(("delimiter", "label"), CSV_DIALECTS)
+def test_csv_delimiter_is_sniffed_instead_of_assumed_comma(delimiter, label, ctx, work_dir):
+    """
+    行为：分号 / 制表符 / 竖线分隔的 CSV 也按列渲成制表符表格，而不是被读成一列。
+
+    来源：`excel.py` 模块 docstring「按列位置输出制表符，空列留空；列一错位整张表就读不出
+    对应关系」+ `docs/PIPELINES.md` 的嗅探规则。
+    预期值来源：本用例自己写入的三行两列内容，与实现无关。
+    """
+    path = work_dir / "dialect.csv"
+    path.write_text(f"名称{delimiter}数量\n甲{delimiter}1\n乙{delimiter}2\n", encoding="utf-8")
+    lines = [line for line in dispatch("csv", path, ctx).content.splitlines() if not line.startswith("===")]
+    assert lines == ["名称\t数量", "甲\t1", "乙\t2"], f"{label}分隔的 CSV 被读错了"
+
+
+def test_a_comma_csv_keeps_its_exact_old_output(ctx, work_dir):
+    """
+    行为：逗号 CSV 的产出逐字节不变——平局时逗号优先，且字段里出现的制表符 / 分号 / 竖线
+          不会把列重新切开（它们就是普通字符）。
+
+    来源：`docs/PIPELINES.md` 的嗅探规则「列数 > 1 且各行列数最一致，平局逗号优先」。
+    预期值来源：本用例自己写入的三行内容（字段故意塞进另外三个候选分隔符）。
+    """
+    path = work_dir / "comma.csv"
+    path.write_text("名称,数量\n甲;乙,1\n丙|丁,2\n", encoding="utf-8")
+    assert dispatch("csv", path, ctx).content == (
+        "=== SHEET: comma ===\n名称\t数量\n甲;乙\t1\n丙|丁\t2"
+    )
+
+
+def test_the_comma_sample_keeps_its_output_byte_for_byte(ctx, fixture_copy):
+    """
+    行为：仓库自带的逗号样例 `table.csv` 产出逐字节不变。
+
+    来源：`excel.py`「只有一套表格方言」+ 嗅探规则「平局逗号优先」。
+    预期值来源：样例自身的内容（7 行、每行 5 个逗号字段）与渲染规则（列数取全表最宽——表头
+    的 5 个字段就定下了 5 列，所以末尾空字段仍占列位、留下一个制表符）。
+    """
+    expected = "\n".join(
+        [
+            "=== SHEET: table ===",
+            "货品编号\t名称\t下架原因\t备注\t处理人",
+            "60966496933\t春季外套\t其他\t春节打烊\t",
+            "76623068631\t帆布鞋\t其他\t春节打烊\t张",
+            "98660070537\t保温杯\t质量问题\t批次抽检不合格\t李",
+            "90888143999\t双肩包\t\t正常在售\t",
+            "84172413150\t运动水壶\t其他\t春节打烊\t王",
+            "24217444517\t雨伞\t清仓\t尾货处理\t",
+        ]
+    )
+    assert run("table.csv", ctx, fixture_copy).content == expected
+
+
+def test_float_cells_use_fifteen_significant_digits(ctx, work_dir):
+    """
+    行为：浮点单元格按 15 位有效数字写成文本，不再带二进制误差的长尾；整数与字符串不动。
+
+    来源：CONTEXT「交付文本：源抽取出的文本本身」+ `excel._cell_text` 的约定——
+    `str(0.1 + 0.2)` 给出 `0.30000000000000004`，那是浮点实现细节，不是表里的内容。
+    预期值来源：本用例自己写进 xlsx 的四个值，按 15 位有效数字手算：
+    `0.1 + 0.2` → `0.3`、`1.0` → `1`、`1e20` → `1e+20`、整数 `3` → `3`（不带小数点）。
+    """
+    import openpyxl
+
+    path = work_dir / "floats.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "数值"
+    sheet.append([0.1 + 0.2, 1.0, 1e20, 3])
+    workbook.save(str(path))
+
+    assert dispatch("xlsx", path, ctx).content == "=== SHEET: 数值 ===\n0.3\t1\t1e+20\t3"
+
+
+# ---------- docx 的超链接 ----------
+
+def test_docx_hyperlinks_land_in_content_with_text_and_url(ctx, fixture_copy):
+    """
+    行为：docx 里的超链接按「文字 -> URL」进末尾的 `## 链接` 段，按地址去重，
+          没有文字的那条只给 URL。
+
+    来源：`docs/PIPELINES.md` 的 docx 段 + `processors/html.py` 的链接段写法（同一种输出格式）。
+    预期值来源：样例生成参数（`make_fixtures.py` 阶段 16：同一地址写两次、再一条只有地址的链接）。
+    """
+    content = run("hyperlink.docx", ctx, fixture_copy).content
+    assert "## 链接" in content, "链接段没接进交付文本"
+    assert "示例站点 -> https://example.com/a" in content
+    assert "https://example.com/b" in content, "没有文字的链接也要给出地址"
+    assert content.count("https://example.com/a") == 1, "同一地址应去重"
+
+
+def test_docx_link_limit_is_reported(monkeypatch, ctx, fixture_copy):
+    """
+    行为：链接数超过 `MAX_LINKS` 时截断，并把命中的上界名 `max_links` 报到 `limits_hit`。
+
+    来源：`configs/limits.py` 的 `max_links`（网页与 docx 共用这一条，值只有一处）
+    + ADR-0003「边界要机器可读」。
+    做法：把上限压到 1，用阶段 16 的样例（去重后 2 条）触发——不新增样例、不动全局配置。
+    预期值来源：样例去重后的链接数 2 与上限 1。
+    """
+    from configs import limits
+
+    monkeypatch.setattr(limits, "MAX_LINKS", 1)
+    result = run("hyperlink.docx", ctx, fixture_copy)
+    assert "max_links" in result.limits_hit
+    assert result.content.count(" -> ") == 1, "截断后只应留上限条数的链接行"
+
+
+def test_documents_without_hyperlinks_are_not_touched(ctx, fixture_copy):
+    """
+    行为：没有超链接的文档产出一字不加——`## 链接` 段只在真有链接时出现。
+
+    来源：ADR-0002「两条路逐字节一致」的前提是 `content` 只由抽取决定；给无链接文档
+    塞一个空链接段就等于改了所有 docx 的产出。
+    预期值来源：这两个样例都不含超链接（阶段 2 与阶段 13 的生成参数里没有链接）。
+    """
+    for name in ("report.docx", "merged.docx"):
+        assert "## 链接" not in run(name, ctx, fixture_copy).content
+
+
 def test_the_limit_registry_is_self_consistent():
     """
     行为：`configs/limits.py` 的表自洽——值是正数、行为是三种之一、每条模板都能格式化出文案。
@@ -542,6 +668,45 @@ def test_missing_extension_degrades_to_basic_file_info(ctx, fixture_copy):
     assert result.degraded is True
     assert result.degrade_reason
     assert result.degrade_code == "unsupported_type"
+
+
+# Office 锁文件与系统噪音文件：`~$report.docx` 的扩展名是正常的 docx，内容却不是文档本体。
+NOISE_FILES = ("~$report.docx", ".DS_Store", "Thumbs.db")
+
+
+@pytest.mark.parametrize("name", NOISE_FILES)
+def test_noise_files_degrade_with_their_own_code(name, ctx, work_dir):
+    """
+    行为：Office 锁文件（`~$` 前缀）与系统噪音文件（`.DS_Store` / `Thumbs.db`）不交给任何处理器，
+          直接返回 `temporary_lock_file` 降级产出，原因里写清「不是文档本体」。
+
+    来源：CONTEXT「基础文件信息」+ ADR-0003（降级是能力边界）；机器侧要能分辨「这不是文档本体」
+    与「文档坏了」，所以码表里给它单独一条码，而不是让它落进 `docx_parse_failed` / `unsupported_type`。
+    预期值来源：这几个文件名本身；内容只写几个字节，反正不该被解析。
+    """
+    path = work_dir / name
+    path.write_bytes(b"not a real document")
+    result = dispatch(extension_from_name(name), path, ctx)
+    assert result.content == ""
+    assert result.degraded is True
+    assert result.degrade_code == "temporary_lock_file"
+    assert "不是文档本体" in result.degrade_reason, result.degrade_reason
+    assert result.degrade_code in errors.DEGRADE_CODES
+
+
+def test_noise_is_judged_by_the_original_name_not_the_temp_name(ctx, work_dir):
+    """
+    行为：噪音判定看**原始文件名**——下载落盘名已被 `step3_prepare._align_extension` 换成
+          `dl_xxxx.docx`，只看 `path.name` 的实现在真实下载路径上会漏掉锁文件。
+
+    来源：`step3_prepare` 的落盘名约定（`dl_` 前缀 + 识别出的后缀）。
+    预期值来源：本用例自己写的临时名与原始名；原始名不是噪音时不该误伤（垃圾 docx 仍走解析失败）。
+    """
+    path = work_dir / "dl_0001.docx"
+    path.write_bytes(b"not a real document")
+    locked = dispatch("docx", path, ctx, source_name="~$report.docx")
+    assert locked.degrade_code == "temporary_lock_file"
+    assert dispatch("docx", path, ctx, source_name="report.docx").degrade_code == "docx_parse_failed"
 
 
 # 内容不是对应容器时，每个格式该报的那一个码（`configs/errors.py` 的 DEGRADE_CODES）

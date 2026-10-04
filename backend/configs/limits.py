@@ -41,7 +41,7 @@ MAX_ENTRIES = 500
 # 单张工作表的行数上限；读取时多读一行，用来区分「还有后续行」与「这是最后一行」
 MAX_ROWS_PER_SHEET = 5000
 MAX_ROWS_TO_READ = MAX_ROWS_PER_SHEET + 1
-# 网页链接清单上限
+# 链接清单上限：html 抽 `<a href>`、docx 抽 `w:hyperlink`，两者共用这一条
 MAX_LINKS = 100
 # 文本类（txt/md/json/xml/csv…）读取上限
 MAX_TEXT_BYTES = 20 * 1024 * 1024
@@ -106,8 +106,8 @@ LIMITS: Dict[str, Limit] = {
         "表格跨度展开超过 {value} 个格位，超出的合并跨度按 1 格处理"),
     "max_repeated_slots": Limit(MAX_REPEATED_SLOTS, "count", CLAMP, False, "odf._render_table",
         "ODF 的 number-*-repeated 超过 {value} 次，按 {value} 次处理"),
-    "max_links": Limit(MAX_LINKS, "count", TRUNCATE, False, "html.extract_html",
-        "网页链接超过 {value} 条，清单已截断"),
+    "max_links": Limit(MAX_LINKS, "count", TRUNCATE, False, "html.extract_html / docx.extract_docx",
+        "链接超过 {value} 条，清单已截断"),
     "max_text_bytes": Limit(MAX_TEXT_BYTES, "bytes", TRUNCATE, False, "textfile.read_text_file",
         "文本超过 {value} 字节，超出部分未读取"),
     "preview_first_pages": Limit(PREVIEW_FIRST_PAGES, "count", TRUNCATE, False, "rag_extract._try_catalogue",

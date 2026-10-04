@@ -60,7 +60,7 @@ RAG 抽取不走上表。`POST /rag/extract/file` 由 `pipelines/rag_extract.py`
 
 | 入口 | 关键步骤 |
 |---|---|
-| URL | 去空格并把空格换成 `%20` → 校验协议（只收 http/https）与主机 → 手工逐跳跟随重定向（每跳重新校验协议与地址）→ 流式写盘 |
+| URL | 去空格并把空格换成 `%20` → 校验协议（只收 http/https；`ALLOW_HTTP_SOURCE=false` 时 `http://` 直接 422）与主机 → 手工逐跳跟随重定向（每跳重新校验协议与地址）→ 流式写盘 |
 | 上传 | 分块写进 `upload.bin`，边写边累计字节，与下载共用同一个大小上限 |
 
 安全与边界（不可协商）：DNS 返回的每个地址都判定，命中私网 / 回环 / 链路本地 / 保留 / 组播一律 422；字节数在写入过程中累计，超 `MAX_DOWNLOAD_BYTES`（默认 200MB）立刻中断并删半成品（413）；超时按剩余预算递减（504），不出现「连接与读取各自用满」；TLS 校验恒开，证书问题直接失败。
@@ -73,7 +73,7 @@ RAG 抽取不走上表。`POST /rag/extract/file` 由 `pipelines/rag_extract.py`
 
 | 文件头 | 内部依据 | 落到的格式 |
 |---|---|---|
-| OLE（`D0CF11E0`） | 扩展名或 Content-Type | doc / xls / ppt / wps，都认不出才是 `ole` |
+| OLE（`D0CF11E0`） | 复合文档目录里的流名（`WordDocument` / `Workbook`·`Book` / `PowerPoint Document`）；读不出或不认识才退回扩展名（那一步也认 `wps`）、Content-Type | doc / xls / ppt，都认不出才是 `ole` |
 | ZIP（`PK\x03\x04`） | 中央目录条目指纹 | `word/document.xml`→docx；`xl/workbook.xml`→xlsx（另有 `xl/vbaProject.bin` 则 xlsm）；`ppt/presentation.xml`→pptx；`AndroidManifest.xml`→apk |
 | ZIP | 根级 `mimetype` 条目 | odt / ods / odp |
 | ZIP | `Payload/*.app/Info.plist` | ipa |
@@ -82,13 +82,17 @@ RAG 抽取不走上表。`POST /rag/extract/file` 由 `pipelines/rag_extract.py`
 | `ftyp` | major brand | heic / m4a / mp4 |
 | 文本类（`<` 起头） | 声明与根元素 | xml / svg / html |
 
+OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_directory.py` 按 OLE 规范读目录流——头偏移 30 是扇区大小以 2 为底的对数、偏移 48 是目录流首个扇区号，目录项 128 字节、名字是 UTF-16LE；目录流常跨多个扇区，所以按 FAT 链一节节走（只看第一节会漏掉后面的条目）。任何解析异常都静默退回，识别这一层绝不抛异常。已知边界：头里的 DIFAT 数组只覆盖前 109 个 FAT 扇区，再大且目录流恰在后段的文件可能读不全——那种情况按「读不出」退回扩展名，不会误判成别的家族成员。
+
 认不出扩展名返回 `("", Detector.UNKNOWN)`，不做猜测。得到的 `ext` 决定两件事：响应的 `type`（`modality_from_extension`）与步骤 4 走哪个处理器。
 
 识别结果会被补成临时文件的真实后缀（`_align_extension`）——部分解析库按后缀挑引擎（openpyxl 只认 `.xlsx/.xlsm`，pyexcel-io 按后缀选读取器），不补则识别对了也读不出来。
 
 ### 2.3 抽取（`step4_extract.dispatch()` + `processors/`）
 
-`dispatch()` 是一张扁平分派表，扩展名命中哪一行就走哪个 `extract_*()`：
+`dispatch()` 先按**原始文件名**拦掉不是文档本体的噪音——Office 锁文件（`~$` 前缀）与 `.DS_Store` / `Thumbs.db`：它们有正常的扩展名、内容却不是文档，交给处理器只会得到一句「解析失败」；命中直接返回 `degrade_code="temporary_lock_file"` 的降级产出。判定用的是**原始文件名**而不是落盘名，因为下载落盘名已被 `_align_extension` 换成 `dl_xxxx.docx`。
+
+剩下是一张扁平分派表，扩展名命中哪一行就走哪个 `extract_*()`：
 
 | 分组 | 扩展名 | 处理器 |
 |---|---|---|
@@ -162,7 +166,7 @@ RAG 抽取不走上表。`POST /rag/extract/file` 由 `pipelines/rag_extract.py`
 | 类型 | `content` 是什么 | `extract` 路线 | `understand` 额外做什么 |
 |---|---|---|---|
 | pdf | 逐页文本块（含页标记） | 文字层抽取；无文字层时渲染页面为素材 | 扫描页逐页识别 / 内嵌图批量识读 → `ocr_text` |
-| docx | 段落 + 制表符表格 + 文本框节 | `iter_inner_content()` 按块级顺序 | 内嵌图批量识读 → `ocr_text` |
+| docx | 段落 + 制表符表格 + 文本框节 + 链接段 | `iter_inner_content()` 按块级顺序 | 内嵌图批量识读 → `ocr_text` |
 | pptx | 逐页文本 + 表格 | 逐页递归展开形状 | 页内图片批量识读 → `ocr_text` |
 | 表格族 | 逐表制表符文本 | 各格式原生库读单元格 | 无素材，直接进摘要 |
 | odt / odp | 段落 + 标题 + 表格（制表符）+ 嵌套列表 | 按结构递归读 ZIP 内 `content.xml` | 无素材，直接进摘要 |
@@ -198,6 +202,7 @@ RAG 抽取不走上表。`POST /rag/extract/file` 由 `pipelines/rag_extract.py`
 3. 页数取 `docProps/app.xml` 里的 `<Pages>`——那是保存时的缓存渲染值，读到就在 `notes` 里注明来源，读不到置 `None`。
 4. 文本框（`w:txbxContent` / VML textbox / Word 2010 shape 三类容器）单独成节 `=== 文本框内容 ===`：它们通常锚定浮动位置，硬插进正文会给错阅读顺序，直接丢又会掉信息。
 5. 内嵌图总数由 `a:blip` 计数得到（记的是**引用次数**：同一张图被引 N 次算 N）；`prepare_assets=True` 时按来源关系 id（`r:embed` / `r:link`）去重，把前 `MAX_EMBEDDED_IMAGES` 张**不同的**图经 `related_parts` 取出、转 PNG 落盘成素材。
+6. 超链接：走 `w:hyperlink`（表格与文本框里的也在 body 里，一起收），地址取自 `r:id` 指向的**外部**关系——正文里只留链接文字的话，「这段文字指向哪儿」就丢了；内部跳转（只有 `w:anchor`、没有地址）跳过，与网页那一路跳过 `#` 锚点同一条规矩。按地址去重后截到 `MAX_LINKS`（**复用网页那一条上界**），命中时把 `max_links` 报进 `limits_hit`；输出成末尾的 `## 链接` 段，每行 `文字 -> URL`，没有文字时只给 URL（与 `html.py` 同形）。无链接的文档因此产出一字不变。
 
 `understand`：`reading.enhance_assets()` 批量识读内嵌图 → `meta.ocr_text`。
 
@@ -218,13 +223,15 @@ RAG 抽取不走上表。`POST /rag/extract/file` 由 `pipelines/rag_extract.py`
 
 `extract` 关键步骤：
 
-1. 按扩展名选解析器：`xlsx/xlsm` → openpyxl（先 `read_only=True, data_only=True`，失败退回常规模式）；`xls` → xlrd；`ods` → `pyexcel_ods.get_data`；`csv` → 先 `read_text_file` 探测编码解码，再交给 `csv.reader`。解析异常直接降级。
+1. 按扩展名选解析器：`xlsx/xlsm` → openpyxl（先 `read_only=True, data_only=True`，失败退回常规模式）；`xls` → xlrd；`ods` → `pyexcel_ods.get_data`；`csv` → 先 `read_text_file` 探测编码解码，再嗅探分隔符后交给 `csv.reader`。解析异常直接降级。
 2. 只读可见工作表（`sheet_state == "visible"`）；逐行**边读边停**，读到 `MAX_ROWS_TO_READ=5001` 行即止（多读一行是为了让渲染层能区分「还有后续行」与「这就是最后一行」）。
 3. `_render_rows()` 统一渲染，四种格式只有这一套方言：`=== SHEET: 名 ===` 加制表符分隔的行；列宽从格位网格读（**合并区覆盖的空列也算列宽**，不会再被当空尾列裁掉）；跳过整行全空的行；单表超 `MAX_ROWS_PER_SHEET=5000` 行截断并说明。xlsx / xlsm 的合并区由 `xlsx_merges.py` 从包内 XML 读：`read_only=True` 的 worksheet 没有 `merged_cells`，而只在常规模式读会让两条读取路径对同一文件给出不同 `content`（违反 ADR-0002）。
-4. 空单元格输出空串（openpyxl 的空单元格是 `None`，直接 `str()` 会写出字面量 `None` 污染整列）。
+4. 空单元格输出空串（openpyxl 的空单元格是 `None`，直接 `str()` 会写出字面量 `None` 污染整列）；**浮点**单元格按 15 位有效数字写（`f"{value:.15g}"`）——`str(0.1 + 0.2)` 会写出 `0.30000000000000004` 这种二进制误差长尾，而整数与字符串一律原样不动（整数因此不会平白多出小数点）。
 5. `pages / pages_used` 记工作表数；没有可见内容时写一条 `notes`。
 
 ODS 与 CSV 也在这个文件里：这一族都按行列渲染成同一种文本表格，不必为了名字精确再拆开。
+
+CSV 的分隔符嗅探规则（确定性，实现只在 `excel._sniff_delimiter` 一处）：取前 20 行**非空**行当样本，对 `,` `;` `\t` `|` 四个候选各解一次，只考虑「确实把行列开了」的候选（样本里存在多于 1 列的行）；在其中选**列数最一致**的那个（与出现次数最多的列数相同的行最多），平局按候选顺序决定（逗号优先）；一个都不满足就退回逗号。字段里出现的制表符 / 分号 / 竖线因此只是普通字符，普通逗号 CSV 的产出逐字节不变。
 
 `understand`：本类不产生素材，`_has_model_work()` 靠非空 `content` 放行，直接进步骤 5 摘要。
 
@@ -333,7 +340,7 @@ ODS 与 CSV 也在这个文件里：这一族都按行列渲染成同一种文�
 
 ### 3.12 降级（`extract_file_info()`）
 
-触发条件三选一：扩展名为空（`Detector.UNKNOWN`）、命中老版 Office 集合（doc / ppt / wps，Linux 侧缺的是 LibreOffice 转换器）、`dispatch()` 里没有匹配的分支。
+触发条件四选一：文件名是 Office 锁文件 / 系统噪音文件（`~$` 前缀、`.DS_Store`、`Thumbs.db`，`degrade_code="temporary_lock_file"`）、扩展名为空（`Detector.UNKNOWN`）、命中老版 Office 集合（doc / ppt / wps，Linux 侧缺的是 LibreOffice 转换器）、`dispatch()` 里没有匹配的分支。
 
 产出：`content=""`、`engines=["基础文件信息"]`、`degraded=True`、`degrade_reason` 用中文说清缺的是什么（调用方要能区分「能力边界」与「故障」），文件头十六进制进 `notes`；`type` 为 `file`（只有入口阶段失败才是 `error`），HTTP 200。不写「这是一个…文件」这类模板句进 `content`——机器没法解析，事实全部进 `meta`。
 
@@ -364,7 +371,7 @@ ODS 与 CSV 也在这个文件里：这一族都按行列渲染成同一种文�
 | `MAX_TABLE_ROWS` | 2000 行 | docx 与 odf 的表格渲染上限（**共用一处**，不再各写一份） |
 | `MAX_GRID_EXPANSION` | 200000 | 表格跨度展开的格位总量上限 |
 | `MAX_REPEATED_SLOTS` | 100 | odf：`number-*-repeated` 的重复次数上限，防尾部补位把网格撑爆 |
-| `MAX_LINKS` | 100 条 | 网页链接清单 |
+| `MAX_LINKS` | 100 条 | 网页与 docx 的链接清单 |
 | `TEXT_LAYER_MIN_CHARS` | 30 字 | PDF 文字层判定**阈值**（不是上界） |
 | `MAX_TEXT_BYTES` | 20MB | 文本类读取上限 |
 | `MAX_LONG_EDGE` | 1600 | 送模型前图片长边缩放目标 |

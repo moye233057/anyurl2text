@@ -7,6 +7,8 @@ DOCX 抽取。
   element→对象映射表——那张表要自己保证永远正确，是纯粹多出来的出错面。
 - 图片占位符用中性的 `[图片 N]`（内容级信息），不用 `<img_text>` 这类把引擎实现
   写进正文的标记；识别文本由 understand 放进 meta.ocr_text。
+- 超链接的**地址**也要抽出来：正文里只剩链接文字的话，「这个文字指向哪儿」这条信息就丢了；
+  输出成与网页那一路同形的 `## 链接` 段。
 - 文本框单独成节：它们通常锚定在浮动位置，硬插进正文反而会给出错误的阅读顺序，
   但直接丢掉又会掉信息，所以如实标注成独立一节。
 """
@@ -22,6 +24,7 @@ from PIL import Image
 
 import configs.limits as limits
 import configs.settings as settings
+from pipelines.processors.docx_links import hyperlink_lines
 from pipelines.processors.grid import GridBuilder, fill_from_specs, render_tsv
 from pipelines.processors.schema import EmbeddedAsset, ExtractContext, ExtractResult
 
@@ -199,6 +202,13 @@ def extract_docx(path: Path, ctx: ExtractContext) -> ExtractResult:
     if textboxes:
         result.content += "\n\n=== 文本框内容 ===\n" + "\n---\n".join(textboxes)
         result.notes.append(f"正文之外另有 {len(textboxes)} 个文本框，已单独成节")
+
+    # 链接段与网页那一路同形：末尾一个 `## 链接`，每行 `文字 -> URL`；超上限时只报名字
+    links = hyperlink_lines(document)
+    if links:
+        if len(links) > limits.MAX_LINKS:
+            result.limits_hit.append("max_links")
+        result.content += "\n\n## 链接\n" + "\n".join(links[: limits.MAX_LINKS])
 
     if ctx.prepare_assets:
         assets = _save_embedded_images(document, ctx, result)

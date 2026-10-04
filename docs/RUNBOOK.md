@@ -26,6 +26,7 @@
 | `THINKING_EFFORT` | `high` | 思考模式的推理力度（随请求发成 `reasoning_effort`） | 只在 `THINKING_ENABLED` 打开时才发出去：想更快更省就调低，想更深就调高 |
 | `ANYURL2TEXT_PORT` | `8020` | 后端端口 | 改这里要同步改 `frontend/vite.config.ts` 的代理目标。本机连号：本服务 8020、OCR 8021、ASR 8022 |
 | `ALLOW_PRIVATE_HOSTS` | `false` | 允许下载内网 / 回环地址 | 仅在本机串本地文件服务调试时打开；对外可访问的部署保持 `false` |
+| `ALLOW_HTTP_SOURCE` | `true` | 是否接受 `http://` 源。`false` 时只收 https，`http://` 在发起连接之前就被 422 拒掉（`download_http_not_allowed`）。**默认 `true` 就是既有行为** | 想让传输一律走加密时设 `false`；本机串内网的 HTTP 服务保持 `true` |
 | `OCR_API_URL` | `http://127.0.0.1:8021/ocr-b64` | 本机 Paddle OCR 服务地址（独立图片判型为文字图片时由它读字） | 换了 OCR 服务端口，或部署到别处时 |
 | `ASR_API_URL` | `http://127.0.0.1:8022/asr-b64` | 本机 Qwen3-ASR 服务地址（音频与视频的音轨由它转写） | 换了 ASR 服务端口，或部署到别处时 |
 | `ASR_MAX_AUDIO_SECONDS` | 600 | 送转写的音轨时长上限；超过就跳过并写进 `meta.notes` | 想转写更长录音时。**先把 ASR 服务的 `max_new_tokens` 调大**，否则上游会把尾部静默丢掉 |
@@ -71,7 +72,7 @@
 | 常量 | 取值 | 所在文件 | 作用 |
 |---|---|---|---|
 | `MAX_ENTRIES` | 500 | `backend/configs/limits.py` | `content` 里最多列出的压缩包条目数，超出只报数量 |
-| `MAX_LINKS` | 100 | `backend/configs/limits.py` | 网页链接清单上限，防止导航区把正文淹掉 |
+| `MAX_LINKS` | 100 | `backend/configs/limits.py` | 网页与 docx 的链接清单上限，防止导航区把正文淹掉 |
 | `MAX_ROWS_PER_SHEET` | 5000 | `backend/configs/limits.py` | 单张表最多渲染的行数 |
 | `MAX_ROWS_TO_READ` | 5001（`MAX_ROWS_PER_SHEET + 1`） | `backend/configs/limits.py` | 读取上限比渲染上限多一行，用来区分「还有后续行」与「这是最后一行」 |
 | `MAX_TABLE_ROWS` | 2000 | `backend/configs/limits.py` | 单个表格最多渲染的行数（docx 与 odf 共用这一处，不再各写一份） |
@@ -103,7 +104,7 @@ python scripts/make_fixtures.py
 
 输出到 `backend/data/`，与随仓库提供的文本类样例同级：`plain.txt`、`table.csv`、`sample.json`、`feed.xml`、`page.html`、`sample.rtf`、`notes.md` 这 7 个是**仓库自带的手写样例**，脚本既不生成也不覆盖它们（`notes.md` 还是 `/extract` 验收用例的必需样例）。需要后端依赖已安装（脚本用到 python-docx / python-pptx / openpyxl / pymupdf / pillow）。
 
-生成的东西：带表格与内嵌图的 docx、含空单元格的 xlsx、六页 pptx、**含合并单元格的 docx / xlsx / pptx（`merged.*`，横向与纵向各一处）**、**同一张图被引 3 次的 docx / pptx / pdf（`repeated.*`，另有一张只引 1 次）**、**带合并表格与两级列表的 `structured.odt`**、十页有文字层的 PDF、**三页无文字层的扫描件**、odt、odp、压缩包、APK 结构样本、老版 `.doc` 头样本、16kHz 单声道 wav、由它封装的 mp4。
+生成的东西：带表格与内嵌图的 docx、含空单元格的 xlsx、六页 pptx、**含合并单元格的 docx / xlsx / pptx（`merged.*`，横向与纵向各一处）**、**同一张图被引 3 次的 docx / pptx / pdf（`repeated.*`，另有一张只引 1 次）**、**带合并表格与两级列表的 `structured.odt`**、**含超链接的 `hyperlink.docx`（同一地址写两次 + 一条没有文字的链接，验证链接去重与截断）**、十页有文字层的 PDF、**三页无文字层的扫描件**、odt、odp、压缩包、APK 结构样本、老版 `.doc` 头样本、16kHz 单声道 wav、由它封装的 mp4。
 
 `.apk` 与 `.doc` 只是**结构样本**，用来验证类型识别与降级分支，不是真的安装包与 Word 文档。
 音视频样例是一段**正弦音、没有说话声**，只用于验证结构信息与「抽音轨 → 送本机 ASR」这条链；要验收转写质量请自备一段真实录音。
@@ -213,6 +214,11 @@ pip install imageio-ffmpeg
 ### 下载失败，说命中内网或保留地址
 
 这是 SSRF 防护在工作。要串本机起的本地文件服务时，把 `ALLOW_PRIVATE_HOSTS` 临时设为 `true`；对外可访问的部署保持 `false`。
+
+### 下载失败，说「只允许 https」
+
+`ALLOW_HTTP_SOURCE` 被设成了 `false`。它默认是 `true`（http 与 https 都收，与既有行为一致）；
+要放回 `http://` 就把它设回 `true` 并重启（改 `.env` 不触发自动重载，见第 6 节）。
 
 ### 请求返回 413
 

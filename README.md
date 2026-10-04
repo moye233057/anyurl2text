@@ -66,14 +66,14 @@ python scripts/make_fixtures.py   # 输出到 backend/data/
 
 | 类别 | 格式 | 处理 |
 |---|---|---|
-| 文档 | pdf、docx、pptx、xlsx、xlsm、xls、ods、odt、odp、rtf、csv、txt、md、markdown、json、xml | 完整解析（版面顺序、表格、文本框、内嵌图位置） |
+| 文档 | pdf、docx、pptx、xlsx、xlsm、xls、ods、odt、odp、rtf、csv、txt、md、markdown、json、xml | 完整解析（版面顺序、表格、文本框、内嵌图位置、docx 超链接） |
 | 网页 | html、htm | 标题 + 摘要 + 正文 + 去重链接 |
 | 图片 | png、jpg、jpeg、gif、bmp、tif、tiff、webp、heic、heif、ico、svg | 结构信息（尺寸 / 格式 / 色彩模式 / 帧数 / EXIF） |
 | 音频 | mp3、wav、aac、flac、ogg、wma、m4a | 结构信息（时长 / 采样率 / 声道 / 音轨格式） |
 | 视频 | mp4、avi、mkv、mov、wmv、flv、webm、mpeg、mpg | 同上，报的是它音轨的参数 |
 | 压缩包 | zip、tar、gz、tgz、bz2、tbz2、xz、txz、7z、rar | 条目清单（**不解压内容**），识别密码保护 |
 | 安装包 | apk、ipa、exe | 文件头 + 容器条目 + APK/IPA 结构指纹 |
-| **降级** | 老版 Office（doc/ppt/wps） | 只返回文件类型与大小，`meta.degraded` 与 `degrade_reason` 说明缺的是什么 |
+| **降级** | 老版 Office（doc/ppt/wps） | 只返回文件类型与大小，`meta.degraded` 与 `degrade_reason` 说明缺的是什么；Office 锁文件（`~$` 前缀）与 `.DS_Store` / `Thumbs.db` 这类噪音文件同样判为「不是文档本体」（`degrade_code="temporary_lock_file"`） |
 
 音频与视频的语音转写要本机另起一个 ASR 服务（`Individual/qwen3-asr`，默认 `http://127.0.0.1:8022`）；
 视频与 m4a/aac/wma 这些容器还要先抽音轨，用 `imageio-ffmpeg` 自带的 ffmpeg，**不要求系统装 ffmpeg**——

@@ -11,6 +11,9 @@
 这三条是「服务接受用户可控 URL」形态下的必答题：任何为「提高成功率」放松它们的改动
 都应被拒绝——一次 SSLError 之后把 verify 关掉、或干脆不查内网地址，都会把服务变成
 内网探测器。
+
+另有一个方向相反的开关 `ALLOW_HTTP_SOURCE`（默认 `true`，即与既有行为一致）：置 `false`
+后只收 https，`http://` 在发起连接之前就被 422 拒掉（码 `download_http_not_allowed`）。
 """
 import ipaddress
 import socket
@@ -28,6 +31,12 @@ import configs.settings as settings
 from configs.log_config import logger
 
 REDIRECT_STATUS = (301, 302, 303, 307, 308)
+# 受限地址段的判定字段：内网 / 回环 / 链路本地 / 保留 / 组播 / 未指定，任一命中即拒绝
+RESTRICTED_IP_FLAGS = ("is_private", "is_loopback", "is_link_local", "is_reserved", "is_multicast", "is_unspecified")
+
+def _is_restricted(ip) -> bool:
+    """这个地址是不是受限段。清单见 `RESTRICTED_IP_FLAGS`（ADR 0005 的第一条）。"""
+    return any(getattr(ip, flag) for flag in RESTRICTED_IP_FLAGS)
 
 class FetchError(Exception):
     """
@@ -80,23 +89,18 @@ def _assert_public_host(host: str) -> None:
             ip = ipaddress.ip_address(info[4][0])
         except ValueError:
             continue
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_reserved
-            or ip.is_multicast
-            or ip.is_unspecified
-        ):
+        if _is_restricted(ip):
             raise FetchError(f"拒绝访问内网或保留地址: {host} -> {ip}", 422, "download_private_host", "url")
 
 def _assert_safe_url(url: str) -> None:
-    """校验协议与主机，供每一跳复用。"""
+    """校验协议、http 开关与主机，供每一跳复用。"""
     parsed = urlsplit(url)
     if parsed.scheme not in ("http", "https"):
         raise FetchError(f"只支持 http/https，收到: {parsed.scheme or '(空)'}", 422, "download_scheme_unsupported", "url")
     if not parsed.hostname:
         raise FetchError("URL 缺少主机名", 422, "download_host_missing", "url")
+    if parsed.scheme == "http" and not settings.ALLOW_HTTP_SOURCE:
+        raise FetchError("只允许 https；如需放开 http 请设 ALLOW_HTTP_SOURCE=true", 422, "download_http_not_allowed", "url")
     _assert_public_host(parsed.hostname)
 
 def _budgeted_timeout(deadline: float) -> httpx.Timeout:

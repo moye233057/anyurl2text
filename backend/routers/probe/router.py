@@ -45,6 +45,8 @@ def health() -> dict:
         # 抽音轨是可选依赖（imageio-ffmpeg）：没装时音视频这一类降级，其余格式不受影响
         "ffmpeg_available": bool(settings.FFMPEG_EXE),
         "allow_private_hosts": settings.ALLOW_PRIVATE_HOSTS,
+        # 默认 true：http 与 https 都收；false 时只收 https（http:// 在连接之前被 422 拒掉）
+        "allow_http_source": settings.ALLOW_HTTP_SOURCE,
         "max_download_bytes": settings.MAX_DOWNLOAD_BYTES,
         "max_content_chars": settings.MAX_CONTENT_CHARS,
     }
