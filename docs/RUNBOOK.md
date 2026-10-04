@@ -168,6 +168,7 @@ pytest 的缓存是关掉的（`backend/pytest.ini` 里的 `-p no:cacheprovider`
 | `capability_utils` | 25 | 解码顺序、峰谷计价、账本累计 |
 | `capability_structure` | 9 | 依赖方向、单文件预算、扩展名覆盖、上界值、前端契约镜像 |
 | `capability_rag` | 2 | RAG 口自己的 `limits_hit` |
+| `capability_understand` | 16 | 进程内 + 假客户端：两条路 `content` 逐字节一致（11 种文档格式逐格式）、模型产出只进 `summary`/`meta`、记账、模型失败通道、跳过模型 |
 
 ```powershell
 E:\miniconda\envs\multimodal\python.exe -m pytest tests -m capability_epub -v          # 只跑 EPUB 这一个能力域
