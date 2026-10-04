@@ -328,7 +328,8 @@ def test_grid_invariant_holds_for_a_real_merged_docx(fixture_copy):
 
     path, _ = fixture_copy("merged_tail.docx")
     table = Document(str(path)).tables[0]
-    grid = fill_from_specs(GridBuilder(), [docx_processor._row_specs(row) for row in table.rows])
+    rows = docx_processor._row_elements(table._tbl)
+    grid = fill_from_specs(GridBuilder(), [docx_processor._row_specs(row, table) for row in rows])
     assert check_grid(grid) == [], f"网格不自洽：{check_grid(grid)}"
 
 
@@ -893,6 +894,101 @@ def test_odf_trailing_empty_cells_do_not_consume_the_slot_budget(monkeypatch, ct
     result = dispatch("odt", path, ctx)
     assert "max_grid_slots" not in result.limits_hit, result.limits_hit
     assert "第3行" in result.content, result.content
+
+
+# ---------- 单元格里的嵌套表 / 内容控件（w:sdt） ----------
+
+@pytest.mark.capability_table
+def test_nested_table_text_survives_in_its_cell(ctx, work_dir):
+    """
+    行为：单元格里再嵌一张表时，嵌套表的文字进正文（每个嵌套行写成 `a / b`），外层列位仍是 2 列。
+
+    来源：`05-对标现状对比.md` 记的「DOCX 嵌套表格文本丢失」——旧实现按 `tc.p_lst` 只取单元格的
+          直属段落，而 python-docx 在嵌套表两侧插的空段落正好占掉那些位置，嵌套表一个字都读不到。
+    预期值来源：本用例写外层 1×2 表、右格嵌 2×2 表（内甲/内乙、内1/内2），形状即预期。
+    """
+    from docx import Document
+
+    path = work_dir / "nested.docx"
+    document = Document()
+    outer = document.add_table(rows=1, cols=2)
+    outer.cell(0, 0).text = "外格"
+    inner = outer.cell(0, 1).add_table(rows=2, cols=2)
+    for row_index, values in enumerate((("内甲", "内乙"), ("内1", "内2"))):
+        for column_index, value in enumerate(values):
+            inner.cell(row_index, column_index).text = value
+    document.save(str(path))
+
+    result = dispatch("docx", path, ctx)
+    assert "内甲 / 内乙 内1 / 内2" in result.content, f"嵌套表的文字没进正文：{result.content!r}"
+    lines = [line for line in result.content.splitlines() if "\t" in line]
+    assert {line.count("\t") for line in lines} == {1}, f"外层仍是 2 列：{lines}"
+
+
+@pytest.mark.capability_table
+def test_table_row_wrapped_in_content_control_is_not_dropped(ctx, work_dir):
+    """
+    行为：被 `w:sdt/w:sdtContent` 包住的表行照样渲染——Word 的「重复表行内容控件」就是这个形状。
+
+    来源：同审计；python-docx 的 `table.rows` 只取 `w:tbl` 的**直属** `w:tr`（本用例实测：XML 里
+          1 个直属 `w:tr` + 1 个 `w:sdt`，`table.rows` 只报 1 行）。
+    预期值来源：本用例写 2 行 2 列、把第 2 行包进 `w:sdt`，所以两行的文字都要在、且列数一致。
+    """
+    from docx import Document
+    from docx.oxml import OxmlElement
+
+    path = work_dir / "sdt_row.docx"
+    document = Document()
+    table = document.add_table(rows=2, cols=2)
+    for row_index, values in enumerate((("头甲", "头乙"), ("正1", "正2"))):
+        for column_index, value in enumerate(values):
+            table.cell(row_index, column_index).text = value
+    row = table.rows[1]._tr
+    container = OxmlElement("w:sdt")
+    content = OxmlElement("w:sdtContent")
+    table._tbl.replace(row, container)
+    container.append(content)
+    content.append(row)
+    document.save(str(path))
+
+    result = dispatch("docx", path, ctx)
+    assert "正1\t正2" in result.content, f"被内容控件包住的行丢了：{result.content!r}"
+    lines = [line for line in result.content.splitlines() if "\t" in line]
+    assert {line.count("\t") for line in lines} == {1}, lines
+
+
+@pytest.mark.capability_document
+def test_paragraph_inside_content_control_reaches_the_text(ctx, work_dir):
+    """
+    行为：单元格里被 `w:sdt` 包住的段落照样进正文。
+
+    来源：同审计——旧实现按 `tc.p_lst` 取单元格的直属段落（本用例实测取到 **0 段**）。
+    预期值来源：本用例写 1×1 表、把「控件里的段落」放进 `w:sdt/w:sdtContent`。
+    """
+    from docx import Document
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    path = work_dir / "sdt_paragraph.docx"
+    document = Document()
+    table = document.add_table(rows=1, cols=1)
+    cell = table.cell(0, 0)._tc
+    for paragraph in list(cell.findall(qn("w:p"))):
+        cell.remove(paragraph)
+    container = OxmlElement("w:sdt")
+    content = OxmlElement("w:sdtContent")
+    paragraph = OxmlElement("w:p")
+    run = OxmlElement("w:r")
+    text = OxmlElement("w:t")
+    text.text = "控件里的段落"
+    run.append(text)
+    paragraph.append(run)
+    content.append(paragraph)
+    container.append(content)
+    cell.append(container)
+    document.save(str(path))
+
+    assert "控件里的段落" in dispatch("docx", path, ctx).content
 
 
 # ---------- 内嵌图：同一张图被引多次 ----------

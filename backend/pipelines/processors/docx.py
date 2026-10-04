@@ -49,12 +49,86 @@ def _textbox_texts(document: "Document") -> list:
             texts.append("\n".join(paragraphs))
     return texts
 
-def _row_specs(row) -> list:
+def _row_elements(tbl) -> list:
+    """
+    表格的行元素，按文档顺序——含被 `w:sdt` 包着的行。
+
+    为什么不能直接用 python-docx 的 `table.rows`：它取的是 `w:tbl` 的**直属** `w:tr`，
+    而 Word 的「重复表行内容控件」把行包在 `w:sdt/w:sdtContent` 里，那些行会**整行消失**。
+    （实测过：改动前那份文档的行一个都没进正文。）
+    应用场景：`_row_specs` / `_header_rows` / `_nested_table_text` 三处取行。
+    输入：tbl — `w:tbl` 元素。
+    输出：`w:tr` 元素列表。
+    """
+    rows = []
+    for child in tbl:
+        if child.tag == qn("w:tr"):
+            rows.append(child)
+        elif child.tag == qn("w:sdt"):
+            content = child.find(qn("w:sdtContent"))
+            if content is not None:
+                rows.extend(node for node in content if node.tag == qn("w:tr"))
+    return rows
+
+def _nested_table_text(tbl) -> str:
+    """
+    格内嵌套表的文字。
+
+    功能：逐行把格文字用 ` / ` 连起来、行与行用空格连——本仓正文方言把换行压成空格
+           （`_cell_text` 结尾的 `re.sub(r"\\s+", " ", ...)`），所以这里也不引入新记号。
+    为什么必须取：`w:tc` 里的 `w:tbl` 是**正常内容**，只看 `w:tc` 的直属段落会让整块文字消失。
+    应用场景：`_cell_text` 遇到 `w:tc` 里的 `w:tbl` 时调用（可递归任意层）。
+    输入：tbl — `w:tbl` 元素。
+    输出：嵌套表的文字；空表返回空串。
+    """
+    lines = []
+    for row in _row_elements(tbl):
+        cells = [_cell_text(tc) for tc in row.findall(qn("w:tc"))]
+        if any(cells):
+            lines.append(" / ".join(cells))
+    return " ".join(lines)
+
+def _cell_text(tc) -> str:
+    """
+    单元格文字：段落取文本、`w:sdt` 拆壳、**格内嵌套表也取**，最后把空白压成单空格。
+
+    与旧实现（`"\\n".join(paragraph.text for paragraph in tc.p_lst)`）的差别就在后两条：
+    `tc.p_lst` 只认直属 `w:p`，内容控件里的段落与格内嵌套表都被跳过。
+    输入：tc — `w:tc` 元素。
+    输出：压过空白的单元格文字。
+    """
+    parts: list = []
+    for child in tc:
+        if child.tag == qn("w:p"):
+            parts.append("".join(node.text or "" for node in child.iter(qn("w:t"))))
+        elif child.tag == qn("w:tbl"):
+            parts.append(_nested_table_text(child))
+        elif child.tag == qn("w:sdt"):
+            content = child.find(qn("w:sdtContent"))
+            if content is not None:
+                for node in content:
+                    if node.tag == qn("w:p"):
+                        parts.append("".join(text.text or "" for text in node.iter(qn("w:t"))))
+                    elif node.tag == qn("w:tbl"):
+                        parts.append(_nested_table_text(node))
+    return re.sub(r"\s+", " ", " ".join(parts)).strip()
+
+def _row_specs(row, table) -> list:
     """一行的格位规格：[(文本, 横向跨度, 是否纵向继续格)]，行首缺格补空。"""
-    specs = [("", 1, False) for _ in range(row.grid_cols_before)]
-    for tc in row._tr.tc_lst:
-        text = re.sub(r"\s+", " ", "\n".join(paragraph.text for paragraph in tc.p_lst)).strip()
-        specs.append((text, tc.grid_span or 1, tc.vMerge not in (None, "restart")))
+    tr_pr = row.find(qn("w:trPr"))
+    before = 0
+    if tr_pr is not None:
+        node = tr_pr.find(qn("w:gridBefore"))
+        if node is not None:
+            try:
+                before = int(node.get(qn("w:val")) or 0)
+            except ValueError:
+                before = 0
+    specs = [("", 1, False) for _ in range(before)]
+    for tc in row.findall(qn("w:tc")):
+        # `tc` 是 `CT_Tc` 元素：`grid_span` / `vMerge` 是 python-docx 在 XML 层给的属性
+        # （不要换成 `_Cell` 包装——那个类没有 vMerge）
+        specs.append((_cell_text(tc), tc.grid_span or 1, tc.vMerge not in (None, "restart")))
     return specs
 
 def _header_rows(table) -> int:
@@ -69,8 +143,8 @@ def _header_rows(table) -> int:
     输出：标了表头的行数（可能是 0）。
     """
     count = 0
-    for row in table.rows:
-        tr_pr = row._tr.trPr
+    for row in _row_elements(table._tbl):
+        tr_pr = row.find(qn("w:trPr"))
         if tr_pr is not None and tr_pr.find(qn("w:tblHeader")) is not None:
             count += 1
     return count
@@ -85,9 +159,9 @@ def _render_table(table) -> tuple:
     输入：table — python-docx 的表格对象。
     输出：(制表符分隔的多行文本, 命中的上界名列表, 源标出的表头行数)；合并区文本只出现一次、覆盖位占列位。
     """
-    total_rows = len(table.rows)
+    total_rows = len(_row_elements(table._tbl))
     builder = GridBuilder()
-    specs_by_row = [_row_specs(row) for row in islice(table.rows, limits.MAX_TABLE_ROWS)]
+    specs_by_row = [_row_specs(row, table) for row in islice(_row_elements(table._tbl), limits.MAX_TABLE_ROWS)]
     lines = render_tsv(fill_from_specs(builder, specs_by_row), limits.MAX_TABLE_ROWS)
     hits = []
     if total_rows > limits.MAX_TABLE_ROWS:
