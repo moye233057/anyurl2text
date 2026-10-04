@@ -83,6 +83,7 @@ def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
     images_total = 0
     assets = []
     seen = set()
+    hits = []
     for slide_index, slide in enumerate(presentation.slides, start=1):
         blocks = []
         for shape in _walk_shapes(slide.shapes):
@@ -104,8 +105,8 @@ def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
                     continue
                 # 上限只在新图真的存不下时才算命中：剩下的全是重复引用就不是命中
                 if len(assets) >= settings.MAX_EMBEDDED_IMAGES:
-                    if "max_embedded_images" not in result.limits_hit:
-                        result.limits_hit.append("max_embedded_images")
+                    if "max_embedded_images" not in hits:
+                        hits.append("max_embedded_images")
                     continue
                 # 先记来源再落盘：同一张图只试一次，转码失败也不回头重试 N 遍
                 seen.add(fingerprint)
@@ -135,4 +136,5 @@ def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
         images=images_total,
         images_used=len(assets),
         assets=assets,
+        limits_hit=hits,
     )

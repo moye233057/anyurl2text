@@ -441,6 +441,27 @@ def test_spreadsheet_reports_the_row_limit(ctx, work_dir):
     assert dispatch("csv", path, ctx).limits_hit == ["max_rows_per_sheet"]
 
 
+@pytest.mark.capability_limits
+def test_pptx_reports_the_image_limit_instead_of_failing(monkeypatch, asset_ctx, fixture_copy):
+    """
+    行为：PPTX 的不同内嵌图超过名额时，命中名字进 `limits_hit`，抽取照常完成而不是崩。
+
+    来源：`configs/limits.py` 的 `max_embedded_images` + 「命中上界必须机器可读」。
+    预期值来源：样例 `repeated.pptx` 的生成参数（阶段 14：photo 被引 2 次 + screenshot 1 次，
+               即 2 张**不同**的图）与把上限压到 1。
+    实测：2026-10-04 审计查出的真缺陷——修前这里抛 `NameError`（`pptx.py` 引用了那时还不存在的
+    `result`），是「崩」而不是「丢内容」；判定这条是否还有效，把上限压到 1 跑一遍即可。
+    """
+    from configs import settings
+
+    monkeypatch.setattr(settings, "MAX_EMBEDDED_IMAGES", 1)
+    result = run("repeated.pptx", asset_ctx, fixture_copy)
+    assert not result.degraded, result.degrade_reason
+    assert "max_embedded_images" in result.limits_hit
+    assert result.images_used == 1
+    assert result.content.strip(), "命中上限不该影响正文"
+
+
 # ---------- CSV 分隔符嗅探 ----------
 
 CSV_DIALECTS = ((";", "分号"), ("\t", "制表符"), ("|", "竖线"))
