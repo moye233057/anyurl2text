@@ -162,7 +162,7 @@ pytest 的缓存是关掉的（`backend/pytest.ini` 里的 `-p no:cacheprovider`
 | `capability_links` | 3 | 链接是否进交付文本、去重与上限 |
 | `capability_epub` | 8 | spine 顺序、章节标记、内部引用消歧、CSS 不进正文 |
 | `capability_degrade` | 18 | 降级码是不是那一个、HTTP 仍是 200 |
-| `capability_limits` | 7 | 命的哪条上界、文案是否来自同一模板 |
+| `capability_limits` | 8 | 命的哪条上界、文案是否来自同一模板 |
 | `capability_errors` | 14 | 码表白名单、`error` 对象、模型失败通道、`internal` 兜底 |
 | `capability_http` | 13 | 真实服务上的代表格式 + 契约形状（**只抽查代表，不重复进程内矩阵**） |
 | `capability_utils` | 25 | 解码顺序、峰谷计价、账本累计 |
