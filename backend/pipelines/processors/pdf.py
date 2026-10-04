@@ -32,16 +32,28 @@ def _page_text(page: "pymupdf.Page") -> str:
     return "\n".join(item[2] for item in items)
 
 def _save_embedded_images(doc: "pymupdf.Document", pages: int, ctx: ExtractContext) -> list:
-    """把前若干张内嵌图落盘成 PNG 素材，返回素材列表。"""
+    """
+    把前若干张内嵌图落盘成 PNG 素材，返回素材列表。
+
+    功能：按 xref 去重——同一个图像对象出现在 N 页上只落一次盘，
+           `MAX_EMBEDDED_IMAGES` 也因而记在**不同的图**上，跨页重复引用不会挤掉后面的图。
+    应用场景：有文字层的 PDF 在 `prepare_assets=True` 时调用（扫描件走整页渲染，不经过这里）。
+    输入：doc — 已打开的 PyMuPDF 文档；pages — 页数；ctx — 抽取上下文。
+    输出：EmbeddedAsset 列表，数量不超过 MAX_EMBEDDED_IMAGES 且文件互不相同。
+    """
     assets = []
-    used = 0
+    seen = set()
     for page_index in range(pages):
-        if used >= settings.MAX_EMBEDDED_IMAGES:
+        if len(assets) >= settings.MAX_EMBEDDED_IMAGES:
             break
         for info in doc[page_index].get_images(full=True):
-            if used >= settings.MAX_EMBEDDED_IMAGES:
+            if len(assets) >= settings.MAX_EMBEDDED_IMAGES:
                 break
             xref = info[0]
+            if xref in seen:
+                continue
+            # 先记来源再落盘：同一张图只试一次，转码失败也不回头重试 N 遍
+            seen.add(xref)
             try:
                 pixmap = pymupdf.Pixmap(doc, xref)
                 if pixmap.n - pixmap.alpha >= 4:
@@ -50,13 +62,12 @@ def _save_embedded_images(doc: "pymupdf.Document", pages: int, ctx: ExtractConte
                 pixmap.save(str(target))
             except Exception:
                 continue
-            used += 1
             assets.append(
                 EmbeddedAsset(
                     kind="image",
                     label=f"第{page_index + 1}页内嵌图{xref}",
                     path=target,
-                    order=used,
+                    order=len(assets) + 1,
                 )
             )
     return assets

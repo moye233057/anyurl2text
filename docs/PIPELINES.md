@@ -185,7 +185,7 @@ RAG 抽取不走上表。`POST /rag/extract/file` 由 `pipelines/rag_extract.py`
 5. `prepare_assets=False`（extract 路）：只加一条说明 `notes`，不做任何渲染。
 6. `prepare_assets=True`（understand 路）分两种互斥情况：
    - **扫描件**（无文字层且 `RENDERED_PAGE_OCR_ENABLED`）：渲染前 `min(页数, RENDERED_PAGE_MAX)` 页为 PNG（`RENDERED_PAGE_DPI`，默认 150），`pages_used` 记为已渲染页数。**不再抽内嵌图**——整页渲染已覆盖页面上的图，两条都走会让同一页文字被识别两遍、付两份钱。
-   - **有文字层**：抽前 `MAX_EMBEDDED_IMAGES` 张内嵌图（xref → PNG，`images_used` 记数）。
+   - **有文字层**：按 xref 去重后取前 `MAX_EMBEDDED_IMAGES` 张**不同的**内嵌图（xref → PNG，`images_used` 记数）——同一个图像对象出现在 N 页上只落一次盘。
 
 `understand`：走 `reading.enhance_assets()`，页面图逐页识别（含空白页预检与切半重试）、内嵌图一次性批量识读，两者按素材顺序拼进 `meta.ocr_text`。
 
@@ -197,7 +197,7 @@ RAG 抽取不走上表。`POST /rag/extract/file` 由 `pipelines/rag_extract.py`
 2. `iter_inner_content()` 按 body **块级顺序**遍历：表格走 `_render_table()`——按 `w:tc` 收成格位规格（**不用 `row.cells`**：合并区会被返回多次、文本因此重复），交给 `processors/grid.py` 的格位网格渲染（制表符分隔、合并区文本只出现一次、覆盖位占列位、超 `MAX_TABLE_ROWS=2000` 行截断并说明）；段落取文本，段落里含 `a:blip` 时在文本末追加中性占位符 `[图片 N]`。
 3. 页数取 `docProps/app.xml` 里的 `<Pages>`——那是保存时的缓存渲染值，读到就在 `notes` 里注明来源，读不到置 `None`。
 4. 文本框（`w:txbxContent` / VML textbox / Word 2010 shape 三类容器）单独成节 `=== 文本框内容 ===`：它们通常锚定浮动位置，硬插进正文会给错阅读顺序，直接丢又会掉信息。
-5. 内嵌图总数由 `a:blip` 计数得到；`prepare_assets=True` 时把前 `MAX_EMBEDDED_IMAGES` 张经 `related_parts` 取出、转 PNG 落盘成素材。
+5. 内嵌图总数由 `a:blip` 计数得到（记的是**引用次数**：同一张图被引 N 次算 N）；`prepare_assets=True` 时按来源关系 id（`r:embed` / `r:link`）去重，把前 `MAX_EMBEDDED_IMAGES` 张**不同的**图经 `related_parts` 取出、转 PNG 落盘成素材。
 
 `understand`：`reading.enhance_assets()` 批量识读内嵌图 → `meta.ocr_text`。
 
@@ -207,7 +207,7 @@ RAG 抽取不走上表。`POST /rag/extract/file` 由 `pipelines/rag_extract.py`
 
 1. `Presentation()`；失败降级。
 2. 逐张幻灯片，`_walk_shapes()` **递归展开组合形状**（不递归会漏掉成组排版的正文）。
-3. 每个形状按「文本框文本 → 表格（制表符）」顺序追加；`PICTURE` 类形状计数，`prepare_assets=True` 且未超上限时转 PNG 落盘成素材。
+3. 每个形状按「文本框文本 → 表格（制表符）」顺序追加；`PICTURE` 类形状计数（引用次数），`prepare_assets=True` 时按图片部件的 `sha1` 去重后，把未超上限的不同图转 PNG 落盘成素材（**不能按 rId 去重**：rId 只在页内唯一，而 python-pptx 在包级按内容复用同一个 image part，同一张图跨页时 rId 可以不同）。
 4. 每页前加 `=== 幻灯片 N ===`；`pages` 与 `pages_used` 都是幻灯片数。
 
 **不做无效图过滤**（小于 100x100、近似纯色这类）：跳过判断只能靠猜，而漏掉的往往正是流程图或截图；代价由 `MAX_EMBEDDED_IMAGES` 上限兜住。
@@ -346,7 +346,7 @@ ODS 与 CSV 也在这个文件里：这一族都按行列渲染成同一种文�
 | `MAX_REDIRECTS` | 5 | 逐跳重校验的最大跳数 |
 | `MAX_CONTENT_CHARS` | 20 万字符 | 步骤 6 的 `content` 截断 |
 | `MAX_MODEL_INPUT_CHARS` | 12 万字符 | 步骤 5 送模型的输入截断 |
-| `MAX_EMBEDDED_IMAGES` | 3 张 | 内嵌图落盘与批量识读上限 |
+| `MAX_EMBEDDED_IMAGES` | 3 张 | **不同的**内嵌图落盘与批量识读上限（同一张图被引多次只算一张） |
 | `RENDERED_PAGE_MAX` / `RENDERED_PAGE_DPI` | 10 页 / 150 | 扫描件页面渲染 |
 | `RENDERED_PAGE_RETRY_MIN_CHARS` | 20 字 | 整页识别失败的切半重试阈值 |
 | `ASR_MAX_AUDIO_SECONDS` / `FFMPEG_TIMEOUT_SEC` | 600 秒 / 120 秒 | 转写与抽音轨 |

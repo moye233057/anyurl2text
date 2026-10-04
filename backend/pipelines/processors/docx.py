@@ -73,29 +73,38 @@ def _render_table(table) -> str:
     return "\n".join(lines)
 
 def _save_embedded_images(document: "Document", ctx: ExtractContext) -> list:
-    """把前若干张内嵌图转存成 PNG 素材，返回素材列表。"""
+    """
+    把前若干张内嵌图转存成 PNG 素材，返回素材列表。
+
+    功能：按 `a:blip` 的来源关系 id 去重后落盘——同一张图被引 N 次只落一次，
+           `MAX_EMBEDDED_IMAGES` 也因而记在**不同的图**上，重复引用不会挤掉后面的图。
+    应用场景：`prepare_assets=True` 的 extract 与 understand 两条路。
+    输入：document — python-docx 文档对象；ctx — 抽取上下文（用它的 work_dir）。
+    输出：EmbeddedAsset 列表，数量不超过 MAX_EMBEDDED_IMAGES 且文件互不相同。
+    """
     assets = []
-    used = 0
+    seen = set()
     for blip in document.element.body.iter(qn("a:blip")):
-        if used >= settings.MAX_EMBEDDED_IMAGES:
+        if len(assets) >= settings.MAX_EMBEDDED_IMAGES:
             break
         rel_id = blip.get(qn("r:embed")) or blip.get(qn("r:link"))
-        if not rel_id:
+        if not rel_id or rel_id in seen:
             continue
         part = document.part.related_parts.get(rel_id)
         blob = getattr(part, "blob", None)
         if not blob:
             continue
-        used += 1
-        target = ctx.work_dir / f"docx_img{used}.png"
+        # 先记来源再落盘：同一张图只试一次，转码失败也不回头重试 N 遍
+        seen.add(rel_id)
+        position = len(assets) + 1
+        target = ctx.work_dir / f"docx_img{position}.png"
         try:
             with Image.open(BytesIO(blob)) as image:
                 image.convert("RGB").save(target, format="PNG")
         except Exception:
-            used -= 1
             continue
         assets.append(
-            EmbeddedAsset(kind="image", label=f"内嵌图{used}", path=target, order=used)
+            EmbeddedAsset(kind="image", label=f"内嵌图{position}", path=target, order=position)
         )
     return assets
 

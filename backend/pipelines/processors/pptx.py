@@ -81,6 +81,7 @@ def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
     pages = []
     images_total = 0
     assets = []
+    seen = set()
     for slide_index, slide in enumerate(presentation.slides, start=1):
         blocks = []
         for shape in _walk_shapes(slide.shapes):
@@ -92,9 +93,18 @@ def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
                 blocks.append(table)
             if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
                 images_total += 1
-                if not ctx.prepare_assets or len(assets) >= settings.MAX_EMBEDDED_IMAGES:
+                if not ctx.prepare_assets:
                     continue
-                target = ctx.work_dir / f"pptx_s{slide_index}_img{images_total}.png"
+                # 按图片部件的 sha1 去重，不按 rId：python-pptx 在包级按内容复用同一个
+                # image part，而 rId 只在页内唯一——同一张图出现在两页上时 rId 可以不同，
+                # 按 rId 去重会漏。sha1 与「同一个来源部件」在这条路上是一一对应的。
+                fingerprint = shape.image.sha1
+                if fingerprint in seen or len(assets) >= settings.MAX_EMBEDDED_IMAGES:
+                    continue
+                # 先记来源再落盘：同一张图只试一次，转码失败也不回头重试 N 遍
+                seen.add(fingerprint)
+                position = len(assets) + 1
+                target = ctx.work_dir / f"pptx_s{slide_index}_img{position}.png"
                 try:
                     with Image.open(BytesIO(shape.image.blob)) as image:
                         image.convert("RGB").save(target, format="PNG")
@@ -103,9 +113,9 @@ def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
                 assets.append(
                     EmbeddedAsset(
                         kind="image",
-                        label=f"第{slide_index}页图片{images_total}",
+                        label=f"第{slide_index}页图片{position}",
                         path=target,
-                        order=len(assets) + 1,
+                        order=position,
                     )
                 )
         title = f"=== 幻灯片 {slide_index} ==="

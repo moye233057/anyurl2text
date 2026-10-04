@@ -50,6 +50,12 @@ def ctx(work_dir):
     return ExtractContext(work_dir=work_dir, prepare_assets=False)
 
 
+@pytest.fixture
+def asset_ctx(work_dir):
+    """准备模型素材的上下文：只有它会落盘内嵌图，与 understand 那条路一致。"""
+    return ExtractContext(work_dir=work_dir, prepare_assets=True)
+
+
 def run(name, ctx, fixture_copy, page_url: str = ""):
     """把样例复制进工作目录并按它的扩展名跑一次 dispatch。"""
     path, ext = fixture_copy(name)
@@ -261,6 +267,38 @@ def test_merged_rows_keep_the_same_column_count(name, ctx, fixture_copy):
     lines = _table_lines(run(name, ctx, fixture_copy).content)
     widths = {line.count("\t") for line in lines}
     assert widths == {MERGED_COLUMNS - 1}, f"表内行宽不一致（覆盖列被裁掉）：{sorted(widths)}，{lines!r}"
+
+
+# ---------- 内嵌图：同一张图被引多次 ----------
+
+# 样例生成参数（`scripts/make_fixtures.py` 阶段 14）：photo.png 被引 3 次、screenshot.png 被引 1 次，
+# 即 4 处引用、2 张不同的图。默认上限 `MAX_EMBEDDED_IMAGES=3`，修前正好被重复引用占满。
+REPEATED_FIXTURES = ("repeated.docx", "repeated.pptx", "repeated.pdf")
+REPEATED_REFERENCES = 4
+REPEATED_DISTINCT = 2
+
+
+@pytest.mark.parametrize("name", REPEATED_FIXTURES)
+def test_repeated_image_is_saved_once_and_does_not_starve_others(name, asset_ctx, fixture_copy):
+    """
+    行为：同一张图被引 N 次只落一次盘，`MAX_EMBEDDED_IMAGES` 记在**不同的图**上——
+           重复引用既不留下内容相同的多份素材，也不把后面的图挤到上限之外。
+
+    来源：`docs/PIPELINES.md`「内嵌图：一次请求带上全部图（受 MAX_EMBEDDED_IMAGES 限制）」
+    + 样例生成参数（阶段 14：4 处引用、2 张不同的图，上限 3）。
+    实测（2026-10-04）：修前三个格式都按「出现次序」占名额——前 3 处引用全是同一张 photo.png，
+    于是落下 3 份内容完全相同的文件，而 screenshot.png 一次都没被读到。
+    `images` 仍是**引用次数**（docx 数 `a:blip`、pdf 数 `get_images`、pptx 数图片形状），
+    这不在本轮改动范围内，用第一条断言把它钉住。
+    """
+    result = run(name, asset_ctx, fixture_copy)
+    assert result.images == REPEATED_REFERENCES, "内嵌图总数按引用次数报出"
+    assert len(result.assets) == REPEATED_DISTINCT, (
+        f"同一张图被引 3 次不该落 3 份：实际 {len(result.assets)} 份"
+    )
+    assert result.images_used == REPEATED_DISTINCT
+    blobs = {asset.path.read_bytes() for asset in result.assets}
+    assert len(blobs) == REPEATED_DISTINCT, "落盘的素材得是 2 张不同的图，而不是同一张重复"
 
 
 # ---------- 降级路径 ----------

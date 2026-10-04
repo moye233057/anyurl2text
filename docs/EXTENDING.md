@@ -26,6 +26,8 @@ python -m pytest tests -m model -q   # 贵缝：两条路 content 逐字节一�
 
 1. `backend/pipelines/processors/` —— 新建一个文件（文件名按格式取，一眼能懂：`excel.py`、`html.py`、`docx.py`……），写 `extract_<格式>(path, ctx) -> ExtractResult`。
    需要模型素材就在 `ctx.prepare_assets` 为真时把图落盘并填进 `result.assets`；不需要就忽略 `ctx`。
+   落盘要**按来源部件去重**（docx 用关系 id、pptx 用图片部件 `sha1`、pdf 用 xref）：同一张图被引多次
+   只落一次，`MAX_EMBEDDED_IMAGES` 才算在「不同的图」上，否则重复引用会把后面的图挤出上限。
    如果这种格式的**模型处理与通用素材读取不同**（例如独立图片要先判型），再在同一个文件里写
    `enhance_<格式>(client, …) -> EnhanceOutcome`；通用情况不用写，`pipelines/processors/reading.py` 的 `enhance_assets()` 已经覆盖。
 2. `backend/pipelines/steps/step4_extract.py` 的 `dispatch()` —— 在对应分组里加一行指向它；有专属模型增强时不用改这里（`enhance()` 会按格式找到 `<格式>.enhance_*`，没有的走通用读素材）。

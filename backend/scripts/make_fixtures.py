@@ -19,6 +19,7 @@
     step11_make_audio        16kHz 单声道 wav 样本，验证音频的结构信息与「送本机 ASR」
     step12_make_video        把音频样本封成 mp4，验证视频要先抽音轨那条链
     step13_make_merged       含合并单元格的 docx / xlsx / pptx，验证表格格位建模
+    step14_make_repeated_images  同一张图被引多次的 docx / pptx / pdf，验证内嵌图按来源部件去重
 
 运行方式：在 backend/ 下执行 python scripts/make_fixtures.py（无参数；`__main__` 只按序号调用各 step）
 使用前注意：
@@ -125,6 +126,11 @@ MERGED_TITLE = "合并标题"
 MERGED_VERTICAL = "纵向合并"
 MERGED_TAIL = "尾列合并"
 MERGED_COLUMNS = 3
+
+# 内嵌图重复引用样例：同一张图被引 3 次，再引另一张一次（共 4 处引用、2 张不同的图）。
+# 用来验证「按来源部件去重」——修前重复引用会按出现次序占满 MAX_EMBEDDED_IMAGES 名额，
+# 后面的图因此一次都读不到，而落下的 3 份文件内容一模一样。
+REPEATED_IMAGE_REPEATS = 3
 
 ODF_MANIFEST = """<?xml version="1.0" encoding="UTF-8"?>
 <manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">
@@ -540,6 +546,60 @@ def step13_make_merged() -> None:
     workbook.save(str(DATA_DIR / "merged.xlsx"))
     print(f"[阶段13] 已写入 {DATA_DIR / 'merged.xlsx'}（4x3 结构合并 + 只有尾列合并的第二张表）")
 
+def step14_make_repeated_images() -> None:
+    """
+    造三个「同一张图被引用多次」的样例，用于验证内嵌图按来源部件去重。
+
+    功能：三个格式各造一份，photo.png 被引 `REPEATED_IMAGE_REPEATS` 次、screenshot.png 被引 1 次
+          （共 4 处引用、2 张不同的图）。pptx 那份把重复引用分在同一页与跨页两处——
+          python-pptx 的 rId 只在页内唯一、跨页复用同一个 image part，按 rId 去重会漏。
+    应用场景：验证重复引用不占 `MAX_EMBEDDED_IMAGES` 名额、也不落内容重复的文件。
+    输入：无（写 data/repeated.docx、repeated.pptx、repeated.pdf）。
+    输出：无返回值；文件路径打印到 stdout。
+    """
+    import pymupdf
+    from docx import Document
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    photo = DATA_DIR / "photo.png"
+    screenshot = DATA_DIR / "screenshot.png"
+    total_pages = REPEATED_IMAGE_REPEATS + 1
+
+    document = Document()
+    document.add_paragraph("下面同一张图被引用三次，随后是另一张图。")
+    for _ in range(REPEATED_IMAGE_REPEATS):
+        document.add_picture(str(photo))
+    document.add_picture(str(screenshot))
+    document.save(str(DATA_DIR / "repeated.docx"))
+    print(f"[阶段14] 已写入 {DATA_DIR / 'repeated.docx'}（photo ×{REPEATED_IMAGE_REPEATS} + screenshot ×1）")
+
+    presentation = Presentation()
+    first_slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    first_slide.shapes.add_picture(str(photo), Inches(0.6), Inches(0.6), Inches(3), Inches(2))
+    first_slide.shapes.add_picture(str(photo), Inches(4.2), Inches(0.6), Inches(3), Inches(2))
+    second_slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    second_slide.shapes.add_picture(str(photo), Inches(0.6), Inches(0.6), Inches(3), Inches(2))
+    third_slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    third_slide.shapes.add_picture(str(screenshot), Inches(0.6), Inches(0.6), Inches(3), Inches(2))
+    presentation.save(str(DATA_DIR / "repeated.pptx"))
+    print(f"[阶段14] 已写入 {DATA_DIR / 'repeated.pptx'}（第1页 photo ×2、第2页 photo ×1、第3页 screenshot ×1）")
+
+    document = pymupdf.open()
+    for page_index in range(REPEATED_IMAGE_REPEATS):
+        page = document.new_page(width=595, height=842)
+        # 必须有文字层：没有文字层的 PDF 会走整页渲染补全，根本不经过内嵌图那条路
+        page.insert_text((60, 70), f"第 {page_index + 1} 页：同一张图在本页被引用一次", fontname="china-s", fontsize=12)
+        page.insert_image(pymupdf.Rect(60, 110, 360, 310), filename=str(photo))
+    last_page = document.new_page(width=595, height=842)
+    last_page.insert_text((60, 70), f"第 {total_pages} 页：换另一张图", fontname="china-s", fontsize=12)
+    last_page.insert_image(pymupdf.Rect(60, 110, 360, 310), filename=str(screenshot))
+    # deflate 保存：PyMuPDF 默认把不透明 RGB 图按原始像素流存进 PDF（这 4 张就 5.0MB），
+    # 压缩后 85KB；它只压流，不改 xref，所以「同一张图共用同一个 xref」这条前提不受影响
+    document.save(str(DATA_DIR / "repeated.pdf"), deflate=True)
+    document.close()
+    print(f"[阶段14] 已写入 {DATA_DIR / 'repeated.pdf'}（前 {REPEATED_IMAGE_REPEATS} 页同一张图 + 第 {total_pages} 页另一张）")
+
 if __name__ == "__main__":
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     # 阶段1：先造图片（后续文档与演示要内嵌它们）→ screenshot.png / photo.png
@@ -568,4 +628,6 @@ if __name__ == "__main__":
     step12_make_video()
     # 阶段13：合并单元格样例（横向 / 纵向 / 尾部合并）→ merged.docx / merged.pptx / merged.xlsx
     step13_make_merged()
+    # 阶段14：内嵌图重复引用样例（同一张图被引 3 次）→ repeated.docx / repeated.pptx / repeated.pdf
+    step14_make_repeated_images()
     print(f"\n全部完成，输出目录：{DATA_DIR}")
