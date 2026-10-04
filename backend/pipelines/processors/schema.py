@@ -83,6 +83,10 @@ class ExtractResult:
     # 没有表、有多张表、或该格式的源不标表头时是 None——与 0 区别开：0 表示「查过，源明确没标」。
     # 不做「首行就是表头」这类启发式：猜错会吃掉一行数据，而本项目的取向是宁可回落也不猜。
     table_header_rows: Optional[int] = None
+    # 交付文本里**唯一**一张表的类型，口径照 anydoc 的 `TableKind`：单格表是 `layout`（排版壳）、
+    # 其余是 `data`。没有表、有多张表、或判不出时是 None——本仓不造「数据表 vs 印刷目录表」的
+    # 启发式（anydoc 自己也没有：它的 Layout 只在单元测试里被构造过），见 `table_kind.py`。
+    table_kind: Optional[str] = None
     image_meta: Optional[ImageMeta] = None
     audio_meta: Optional[AudioMeta] = None
 

@@ -24,6 +24,7 @@ from pipelines.processors.ods_merges import align_values as align_ods_values
 from pipelines.processors.ods_merges import read_merge_rects as read_ods_merge_rects
 from pipelines.processors.schema import ExtractContext, ExtractResult, TableGrid
 from pipelines.processors.xlsx_merges import read_merge_rects
+from pipelines.processors import table_kind
 from pipelines.processors.index_runs import column_letters, to_runs
 from pipelines.processors.ods_visibility import read_visibility as read_ods_visibility
 from pipelines.processors.xlsx_visibility import read_visibility as read_xlsx_visibility
@@ -41,10 +42,11 @@ def _render_rows(sheets: list, pad_short_rows: bool = True) -> tuple:
     应用场景：xlsx / xls / ods / csv 四条路径共用，避免各写一份渲染规则。
     输入：sheets — [(表名, [[单元格文本, ...], ...], [(行起, 列起, 行止, 列止), ...]), ...]；
           pad_short_rows — 见 `grid.render_tsv`：结构化表格补行尾缺格，CSV / TSV 传 False。
-    输出：(拼接后的文本, 命中的上界名列表)。
+    输出：(拼接后的文本, 命中的上界名列表, 每张非空表的渲染行)——行另交回是为了判表类型。
     """
     blocks = []
     hits = []
+    tables = []
     for name, rows, merges in sheets:
         grid, grid_hits = _sheet_grid(rows, merges)
         lines = render_tsv(grid, limits.MAX_ROWS_PER_SHEET, pad_short_rows=pad_short_rows)
@@ -53,7 +55,8 @@ def _render_rows(sheets: list, pad_short_rows: bool = True) -> tuple:
             hits.append("max_rows_per_sheet")
         if lines:
             blocks.append(f"=== SHEET: {name} ===\n" + "\n".join(lines))
-    return "\n\n".join(blocks), hits
+            tables.append(lines)
+    return "\n\n".join(blocks), hits, tables
 
 def _cell_text(cell) -> str:
     """
@@ -326,7 +329,7 @@ def extract_excel(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:
             engines=["基础文件信息"],
         )
 
-    content, hits = _render_rows(sheets, pad_short_rows=ext not in ("csv", "tsv"))
+    content, hits, tables = _render_rows(sheets, pad_short_rows=ext not in ("csv", "tsv"))
     notes, visibility_hits = _visibility_notes(visibility)
     hits.extend(visibility_hits)
     if not content:
@@ -338,4 +341,5 @@ def extract_excel(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:
         pages=len(sheets),
         pages_used=len(sheets),
         limits_hit=hits,
+        table_kind=table_kind.classify(tables[0]) if len(tables) == 1 else None,
     )

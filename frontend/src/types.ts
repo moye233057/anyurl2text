@@ -54,6 +54,8 @@ export interface Meta {
   entry_count?: number | null
   /** 交付文本里唯一一张表中，源自己标出的表头行数（网页 / EPUB 的 <th> 与 <thead>）；没有表、有多张表、或源不标表头时为 null（0 表示查过、源明确没标） */
   table_header_rows?: number | null
+  /** 交付文本里唯一一张表的类型：`data` 或 `layout`（1×1 的单格表＝排版壳）；没有表或多张表时为 null */
+  table_kind?: string | null
   image?: ImageMeta | null
   audio?: AudioMeta | null
   ocr_text?: string | null

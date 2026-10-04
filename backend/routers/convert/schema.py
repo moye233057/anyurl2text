@@ -133,6 +133,12 @@ class Meta(BaseModel):
         "没有表、有多张表、或该格式的源不标表头时为 null——与 0 区别开：0 表示查过、源明确没标表头。"
         "不做「首行即表头」这类启发式（猜错会吃掉一行数据）。",
     )
+    table_kind: Optional[str] = Field(
+        None,
+        description="交付文本里**唯一**一张表的类型，取值 data / layout，口径照 anydoc 的 TableKind："
+        "单格表（1×1）算 layout——它通常是文本框里当容器用的排版壳，不是数据表；其余算 data。"
+        "没有表、有多张表时为 null。**不做**「数据表 vs 印刷目录表」这类推断（猜错会误导按它分支的调用方）。",
+    )
     ocr_text: Optional[str] = Field(
         None,
         description="模型从图像读出的文字（独立图片、文档内嵌图、扫描件页面）。"

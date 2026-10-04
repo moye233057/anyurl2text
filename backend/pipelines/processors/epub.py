@@ -125,9 +125,9 @@ def _chapter_body(soup) -> tuple:
     """
     for tag in soup(DROP_TAGS + ("head",)):
         tag.decompose()
-    table_blocks, table_hits, table_headers = html_tables.render_tables(soup)
+    table_blocks, table_hits, table_headers, table_kinds = html_tables.render_tables(soup)
     text = _clean((soup.body or soup).get_text(separator="\n"))
-    return html_tables.restore_blocks(text, table_blocks), table_hits, table_headers
+    return html_tables.restore_blocks(text, table_blocks), table_hits, table_headers, table_kinds
 
 def _chapter_links(soup, chapter_path: str) -> list:
     """
@@ -201,12 +201,13 @@ def extract_epub(path: Path, ctx: ExtractContext) -> ExtractResult:
             )
         blocks, links, unreadable = [], [], 0
         table_headers: list = []
+        table_kinds: list = []
         for index, chapter in enumerate(used, start=1):
             try:
                 markup = archive.read(chapter)
                 soup = BeautifulSoup(markup, "html.parser")
                 title = _chapter_title(soup)
-                body, chapter_hits, chapter_headers = _chapter_body(soup)
+                body, chapter_hits, chapter_headers, chapter_kinds = _chapter_body(soup)
                 chapter_links = _chapter_links(soup, chapter)
             except Exception as exc:
                 # 单章坏掉不该让整份文档失败：跳过它、如实说明，其余章照常交付。
@@ -219,6 +220,7 @@ def extract_epub(path: Path, ctx: ExtractContext) -> ExtractResult:
             blocks.append(f"{marker}\n\n{body}")
             hits.extend(chapter_hits)
             table_headers.extend(chapter_headers)
+            table_kinds.extend(chapter_kinds)
             links.extend(chapter_links)
         if unreadable and not blocks:
             return _degraded(f"EPUB 的 {unreadable} 个章节都读不出来（容器损坏或受保护）")
@@ -246,4 +248,5 @@ def extract_epub(path: Path, ctx: ExtractContext) -> ExtractResult:
         notes=notes,
         limits_hit=hits,
         table_header_rows=table_headers[0] if len(table_headers) == 1 else None,
+        table_kind=table_kinds[0] if len(table_kinds) == 1 else None,
     )

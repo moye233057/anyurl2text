@@ -93,6 +93,8 @@ function buildMetaRows(result: ConvertResponse): Rows {
   if (meta.entry_count != null) rows.push(['条目数', String(meta.entry_count)])
   // 表头行数是源自己标的（<th> / <thead>），不是猜的；null 与 0 意思不同，所以只在非 null 时显示
   if (meta.table_header_rows != null) rows.push(['表头行数', String(meta.table_header_rows)])
+  // 表类型照 anydoc 的 TableKind 口径：layout 是 1×1 的单格表（文本框里当容器用的排版壳）
+  if (meta.table_kind) rows.push(['表类型', meta.table_kind === 'layout' ? '排版壳' : '数据表'])
   if (meta.image) {
     const image = meta.image
     if (image.width && image.height) rows.push(['尺寸', `${image.width} × ${image.height}`])

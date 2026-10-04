@@ -27,6 +27,7 @@ import configs.settings as settings
 from pipelines.processors.docx_links import hyperlink_lines
 from pipelines.processors.grid import GridBuilder, fill_from_specs, render_tsv
 from pipelines.processors.schema import EmbeddedAsset, ExtractContext, ExtractResult
+from pipelines.processors import table_kind
 
 def _textbox_texts(document: "Document") -> list:
     """收集正文之外文本框里的文字（Word 三类文本框容器）。"""
@@ -93,7 +94,8 @@ def _render_table(table) -> tuple:
         lines.append(f"... 其余 {total_rows - limits.MAX_TABLE_ROWS} 行未列出")
         hits.append("max_table_rows")
     hits.extend(builder.limit_hits)
-    return "\n".join(lines), hits, _header_rows(table)
+    kind = table_kind.classify(lines)
+    return "\n".join(lines), hits, _header_rows(table), kind
 
 def _save_embedded_images(document: "Document", ctx: ExtractContext, result: ExtractResult) -> list:
     """
@@ -213,14 +215,16 @@ def extract_docx(path: Path, ctx: ExtractContext) -> ExtractResult:
     blocks = []
     hits = []
     table_headers = []
+    table_kinds = []
     image_marker = 0
     for item in document.iter_inner_content():
         if isinstance(item, Table):
-            rendered, table_hits, header_rows = _render_table(item)
+            rendered, table_hits, header_rows, kind = _render_table(item)
             hits.extend(table_hits)
             if rendered:
                 blocks.append(rendered)
                 table_headers.append(header_rows)
+                table_kinds.append(kind)
             continue
         text = (item.text or "").strip()
         if not text:
@@ -240,6 +244,7 @@ def extract_docx(path: Path, ctx: ExtractContext) -> ExtractResult:
         images_used=0,
         limits_hit=hits,
         table_header_rows=table_headers[0] if len(table_headers) == 1 else None,
+        table_kind=table_kinds[0] if len(table_kinds) == 1 else None,
     )
     if len(table_headers) > 1:
         result.notes.append(

@@ -16,6 +16,7 @@ HTML 表格 → 制表符块：网页与 EPUB 章节共用这一份。
 from bs4 import BeautifulSoup, NavigableString
 
 import configs.limits as limits
+from pipelines.processors import table_kind
 from pipelines.processors.grid import GridBuilder, render_tsv
 
 # 哨兵行长这样：清洗会 strip 每一行，它因此必须是一个「strip 前后完全一样」的短标记
@@ -88,7 +89,7 @@ def table_to_tsv(table) -> tuple:
             row_span = _span(cell, "rowspan", fallback=len(rows) - row_index)
             builder.place(_cell_text(cell), col_span, row_span)
     lines = render_tsv(builder.finish(), limits.MAX_TABLE_ROWS)
-    return "\n".join(lines), list(builder.limit_hits), _header_rows(rows)
+    return "\n".join(lines), list(builder.limit_hits), _header_rows(rows), table_kind.classify(lines)
 
 def render_tables(soup) -> tuple:
     """
@@ -98,11 +99,11 @@ def render_tables(soup) -> tuple:
            原位置带出它，于是表格落在文档顺序里该在的位置）；空表直接删掉（它不构成交付文本里的表）。
     应用场景：`html.py` / `epub.py` 在取正文文本**之前**调用。
     输入：soup — 已经剥掉 script / style 的 soup。
-    输出：({哨兵: 表块}, 命中的上界名列表, [每张非空表的表头行数])。
+    输出：({哨兵: 表块}, 命中的上界名列表, [每张非空表的表头行数], [每张非空表的类型])。
     """
-    blocks, hits, headers = {}, [], []
+    blocks, hits, headers, kinds = {}, [], [], []
     for index, table in enumerate(soup.find_all("table")):
-        block, table_hits, header_rows = table_to_tsv(table)
+        block, table_hits, header_rows, kind = table_to_tsv(table)
         hits.extend(table_hits)
         if not block:
             table.decompose()
@@ -110,8 +111,9 @@ def render_tables(soup) -> tuple:
         sentinel = SENTINEL.format(index=index)
         blocks[sentinel] = block
         headers.append(header_rows)
+        kinds.append(kind)
         table.replace_with(NavigableString(f"\n{sentinel}\n"))
-    return blocks, hits, headers
+    return blocks, hits, headers, kinds
 
 def restore_blocks(text: str, blocks: dict) -> str:
     """把哨兵行换回制表符块（**必须在清洗之后**：清洗会 strip 每一行，先换回会把行首空列吃掉）。"""

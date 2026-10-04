@@ -539,9 +539,10 @@ def test_epub_chapter_table_goes_through_the_grid():
         "<p>后一段</p></body></html>",
         "html.parser",
     )
-    body, hits, headers = _chapter_body(soup)
+    body, hits, headers, kinds = _chapter_body(soup)
     assert "甲\t乙" in body and "1\t2" in body, f"章节表格应渲成制表符行：{body!r}"
     assert "前一段" in body and "后一段" in body, "表格前后的段落不能丢"
+    assert headers == [1] and kinds == ["data"], (headers, kinds)
     assert hits == []
     assert headers == [1], f"章节里唯一一张表的表头行数应报出来：{headers}"
 
@@ -753,6 +754,145 @@ def test_hidden_html_content_is_extracted_and_registered(ctx, work_dir):
     assert "隐藏文字样本XYZ" in result.content
     assert "属性隐藏的段落" in result.content
     assert any("2 处隐藏文字" in note and "共 16 字" in note for note in result.notes), result.notes
+
+
+# ---------- 表类型：data / layout ----------
+
+@pytest.mark.capability_table
+def test_single_cell_table_is_reported_as_layout(ctx, work_dir):
+    """
+    行为：1×1 的单格表算 `layout`（排版壳），多格表算 `data`——口径照 anydoc 的 `TableKind`。
+
+    来源：`processors/table_kind.py` 的模块 docstring（anydoc 的 `Layout` 只在它自己的单元测试里
+          被构造过，唯一判据是 `is_single_cell()`）；`routers/convert/schema.py` 的字段说明。
+    预期值来源：本用例写两份 docx——一份 1×1、一份 2×2，形状是手写的常量。
+    """
+    from docx import Document
+
+    single = work_dir / "single_cell.docx"
+    document = Document()
+    document.add_table(rows=1, cols=1).cell(0, 0).text = "只有一个格子"
+    document.save(str(single))
+    assert dispatch("docx", single, ctx).table_kind == "layout"
+
+    grid = work_dir / "two_by_two.docx"
+    document = Document()
+    table = document.add_table(rows=2, cols=2)
+    for row_index, values in enumerate((("甲", "乙"), ("1", "2"))):
+        for column_index, value in enumerate(values):
+            table.cell(row_index, column_index).text = value
+    document.save(str(grid))
+    assert dispatch("docx", grid, ctx).table_kind == "data"
+
+
+@pytest.mark.capability_table
+def test_table_kind_comes_from_the_web_table_shape(ctx, work_dir):
+    """
+    行为：网页那一路同样给表类型——单张多格表 `data`，单张单格表 `layout`。
+
+    来源：同 `table_kind.py`；`html_tables.table_to_tsv` 用渲染好的行判，四路（docx / odf / 网页 /
+          EPUB）口径一致。
+    预期值来源：本用例手写两张页面（2×2 与 1×1），形状即预期。
+    """
+    path = work_dir / "grid.html"
+    path.write_text(
+        "<html><body><table><tr><td>甲</td><td>乙</td></tr><tr><td>1</td><td>2</td></tr></table></body></html>",
+        encoding="utf-8",
+    )
+    assert dispatch("html", path, ctx).table_kind == "data"
+
+    single = work_dir / "single.html"
+    single.write_text("<html><body><table><tr><td>只有一个格子</td></tr></table></body></html>", encoding="utf-8")
+    assert dispatch("html", single, ctx).table_kind == "layout"
+
+
+@pytest.mark.capability_table
+def test_table_kind_is_empty_when_the_text_has_two_tables(ctx, work_dir):
+    """
+    行为：交付文本里有**两张**表时不给表类型（`null`）——「唯一一张表」这条门槛与表头行数同源。
+
+    来源：`routers/convert/schema.py` 的字段说明（没有表、有多张表时为 null）。
+    预期值来源：本用例写两张 2×2 的 docx 表，必然落到「不止一张表」这条分支。
+    """
+    from docx import Document
+
+    path = work_dir / "two_tables.docx"
+    document = Document()
+    for label in ("甲", "乙"):
+        table = document.add_table(rows=2, cols=2)
+        table.cell(0, 0).text = label
+        table.cell(1, 1).text = "1"
+    document.save(str(path))
+
+    result = dispatch("docx", path, ctx)
+    assert result.table_kind is None, result.table_kind
+    assert result.table_header_rows is None, "同一门槛：两张表时表头行数也不给值"
+
+
+@pytest.mark.capability_table
+def test_odf_inline_empty_cells_still_hold_their_columns(ctx, work_dir):
+    """
+    行为：行内（非行尾）的空单元格仍然落格——它后面的文字落在**源列**上，不被左移。
+
+    来源：`odf._flush_gap` 的策略（anydoc `src/formats/odf/table.rs:324-336`：行内空格的缓冲在遇到
+          下一个非平凡格时 flush，行尾的才丢）。这是「尾部空格省掉」不能踩坏的那一半。
+    预期值来源：本用例写一行 `空 / 空 / 甲`（两个空 `table:table-cell` 在前），所以「甲」必须出现在
+          第 3 列——渲染成 `\\t\\t甲`（两个前导制表符）。
+    """
+    from odf.opendocument import OpenDocumentText
+    from odf.table import Table, TableCell, TableRow
+    from odf.text import P
+
+    document = OpenDocumentText()
+    table = Table(name="行内空格")
+    row = TableRow()
+    for text in ("", "", "甲"):
+        cell = TableCell(valuetype="string")
+        if text:
+            cell.addElement(P(text=text))
+        row.addElement(cell)
+    table.addElement(row)
+    document.text.addElement(table)
+    path = work_dir / "inline_gap.odt"
+    document.save(str(path))
+
+    line = [item for item in dispatch("odt", path, ctx).content.splitlines() if item.strip()][0]
+    assert line == "\t\t甲", f"行内空列必须占住列位：{line!r}"
+
+
+@pytest.mark.capability_limits
+def test_odf_trailing_empty_cells_do_not_consume_the_slot_budget(monkeypatch, ctx, work_dir):
+    """
+    行为：ODF 行尾的空单元格不落格位——同样的表把 `max_grid_slots` 压到 30 也不命中。
+
+    来源：`01-表格格位建模.md` §1.4 的省法（anydoc 的 `flush_gap`）；`odf._render_table` 现在按
+          「行内缓冲、行尾丢弃」落格。
+    预期值来源：本用例写 3 行、每行「1 个有字格 + 20 个行尾空格」= 修前 63 个格位、修后 3 个；
+          预算 30 卡在两者之间，所以命中与否直接区分两种实现。
+    """
+    import configs.limits as limits
+    from odf.opendocument import OpenDocumentText
+    from odf.table import Table, TableCell, TableRow
+    from odf.text import P
+
+    document = OpenDocumentText()
+    table = Table(name="行尾空格")
+    for index in range(3):
+        row = TableRow()
+        cell = TableCell(valuetype="string")
+        cell.addElement(P(text=f"第{index + 1}行"))
+        row.addElement(cell)
+        for _ in range(20):
+            row.addElement(TableCell())
+        table.addElement(row)
+    document.text.addElement(table)
+    path = work_dir / "trailing_gap.odt"
+    document.save(str(path))
+
+    monkeypatch.setattr(limits, "MAX_GRID_SLOTS", 30)
+    result = dispatch("odt", path, ctx)
+    assert "max_grid_slots" not in result.limits_hit, result.limits_hit
+    assert "第3行" in result.content, result.content
 
 
 # ---------- 内嵌图：同一张图被引多次 ----------

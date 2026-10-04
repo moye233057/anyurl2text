@@ -22,7 +22,7 @@ import zipfile
 from pathlib import Path
 
 import configs.limits as limits
-from pipelines.processors import odf_table_rows
+from pipelines.processors import odf_table_rows, table_kind
 from pipelines.processors.grid import GridBuilder, render_tsv
 from pipelines.processors.schema import ExtractResult
 
@@ -68,6 +68,23 @@ def _cell_text(cell) -> str:
     """取单元格里的文字：把其中的段落（含嵌套列表项里的段落）拼成一行。"""
     return " ".join(part for part in (_text_of(p) for p in cell.iter(TEXT_NS + "p")) if part)
 
+def _flush_gap(builder, pending: int) -> int:
+    """
+    把缓冲的「行内空格」落成空格格位，返回新的缓冲数（恒为 0）。
+
+    功能：`pending` 个空单元格逐个 `place("")`——它们的唯一作用是**把后续格推到源列坐标**上。
+    为什么行尾不 flush：行尾空格之后再无同行的格，列坐标已经没人用（`render_tsv` 会给短行补空），
+    而它们一旦落格就要占格位预算。anydoc 的 `flush_gap` 正是这个策略（`src/formats/odf/table.rs:324-336`：
+    「Materialize a buffered empty-cell run in full so the next cell lands on its source column.
+    Trailing runs are never flushed and stay elided.」）。
+    应用场景：`_render_table` 遇到非平凡格或 `covered-table-cell` 前调用。
+    输入：builder — 格位网格构造器；pending — 缓冲的空格数。
+    输出：0（缓冲已清空）。
+    """
+    for _ in range(pending):
+        builder.place("")
+    return 0
+
 def _render_table(table, hits: list) -> tuple:
     """
     把 ODF 表格渲成制表符分隔的行。
@@ -95,22 +112,33 @@ def _render_table(table, hits: list) -> tuple:
                 break
             placed += 1
             builder.next_row()
+            pending = 0
             for cell in row:
                 if cell.tag == TABLE_NS + "covered-table-cell":
-                    builder.covered()
+                    # 结构格优先：它是某个跨度的覆盖位，不能被当成「可省的空格」
+                    pending = _flush_gap(builder, pending)
+                    for _ in range(_count(cell, "number-columns-repeated", limits.MAX_REPEATED_SLOTS)):
+                        builder.covered()
                     continue
                 if cell.tag != TABLE_NS + "table-cell":
                     continue
                 col_span = _count(cell, "number-columns-spanned")
                 row_span = _count(cell, "number-rows-spanned")
-                for _ in range(_count(cell, "number-columns-repeated", limits.MAX_REPEATED_SLOTS)):
-                    builder.place(_cell_text(cell), col_span, row_span)
+                cell_repeat = _count(cell, "number-columns-repeated", limits.MAX_REPEATED_SLOTS)
+                text = _cell_text(cell)
+                if not text and col_span == 1 and row_span == 1:
+                    # 平凡空格只记数、不落格；行内空格会在下一个非平凡格之前补上，行尾的直接消失
+                    pending += cell_repeat
+                    continue
+                pending = _flush_gap(builder, pending)
+                for _ in range(cell_repeat):
+                    builder.place(text, col_span, row_span)
     lines = render_tsv(builder.finish(), limits.MAX_TABLE_ROWS)
     if total_rows > limits.MAX_TABLE_ROWS:
         lines.append(f"... 其余 {total_rows - limits.MAX_TABLE_ROWS} 行未列出")
         hits.append("max_table_rows")
     hits.extend(builder.limit_hits)
-    return "\n".join(lines), header_rows
+    return "\n".join(lines), header_rows, table_kind.classify(lines)
 
 def _list_lines(list_element, depth: int) -> list:
     """
@@ -136,7 +164,7 @@ def _list_lines(list_element, depth: int) -> list:
                     lines.append(f"{indent}- {text}")
     return lines
 
-def _body_lines(element, hits: list, table_headers: list) -> list:
+def _body_lines(element, hits: list, table_headers: list, table_kinds: list) -> list:
     """
     按文档结构递归收集正文行。
 
@@ -151,10 +179,11 @@ def _body_lines(element, hits: list, table_headers: list) -> list:
     lines = []
     for child in element:
         if child.tag == TABLE_NS + "table":
-            rendered, header_rows = _render_table(child, hits)
+            rendered, header_rows, kind = _render_table(child, hits)
             if rendered:
                 lines.extend(rendered.splitlines())
                 table_headers.append(header_rows)
+                table_kinds.append(kind)
         elif child.tag == TEXT_NS + "list":
             lines.extend(_list_lines(child, 0))
         elif child.tag in TEXT_ELEMENTS:
@@ -163,7 +192,7 @@ def _body_lines(element, hits: list, table_headers: list) -> list:
                 continue
             lines.append(_heading_line(child) if child.tag == TEXT_NS + "h" else text)
         else:
-            lines.extend(_body_lines(child, hits, table_headers))
+            lines.extend(_body_lines(child, hits, table_headers, table_kinds))
     return lines
 
 def extract_odf(path: Path, ext: str) -> ExtractResult:
@@ -204,7 +233,8 @@ def extract_odf(path: Path, ext: str) -> ExtractResult:
     body = root.find(OFFICE_NS + "body")
     hits = []
     table_headers = []
-    lines = _body_lines(body if body is not None else root, hits, table_headers)
+    table_kinds = []
+    lines = _body_lines(body if body is not None else root, hits, table_headers, table_kinds)
     # 计数与渲染分开：这里只数标题个数（给 notes 用），不参与上面那次结构遍历
     heading_count = sum(1 for element in root.iter(TEXT_NS + "h") if _text_of(element))
 
@@ -223,4 +253,5 @@ def extract_odf(path: Path, ext: str) -> ExtractResult:
         notes=notes,
         limits_hit=hits,
         table_header_rows=table_headers[0] if len(table_headers) == 1 else None,
+        table_kind=table_kinds[0] if len(table_kinds) == 1 else None,
     )

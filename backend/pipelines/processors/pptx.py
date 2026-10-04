@@ -16,6 +16,7 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from PIL import Image
 
 import configs.settings as settings
+from pipelines.processors import table_kind
 from pipelines.processors.grid import GridBuilder, render_tsv
 from pipelines.processors.schema import EmbeddedAsset, ExtractContext, ExtractResult
 
@@ -42,10 +43,10 @@ def _table_text(shape) -> tuple:
           交给格位网格，跨度只在合并区左上角取（python-pptx 明确说非 origin 上的跨度不可靠）。
     应用场景：extract_pptx 遇到表格形状时调用。
     输入：shape — 页上的形状。
-    输出：(制表符分隔的多行文本, 命中的上界名列表)；不是表格时返回 ("", [])。
+    输出：(制表符分隔的多行文本, 命中的上界名列表, 表类型)；不是表格时返回 ("", [], None)。
     """
     if not getattr(shape, "has_table", False):
-        return "", []
+        return "", [], None
     builder = GridBuilder()
     for row in shape.table.rows:
         builder.next_row()
@@ -57,7 +58,8 @@ def _table_text(shape) -> tuple:
             row_span = cell.span_height if cell.is_merge_origin else 1
             builder.place((cell.text or "").strip(), col_span, row_span)
     grid = builder.finish()
-    return "\n".join(render_tsv(grid, len(grid))), list(builder.limit_hits)
+    lines = render_tsv(grid, len(grid))
+    return "\n".join(lines), list(builder.limit_hits), table_kind.classify(lines)
 
 def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
     """
@@ -85,6 +87,7 @@ def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
     seen = set()
     hits = []
     hidden_slides = []
+    table_kinds = []
     for slide_index, slide in enumerate(presentation.slides, start=1):
         # 隐藏幻灯片（`p:sld@show="0"`）照抽——隐藏只是放映时跳过，不是没有内容；
         # 这里只登记是哪几张，让调用方知道产出里有「界面上看不到的页」（用户 2026-10-04 拍板）
@@ -95,9 +98,10 @@ def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
             text = _shape_text(shape)
             if text:
                 blocks.append(text)
-            table, table_hits = _table_text(shape)
+            table, table_hits, kind = _table_text(shape)
             if table:
                 blocks.append(table)
+                table_kinds.append(kind)
             hits.extend(table_hits)
             if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
                 images_total += 1
@@ -143,6 +147,7 @@ def extract_pptx(path: Path, ctx: ExtractContext) -> ExtractResult:
         content="\n\n".join(pages),
         engines=["python-pptx"],
         notes=notes,
+        table_kind=table_kinds[0] if len(table_kinds) == 1 else None,
         pages=len(presentation.slides),
         pages_used=len(presentation.slides),
         images=images_total,

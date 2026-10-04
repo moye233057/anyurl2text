@@ -79,7 +79,7 @@ def extract_html(path: Path, page_url: str = "") -> ExtractResult:
         tag.decompose()
 
     # 先把表格换成哨兵行，正文清洗之后再把制表符块换回来（清洗会 strip 每一行）
-    table_blocks, table_hits, table_headers = html_tables.render_tables(soup)
+    table_blocks, table_hits, table_headers, table_kinds = html_tables.render_tables(soup)
 
     title = soup.title.get_text(strip=True) if soup.title else ""
 
@@ -132,4 +132,5 @@ def extract_html(path: Path, page_url: str = "") -> ExtractResult:
         limits_hit=text_hits + (["max_links"] if total_links > limits.MAX_LINKS else []) + table_hits,
         notes=notes,
         table_header_rows=table_headers[0] if len(table_headers) == 1 else None,
+        table_kind=table_kinds[0] if len(table_kinds) == 1 else None,
     )
