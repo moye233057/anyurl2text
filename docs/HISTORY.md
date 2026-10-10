@@ -28,7 +28,7 @@
 - **原因**：预算从 250/150 抬到 500/300 后，贴边的格式（尤其表格 / RTF）仍被逼拆成 `ods_*` / `xlsx_*` / `docx_links` 等碎片，与「一格式一文件」打架。
 - **做法**：静态门禁数行；超限则测试红。
 - **意义**：短期内让依赖方向与体积有机器守门。
-- **废弃原因**：守门手段扭曲了落点。后继 [ADR-0010](./adr.md)：废除行数门禁，processors 按格式族收拢，共享按是否调模型进 `utils/` 或 `models/`。
+- **废弃原因**：守门手段扭曲了落点。后继 [ADR-0010](./adr.md)：废除行数门禁，processors 按格式族收拢，共享按是否调模型进 `utils/` 或 `extensions/`。
 
 ## 2026-10-10 · 两路 content 必须逐字节相同
 
@@ -41,7 +41,7 @@
 
 - **背景**：计价与账本曾放在 `utils/usage.py`，单价表又在 `configs/settings.py`，与「一种模型一个文件」不一致。
 - **原因**：成本口径实际只服务第三方 DeepSeek；本机 OCR/ASR 不计费。分散两处容易让人以为全仓统一计费。
-- **做法**：`UsageLedger` / `PRICE_TABLE` / 峰谷折算进 `models/deepseek.py`；单请求费用与 token 上限用开关 + 阈值控制（默认关）。
+- **做法**：`UsageLedger` / `PRICE_TABLE` / 峰谷折算进 `extensions/deepseek.py`；单请求费用与 token 上限用开关 + 阈值控制（默认关）。
 - **意义**：换价与调闸只改 DeepSeek 一处；文档改称「第三方成本控制」。
 - **废弃原因**：落点迁走后删除 `utils/usage.py`，settings 不再持单价表。
 
@@ -52,3 +52,19 @@
 - **做法**：`POST /rag/extract/file`；编排 `pipelines/rag_extract.py`；分页与目录在 `utils/rag/`；依赖 `pymupdf4llm`。
 - **意义**：对比接口保持可对比；入库口单独吐 pages / catalogue_ranges。
 - **废弃原因**：手册抽取交还 self-rag 本仓实现，两仓抽取解耦。本仓删除 RAG 路由 / 编排 / `utils/rag/` / `pymupdf4llm`；普通 PDF 仍用 `pymupdf`。
+
+## 2026-10-10 · 双路对比接口（/extract 与 /understand）
+
+- **背景**：产品用两条 URL 表达「纯代码 vs 模型」代价，前端三栏比正文。
+- **原因**：希望同一源两种代价可逐字节对比，并从 URL 看出是否调模型。
+- **做法**：`POST /extract*` 与 `POST /understand*` 共用契约与抽取内核；understand 叠加模型；ADR-0002 曾否掉「单一接口 + mode」。
+- **意义**：早期把「可对比」做成项目存在理由，并逼出共用内核。
+- **废弃原因**：改为能力开关控制 OCR/ASR/LLM，取消双路对比产品身份。后继 [ADR-0014](./adr.md)；ADR-0002 / 0004 / 0008 / 0011 已按新目标重写。
+
+## 2026-10-10 · 默认依赖外部 ModelServer 进程
+
+- **背景**：Paddle OCR 与 Qwen3-ASR 原在 `ModelServer/*` 独立仓，anyurl2text 只配 `OCR_API_URL` / `ASR_API_URL` 调用。
+- **原因**：重依赖与 GPU 环境与核心后端分离，避免污染本仓 venv。
+- **做法**：文档要求使用者另起 8021 / 8022；本仓不带权重。
+- **意义**：核心仓保持轻量，模型环境可各自迭代。
+- **废弃原因**：扩展要起就在本仓 `optional/` 拉起并规定安装/加载；权重仍外置到 `backend/extensions/models/`。后继 [ADR-0014](./adr.md)。

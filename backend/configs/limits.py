@@ -107,7 +107,7 @@ LIMITS: Dict[str, Limit] = {
         "送模型的文本超过 {value} 字符，摘要只覆盖前一部分"),
     "llm_max_tokens": Limit(settings.LLM_MAX_TOKENS, "tokens", TRUNCATE, True, "deepseek.chat",
         "模型单次输出上限 {value} token，超出部分被截断"),
-    # 阈值真源在 models/deepseek.py 的环境变量；此处 value 仅作登记占位（文案不嵌入数值）
+    # 阈值真源在 extensions/deepseek.py 的环境变量；此处 value 仅作登记占位（文案不嵌入数值）
     "deepseek_max_cost_cny": Limit(1.0, "cny", TRUNCATE, True, "deepseek.UsageLedger",
         "第三方 DeepSeek 单请求费用已达上限，后续模型调用已中止"),
     "deepseek_max_tokens_per_request": Limit(200000, "tokens", TRUNCATE, True, "deepseek.UsageLedger",

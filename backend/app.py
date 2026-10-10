@@ -58,7 +58,7 @@ async def lifespan(app: FastAPI):
         f"自动重载={'开' if settings.RELOAD else '关'}"
     )
     if not os.getenv("DEEPSEEK_API_KEY", "").strip():
-        logger.info("未配置 DEEPSEEK_API_KEY：/understand 会失败并说明原因，/extract 不受影响")
+        logger.info("未配置 DEEPSEEK_API_KEY：开启 llm / 看图时会失败并说明原因；确定性抽取不受影响")
     logger.info(f"请求日志落盘: {BACKEND_DIR / 'data' / 'logs' / 'anyurl2text.log'}（轮转 10MB × 5）")
     yield
 
@@ -67,10 +67,8 @@ app = FastAPI(
     version="0.1.0",
     description=(
         "任意 URL 或本地文件转文本。\n\n"
-        "- `POST /extract`：纯代码确定性抽取，不调用模型，稳定且快。\n"
-        "- `POST /understand`：在 extract 之上叠加模型能力（认字、描述、摘要）。\n\n"
-        "extract 与 understand 共用同一份请求与响应契约；understand 正文可含模型转写（ADR-0011），"
-        "差别只在是否产生模型费用——因此同一个源可以两条路各跑一次直接对比。"
+        "- `POST /convert` / `/convert/file`：确定性抽取 + 可选扩展（`ocr` / `asr` / `llm`，默认 false）。\n"
+        "- 看图支路需要同时 `ocr` 与 `llm`；摘要需要 `llm`；音视频转写需要 `asr`（ADR-0014）。\n"
     ),
     lifespan=lifespan,
 )

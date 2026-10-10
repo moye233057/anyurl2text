@@ -10,7 +10,7 @@ step5_enhance   模型增强 + 摘要                            只有 understa
 step6_assemble  组装响应（两条路同一份形状）                两条路共用
 ```
 
-两条管线各自只做「按顺序调这几步」：`pipelines/extract.py`、`pipelines/understand.py`。
+统一管线按顺序调这几步：`pipelines/convert.py`。
 步骤之间通过 `PreparedSource` / `ExtractResult` / `EnhanceOutcome` 传递，类型在 `utils/processor_schema.py`；
-各格式族实现在 `pipelines/processors/`，表格公共在 `utils/excel/`，读素材在 `models/reading.py`。
+各格式族实现在 `pipelines/processors/`，表格公共在 `utils/excel/`，读素材在 `extensions/reading.py`。
 """

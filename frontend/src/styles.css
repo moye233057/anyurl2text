@@ -38,12 +38,26 @@ body {
   padding: 14px;
 }
 
-/* 三个固定区域并排：输入区 + 两条管线各一栏。整页不滚动。 */
+/* 两栏：输入 + 结果。整页不滚动。 */
 .layout {
   height: 100%;
   display: grid;
-  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
   gap: 14px;
+}
+
+.cap-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.cap-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
 }
 
 /* 白底铺满自己的格子（height:100%），内容多少都不影响区域本身的大小 */

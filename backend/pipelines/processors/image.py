@@ -19,9 +19,9 @@ from PIL import Image
 
 from configs.log_config import logger
 from configs.settings import PROMPTS_DIR
-from models import paddle_ocr
-from models.deepseek import DeepSeekClient, parse_json_object
-from models.images import ImagePixelLimitError, encode_image, open_image
+from extensions import paddle_ocr
+from extensions.deepseek import DeepSeekClient, parse_json_object
+from extensions.images import ImagePixelLimitError, encode_image, open_image
 from utils.processor_schema import EnhanceOutcome, ExtractResult, PreparedSource
 from utils.processor_schema import ImageMeta
 from utils.textfile import read_text_file
@@ -168,7 +168,7 @@ def _ocr_outcome(prepared: PreparedSource) -> EnhanceOutcome:
     """
     文字图片分支：交给本机 Paddle OCR 读字。
 
-    功能：出口（`models/paddle_ocr.py`）只负责发图收字，分流与说明放在这里。
+    功能：出口（`extensions/paddle_ocr.py`）只负责发图收字，分流与说明放在这里。
     应用场景：判型为文字图片，以及判型输出解析不出来时调用（拿不准就 OCR）。
     输入：prepared — 已落盘并识别过的图片。
     输出：EnhanceOutcome：读到文字填 ocr_text，没读到就只在 notes 里说明。

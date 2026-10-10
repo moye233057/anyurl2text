@@ -1,8 +1,10 @@
 # 接口与响应契约
 
-> **用途**：两个接口怎么调、响应每个字段是什么意思、失败长什么样。
-> **关联**：[architecture.md](./architecture.md)（模块与落点） · [adr.md](./adr.md)（为什么这样定） · [CONTEXT.md](../CONTEXT.md)（术语表）
-> **基线**：2026-10-02
+> **用途**：怎么调、响应每个字段是什么意思、失败长什么样。  
+> **目标态**：`POST /convert` + `ocr` / `asr` / `llm`（ADR-0014）。  
+> **现行**：仅 `/convert`·`/convert/file`；旧双路已删除。  
+> **关联**：[architecture.md](./architecture.md) · [adr.md](./adr.md) · [CONTEXT.md](../CONTEXT.md)  
+> **基线**：2026-10-02 · **目标态修订**：2026-10-10
 
 ---
 
@@ -10,178 +12,109 @@
 
 | 方法 | 路径 | 入参 | 说明 |
 |---|---|---|---|
-| POST | `/extract` | JSON `{url, query?}` | 纯代码解析 |
-| POST | `/extract/file` | multipart：`file`、`query?` | 同上，改成上传文件 |
-| POST | `/understand` | JSON `{url, query?}` | 模型增强解析 |
-| POST | `/understand/file` | multipart：`file`、`query?` | 同上，改成上传文件 |
-| GET | `/probe/health` | — | 自身配置自检，不探测上游 |
-
-`/extract` 与 `/extract/file` 除了入参方式**完全等价**，`/understand` 同理。
+| POST | `/convert` | JSON | 统一转换 |
+| POST | `/convert/file` | multipart | 同上，上传文件 |
+| GET | `/probe/health` | — | 自身与扩展 readiness |
 
 启动后交互式文档在 `http://127.0.0.1:8020/docs`。
 
 ### 请求字段
 
-| 字段 | 必填 | 说明 |
-|---|---|---|
-| `url` | 是（JSON 版） | `http` / `https` 地址。含 `+`、协议非 http(s)、无主机名都会被拒 |
-| `file` | 是（上传版） | 文件本体；识别以**文件名 + 内容头**为准 |
-| `query` | 否 | 只有模型增强解析消费它。带 `query` 做针对性回答；不带则给通用摘要 |
+| 字段 | 必填 | 默认 | 说明 |
+|---|---|---|---|
+| `url` | 是（JSON） | — | `http` / `https` |
+| `file` | 是（上传） | — | 文件本体 |
+| `ocr` | 否 | `false` | 启用 OCR 相关能力（看图读字支路还须 `llm`，见 §1.1） |
+| `asr` | 否 | `false` | 启用音视频转写 |
+| `llm` | 否 | `false` | 启用 LLM（摘要 / query；看图相关还须 `ocr`） |
+| `query` | 否 | — | 仅 `llm=true` 时消费：有则针对性回答，无则通用摘要 |
 
-`query` 为 `null` 或空串都按「没有 query」处理（后端只判真值，不做字符串归一化）——空串无法表达「要摘要但不要具体问题」。因此**不要传字符串 `"None"` / `"null"`**：它们是真值，会被当成一个真正的问题交给模型。
+空串 `query` 按「没有 query」处理。不要传字符串 `"None"` / `"null"`。
+
+### 1.1 开关矩阵
+
+「实际会跑」= 下表所需开关均为 `true` **且** 对应扩展可用（健康 / 已配置）。缺任一则跳过该行为，并在 `meta.notes`（或 `model_error`）说明，不静默假装成功。
+
+| 行为 | 所需开关 |
+|---|---|
+| 独立图片：判型 + OCR 读字 | `ocr` **且** `llm` |
+| 独立图片：语义描述 | `ocr` **且** `llm` |
+| 扫描件整页渲染识别 | `ocr` **且** `llm` |
+| 文档内嵌图认字 | `ocr` **且** `llm` |
+| 音视频转写 | `asr` |
+| 摘要 / query 回答 | `llm` |
+
+凡涉及「看图」的支路一律要求 `ocr && llm`（判型 / 视觉走 LLM，读字走 OCR）。只开其一：看图支路不跑。
 
 ## 2. 响应结构
 
-一份响应永远有这 7 个字段，形状不随成功失败变化：
+一份响应永远有这 7 个字段：
 
 ```jsonc
 {
-  "type": "image",          // 见 §3
-  "content": "",            // 见 §4
-  "summary": "…",           // 见 §5
-  "meta": { … },            // 见 §6
-  "usage": { … },           // 见 §7；纯代码解析恒为 null
-  "timings": { … },         // 见 §8
-  "error": null             // 恒存在；成功为 null
+  "type": "image",
+  "content": "",
+  "summary": "…",
+  "meta": { … },
+  "usage": { … },
+  "timings": { … },
+  "error": null
 }
 ```
 
-## 3. `type`：内容是什么
+## 3. `type`
 
-取值：`document` / `image` / `audio` / `video` / `webpage` / `archive` / `install_package` / `file` / `error`。
-
-`type` 只回答「这是什么」这一件事，**不回答「用什么做的」**——引擎与策略一律进 `meta`。所以同一张图不会因为内部换了识别引擎而改变 `type`。
-
-`file` 表示「认得出它是个文件，但没有可用于它的解析路径」，此时配合 `meta.degraded` 看降级原因。`error` 表示这次没成，看 `error` 字段。
+取值：`document` / `image` / `audio` / `video` / `webpage` / `archive` / `install_package` / `file` / `error`。  
+只回答「这是什么」，不回答用了哪家扩展。
 
 ## 4. `content`：交付文本
 
-对外主正文。`/extract` 只含**纯代码**抽取段；`/understand` 在同一段之上合并 OCR/ASR/页面识别/语义描述等模型转写（见 [adr.md](./adr.md) ADR-0011），且 `meta.ocr_text` / `meta.asr_text` 仍保留副本。
+- **文档类**：始终可含确定性抽取段；按 §1.1 实际跑过的转写并入。
+- **图片 / 音视频**：看图或 ASR 未实际跑时多为空串（基础信息在 `meta`）；跑过后转写/描述并入，并双写 `meta.ocr_text` / `meta.asr_text`。
+- 摘要只进 `summary`，不替换 `content`。
 
-纯代码即可完整交付的类型（如 plain/csv/xlsx 正文），两路 `content` **逐字节相同**。需要模型转写的类型（独立图片、含内嵌图/扫描页的文档等），understand 的 `content` 更长；extract 对图片/音视频常为空串。摘要进 `summary`，不替换 `content`。
+表格格内换行写成 `<br>`（与 anydoc 口径一致）。
 
-**表格的格内换行写成 `<br>`**：表格按「一行一行、列用制表符」交付，一个格位只能占一行一列，所以格里的换行（Word 的一个格里敲两次回车、PowerPoint 的多段、网页的 `<br>`、电子表格单元格里的 `\n`）统一写成 `<br>` 记号——段落边界保住，列位与行数都不受影响。规则只有一处定义：`backend/pipelines/processors/cell_text.py`。注意源里本来就写着字面 `<br>` 的文本与之不可区分（照 anydoc，不做转义）。
+## 5. `summary`
 
-## 5. `summary`：模型加工结果
+仅 `llm=true` 且 LLM 可用、有可加工内容时可能非空。否则 `null`，原因进 `meta.notes`。
 
-只有模型增强解析会产出。与 `content` 并存，两者互不影响。
+## 6. `meta`
 
-- 带 `query`：针对该 query 的回答，依据只取自文本，文本里没有的会说「给定内容中没有这一信息」。
-- 不带 `query`：通用内容摘要；源本身是图片时，判为语义图片就直接用图像的客观描述，判为文字图片则据读出的文字给摘要。
+沿用现行字段集（`source` / `ext` / `degraded` / `limits_hit` / `image` / `audio` / `ocr_text` / `asr_text` / `notes` 等）。  
+`ocr_text` / `asr_text`：仅在对应能力实际产出时有值，并与并进 `content` 的转写一致。
 
-模型阶段没产出可用内容时 `summary` 为 `null`，并在 `meta.notes` 里说明原因。
+## 7. `usage`
 
-## 6. `meta`：机器可读的现场信息
+未产生计费 LLM 调用时为 `null`。本机 OCR/ASR 默认不计 token。  
+LLM 可为远程 DeepSeek 或本机 OpenAI 兼容端点（同一客户端，靠 `DEEPSEEK_BASE_URL` 等配置切换）。
 
-| 字段 | 何时有值 | 含义 |
-|---|---|---|
-| `source` | 总是 | 原始输入：URL 或上传时的文件名 |
-| `ext` | 识别成功时 | 识别出的扩展名（不含点） |
-| `mime` | 从 URL 下载时 | 响应头里的 Content-Type |
-| `size_bytes` | 总是 | 实际落盘字节数 |
-| `detector` | 总是 | 靠什么认出来的：`extension` / `content_type` / `magic` / `unknown` |
-| `degraded` | 总是 | 是否走了「基础文件信息」降级产出 |
-| `degrade_reason` | 降级时 | 缺的是什么依赖，面向使用者的说法 |
-| `degrade_code` | 降级时 | 降级的稳定机器名（`configs/errors.py` 的 `DEGRADE_CODES`），与 `degrade_reason` 分工同 `error` 的 `code` / `message` |
-| `model_error` | 模型阶段失败时 | `{code, message, param}`：模型那一段失败的结构化说明，`code` 取自 `configs/errors.py` 的 `MODEL_FAILURE_CODES`。此时确定性抽取产出**仍然交付**、HTTP 仍 200、`error` 仍为 null |
-| `truncated` | 总是 | `content` 是否被字符上限截断。等价于 `limits_hit` 里含 `max_content_chars` |
-| `limits_hit` | 总是 | 本次命中的上界名，取自 `configs/limits.py` 的 `LIMIT_NAMES`（如 `max_links`、`max_rows_per_sheet`、`max_embedded_images`）；同一句命中说明按表里的模板进 `notes` |
-| `pages` / `pages_used` | 文档类 | 总页数与实际处理页数；扫描件超出渲染上限时两者不等 |
-| `unprocessed_pages` | 文档类 | **没处理到的页码**（1 基，升序）= `pages_used+1 … pages`。今天只在扫描件超整页渲染上限时非空，命中原因名在 `limits_hit`（`rendered_page_max`）——「哪几页没处理」是机器读得出的事实，不再只活在 `notes` 的一句中文里 |
-| `images` / `images_used` | 文档类 | 内嵌图**引用次数**与实际落盘处理数；同一张图被引多次只处理一次（按来源部件去重），所以源里有重复引用时两者会不等 |
-| `image` | 源本身是图片 | 尺寸 / 格式 / 色彩模式 / 帧数 / 常用 EXIF |
-| `audio` | 源是音频或视频 | 音轨参数：时长 / 采样率 / 声道 / 音轨格式。视频也填这一块——容器里能确定性读到的只有音轨 |
-| `entry_count` | 压缩包、安装包 | 容器内条目数 |
-| `table_header_rows` | 网页、EPUB、docx、odt / odp | **源自己标出**的表头行数（网页 / EPUB 的 `<th>` 与 `<thead>`、docx 的 `w:trPr/w:tblHeader`、ODF 的 `table:table-header-rows` 行组）。交付文本里唯一一张表时给值；没有表、有多张表、或该格式的源不标表头时是 `null`——与 `0` 区别开：`0` 表示查过、源明确没标。不做「首行即表头」这类启发式（猜错会吃掉一行数据） |
-| `table_kind` | 有表格的格式 | 交付文本里唯一一张表的类型：`data` 或 `layout`。口径照 anydoc 的 `TableKind`——**1×1 的单格表算 `layout`**（文本框里当容器用的排版壳），其余算 `data`；没有表或多张表时是 `null`。**不做**「数据表 vs 印刷目录表」这类推断（猜错会误导按它分支的调用方） |
-| `ocr_text` | 模型读出了文字 | 识别出的文字：独立图片由本机 Paddle OCR 读出，文档内嵌图与扫描页由视觉模型读出；understand 路**同时**并进 `content` |
-| `asr_text` | 转写出了文字 | 本机 Qwen3-ASR 从音频/视频音轨转写出的文字，只在 `/understand` 那一路有值；understand 路**同时**并进 `content` |
-| `engine` | 总是 | 实际用到的解析器或模型 |
-| `notes` | 有需要说明时 | 现场说明：截断、跳过、降级、空白页等 |
+## 8. `timings`
 
-## 7. `usage`：真实用量与折算成本
-
-纯代码解析恒为 `null`——没调模型就没有用量，给 0 是噪音。
-
-| 字段 | 含义 |
-|---|---|
-| `model` | 模型名 |
-| `calls` | 本次请求的调用次数 |
-| `prompt_tokens` / `cached_tokens` / `completion_tokens` / `reasoning_tokens` | 真实 token，缓存命中单独记 |
-| `cost_cny` | 按单价折算的人民币金额 |
-| `price_effective_from` | 所用单价表的生效日 |
-
-成本按「缓存命中 / 未命中 / 输出」三档分别计价，并区分峰谷时段，所以不要把 `prompt_tokens` 乘一个单价去核对。
-
-本机 Paddle OCR 不走 token 计费，也不产生 DeepSeek 账单，所以 `usage` 只反映 DeepSeek 调用：独立图片走 OCR 那一支也只算判型这一次。
-本机 Qwen3-ASR 同理，不计 token：音频/视频那一类只有摘要那一次 DeepSeek 调用计入 `usage`。
-
-## 8. `timings`：分段墙钟
-
-`download_ms` / `parse_ms` / `model_ms` / `total_ms`。用来区分「慢在网络上」和「慢在模型上」。
+`download_ms` / `parse_ms` / `model_ms` / `total_ms`。
 
 ## 9. 状态码
 
 | 码 | 什么时候 |
 |---|---|
-| 200 | 成功，**以及降级**（降级是正常结果） |
-| 413 | 请求体或下载内容超过上限 |
-| 422 | 入参问题：URL 为空、协议不是 http(s)、缺主机名、命中内网或保留地址 |
-| 502 | 上游失败：HTTP 错误码、域名解析失败、重定向异常、网络错误 |
-| 429 | 快/慢并发池已满 |
-| 504 | 下载或全链路时间预算用尽 |
-| 500 | 未预期异常：`internal` 的兜底分支（convert 两个接口的入口阶段）；此时 `error.code` 恒为 `internal` |
+| 200 | 成功，以及降级 |
+| 413 | 请求体或下载超限 |
+| 422 | 入参问题（含 SSRF） |
+| 502 | 上游/下载失败 |
+| 429 | 并发池满 |
+| 504 | 预算用尽 |
+| 500 | 未预期异常（`error.code` = `internal`） |
 
-**响应体始终带 `error` 字段**，所以「只看状态码」和「只看 body」两种消费方式都能用。失败时它是
-`{code, message, param}`：`code` 是**稳定机器名**（见 `configs/errors.py` 的码表），按它分组统计、
-告警、写断言；`message` 是给人看的文案，措辞可能随时改，**别拿它做判断**；`param` 指出出错的入参
-（`url` / `upload`），无明确归属时为 `null`。
+响应体始终带 `error` 字段。
 
-## 10. 两个真实样例
+## 10. 样例（目标态语义）
 
-### 图片（模型增强解析）
+### 图片 · `ocr=true` 且 `llm=true`
 
-图片类是最能看出两条路差别的一类：纯代码那一路 `content` 为空。模型那一路先判型——下面这张赛事海报文字密集，判为**文字图片**，`meta.ocr_text` 与 `content` 均为本机 Paddle OCR 读出的全文（实测 185 字），`summary` 据它生成；照片、插画那类判为**语义图片**，客观描述进 `content` 与 `summary`、`meta.ocr_text` 为 `null`。
+判为文字图片：`content` 与 `meta.ocr_text` 为 OCR 全文；若还需摘要则另开一次 LLM。  
+`ocr`/`llm` 任一为 false：看图支路不跑，`content` 为空，仅 `meta.image` 等基础信息。
 
-```jsonc
-// POST /understand  { "url": "https://…/poster.jpg" }
-{
-  "type": "image",
-  "content": "中国商学院高级工商管理硕士（EMBA）足球联合会\n…（与 ocr_text 相同）",
-  "summary": "2026 年 5 月 14—17 日举行的中国商学院 EMBA 足球联合会第六届全国邀请赛宣传海报……",
-  "meta": {
-    "source": "https://…/poster.jpg",
-    "ext": "jpg",
-    "mime": "image/jpeg",
-    "size_bytes": 213094,            // 界面显示 208.1 KB
-    "detector": "magic",
-    "degraded": false,
-    "degrade_reason": null,
-    "truncated": false,
-    "image": { "width": 1440, "height": 810, "mode": "RGB", "format": "JPEG", "exif": {} },
-    "engine": ["Pillow"],
-    "ocr_text": "中国商学院高级工商管理硕士（EMBA）足球联合会\n第六届全国邀请赛\n指导单位：陕西省体育局\n…（实测 185 字，此处省略）",
-    "notes": ["判为文字图片，已交本机 Paddle OCR 读出 185 字"]
-  },
-  "usage": { "model": "deepseek-flash", "calls": 2, … },   // 判型 1 次 + 摘要 1 次；Paddle OCR 不计 token
-  "timings": { "download_ms": 108, "parse_ms": 0, "model_ms": …, "total_ms": … },
-  "error": null
-}
-```
+### 表格 · 三开关皆 false
 
-同一份源调 `/extract` 会得到结构完全一样的响应，但 `summary` 为 `null`、`usage` 为 `null`、`timings.model_ms` 为 0，`content` 同样是空串。
-
-音频与视频：extract 的 `content` 为空；understand 有转写时 `content` 与 `meta.asr_text` 一致。
-
-### 表格（两条路的 `content` 相同）
-
-```jsonc
-// POST /extract 与 POST /understand 分别调一次
-{
-  "type": "document",
-  "content": "=== SHEET: Sheet1 ===\n货品skc ID\t下架原因\t备注\n…",   // 两次完全一致，实测 882 字符
-  "meta": { "ext": "csv", "detector": "extension", "engine": ["csv"], … }
-}
-```
-
-纯代码那一路 `usage` 为 `null`；模型那一路给出摘要与用量（实测：模型耗时 3030 ms、缓存命中后成本约 ¥0.0032）。
+`content` 为确定性抽取正文；`summary` / `usage` 为 `null`。  
+仅 `llm=true` 时同一 `content` 可附 `summary`。

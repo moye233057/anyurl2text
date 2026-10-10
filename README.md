@@ -1,8 +1,12 @@
 # anyurl2text
 
 把任意 URL 或本地文件转成**尽可能保留原始信息**的文本。
-`/extract` 只靠代码抽取（稳、快、不花钱）
-`/understand` 在同一份结果上叠加模型（慢、计费，可读图、扫描件、语音，可按问题作答）
+
+- 默认：确定性抽取（文档类关扩展仍有正文）
+- 可选扩展：OCR（读图字）、ASR（音视频转写）、LLM（摘要 / 视觉相关能力）
+- 图片与音视频：对应扩展未启用时只返回基础文件信息
+
+接口：`POST /convert`（及 `/convert/file`），请求带 `ocr` / `asr` / `llm`。模块落点见 [docs/architecture.md](docs/architecture.md)。
 
 设计原型：
 
@@ -13,12 +17,13 @@
 - 各格式链路见 [docs/PIPELINES.md](docs/PIPELINES.md)
 - 配置、验收与对外部署见 [docs/RUNBOOK.md](docs/RUNBOOK.md)
 - 扩展入口见 [docs/EXTENDING.md](docs/EXTENDING.md)
+- 计划与选做见 [TODO.md](TODO.md)
 - 本仓给 AI 的规矩见 [AGENTS.md](AGENTS.md)
 
 ## 生产信息
 
 - 接口文档：http://127.0.0.1:8020/docs
-- 对比页：http://127.0.0.1:5173
+- 前端：http://127.0.0.1:5173
 - 健康检查：http://127.0.0.1:8020/probe/health
 - GitHub：无（当前远端在 Gitee）
 
@@ -82,8 +87,8 @@ macOS / Linux：
 cp .env.example .env
 ```
 
-用编辑器打开仓库根目录的 `.env`，按需填写 `DEEPSEEK_API_KEY`。  
-读图字 / 转写语音时，另起本机 OCR（`8021`）与 ASR（`8022`）。
+用编辑器打开仓库根目录的 `.env`，按需填写 LLM 相关项（如 `DEEPSEEK_API_KEY`）。  
+OCR / ASR 为目标态仓内扩展（`optional/` + `backend/extensions/models/` 自备权重）；迁移完成前仍可能需本机 `8021` / `8022`。详见 [TODO.md](TODO.md) 与 RUNBOOK。
 
 ## 后端
 
@@ -131,48 +136,50 @@ npm run dev
 uv run python start.py
 ```
 
-Ctrl+C 一起停止。对外部署见 [RUNBOOK](docs/RUNBOOK.md#对外部署下载者自配)。
+Ctrl+C 一起停止。对外部署见 [RUNBOOK](docs/RUNBOOK.md#对外部署下载者自配)。目标态下同一启动器还应能按条件拉起 OCR/ASR 扩展（见计划）。
 
 ## 系统依赖
 
 | 能力 | 依赖 | 缺了会怎样 |
 |---|---|---|
-| 纯代码抽取 | `uv sync` 安装的解析库 | 对应格式降级或起不来 |
-| 模型摘要 / 识图描述 | `.env` 的 `DEEPSEEK_API_KEY` | `/understand` 写明原因；`/extract` 不受影响 |
-| 图片读字 | 本机 Paddle OCR（`8021`） | 文字图增强失败进 `meta.model_error` |
-| 音视频转写 | 本机 ASR（`8022`）+ `imageio-ffmpeg` | 退回结构信息 / 降级，其余格式不受影响 |
+| 确定性抽取 | `uv sync` 安装的解析库 | 对应格式降级或起不来 |
+| LLM 扩展 | 配置的 API Key 或本地兼容端点 | 无摘要 / 无视觉相关增强；确定性段不受影响 |
+| OCR 扩展 | 本仓 `optional/ocr` + 自备权重 | 图片读字不可用；文档确定性正文仍在 |
+| ASR 扩展 | 本仓 `optional/asr` + 自备权重 + `imageio-ffmpeg` | 音视频无转写，仅结构信息 |
 
 扩展名与分派表见 [PIPELINES §2.3](docs/PIPELINES.md)。
 
 ## 项目结构
 
 ```text
-pyproject.toml / uv.lock     后端依赖
-start.py                     一键拉起前后端
+pyproject.toml / uv.lock     核心后端依赖
+start.py                     一键拉起（目标含扩展进程）
 .env.example                 配置模板 → 复制为根目录 .env
+optional/                    OCR / ASR 服务进程（目标态）
 backend/app.py               FastAPI 入口
 backend/configs/             设置、格式表、限额、错误码、日志
-backend/routers/             /extract · /understand · /probe
-backend/pipelines/           编排 + steps 六步 + processors（一格式一文件）
-backend/models/              DeepSeek / OCR / ASR / 读图
-backend/utils/               契约、下载辅助、表格公共件、出站复用等
-backend/tests/               自检缝与契约测试
+backend/routers/             /convert · /probe
+backend/pipelines/           convert 编排 + steps + processors
+backend/extensions/          扩展出口客户端（DeepSeek / OCR / ASR / 读图）
+backend/extensions/models/   扩展权重（不入库，使用者自备）
+backend/utils/               契约、表格公共件、出站复用等
+backend/tests/               自检缝
 backend/scripts/             make_fixtures.py 等
-frontend/                    三栏对比页（Vite）
+frontend/                    单路 + OCR/ASR/LLM 开关
 docs/                        架构、ADR、API、RUNBOOK、管线
 ```
 
 ```text
-app → routers → pipelines → { models , utils } → configs
+app → routers → pipelines → { extensions , utils } → configs
 ```
 
-一次请求：下载/落盘 → 判型 → 确定性抽取 →（仅 understand）模型增强与摘要 → 组装七字段响应。
+`optional/*` 不进入上图 import 链；核心经本机 URL 调用。
 
 ## 使用说明
 
-### 1. 界面对比
+### 1. 界面
 
-打开 http://127.0.0.1:5173 。左输入，中栏纯代码，右栏模型增强；两栏各有「运行」。预设见 [RUNBOOK §4](docs/RUNBOOK.md#4-界面怎么用)。
+打开 http://127.0.0.1:5173 。左侧输入与三开关，右侧结果。
 
 ```powershell
 cd backend
@@ -181,13 +188,7 @@ uv run python scripts/make_fixtures.py
 
 ### 2. 调接口
 
-URL：`POST /extract` 或 `POST /understand`（JSON）；本地文件：`…/file`（multipart）。字段见 [docs/API.md](docs/API.md)。
-
-| | `/extract` | `/understand` |
-|---|---|---|
-| 调模型 | 否 | 是 |
-| 费用 | 0，`usage` 为 `null` | 按 DeepSeek token 记账 |
-| 图片 / 扫描件 / 音视频 | 结构信息或空正文 | OCR / 逐页还原 / ASR 等 |
+`POST /convert` 或 `/convert/file`，字段见 [docs/API.md](docs/API.md)。
 
 ### 3. 自检
 
@@ -196,4 +197,4 @@ cd backend
 uv run python -m pytest tests --ignore=tests/test_extract_contract.py -q
 ```
 
-HTTP 契约与贵缝见 [RUNBOOK](docs/RUNBOOK.md)。
+HTTP 契约与贵缝见 [RUNBOOK](docs/RUNBOOK.md)。随计划迁移后，双路对比类用例将改为开关矩阵。

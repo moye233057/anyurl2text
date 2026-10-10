@@ -13,8 +13,8 @@ from typing import Any, Dict, List, Tuple
 import configs.settings as settings
 from configs.log_config import logger
 from configs.settings import PROMPTS_DIR
-from models.deepseek import DeepSeekClient, parse_json_object
-from models.images import encode_image, open_image
+from extensions.deepseek import DeepSeekClient, parse_json_object
+from extensions.images import encode_image, open_image
 from utils.processor_schema import EmbeddedAsset, EnhanceOutcome, ExtractResult
 
 # ---------- 读素材的共用件 ----------

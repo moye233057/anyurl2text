@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-对比接口的 HTTP 契约主体（ConvertResponse / Meta / Usage 等）。
+转换接口的 HTTP 契约主体（ConvertResponse / Meta / Usage 等）。
 
 落在 `utils/` 是为了让 `pipelines/` 组装响应时不必 import `routers`（依赖单向，ADR-0010）。
 `routers/convert/schema.py` 再导出本模块，OpenAPI 与旧 import 路径仍可用。
@@ -17,9 +17,12 @@ class ConvertUrlBody(BaseModel):
     """URL 入参。"""
 
     url: str = Field(..., description="待处理的 http/https 地址")
+    ocr: bool = Field(False, description="启用 OCR 相关能力；看图支路还须同时 llm=true")
+    asr: bool = Field(False, description="启用音视频转写")
+    llm: bool = Field(False, description="启用 LLM（摘要/query；看图还须 ocr=true）")
     query: Optional[str] = Field(
         None,
-        description="可选问题。understand 用它做针对性回答；extract 不消费它（确定性抽取没有语言加工环节）。",
+        description="可选问题。仅 llm=true 时消费：有则针对性回答，无则通用摘要。",
     )
 
 
@@ -92,12 +95,12 @@ class Meta(BaseModel):
     )
     ocr_text: Optional[str] = Field(
         None,
-        description="模型从图像读出的文字（独立图片、文档内嵌图、扫描件页面）；"
-        "understand 路同时并进 content（ADR-0011）。",
+        description="从图像读出的文字（独立图片、文档内嵌图、扫描件页面）；"
+        "实际跑过看图时并进 content（ADR-0011/0014）。",
     )
     asr_text: Optional[str] = Field(
         None,
-        description="本机 ASR 从音轨转写的文字，只在 understand 有值；understand 路同时并进 content（ADR-0011）。",
+        description="本机 ASR 从音轨转写的文字；asr=true 且跑过时有值，并进 content（ADR-0011/0014）。",
     )
 
     engine: List[str] = Field(default_factory=list, description="实际用到的解析器或模型")
@@ -127,7 +130,7 @@ class Timings(BaseModel):
 
 
 class ConvertResponse(BaseModel):
-    """两个接口统一的响应体。"""
+    """转换接口统一的响应体。"""
 
     type: Modality
     content: str = ""

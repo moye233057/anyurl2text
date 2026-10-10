@@ -9,44 +9,38 @@
 
 ## 1. 总链路
 
-一份源从入口到响应只有一条主干；`extract` 与 `understand` 的差别只在主干上多走两小步。
+一份源从入口到响应只有一条主干；**能力开关**决定是否多走扩展步（ADR-0014）。  
+**代码迁移完成前**入口可能仍是旧的 `/extract`·`/understand`，语义以目标态为准。
 
 ```text
-POST /extract | /extract/file | /understand | /understand/file
+POST /convert | /convert/file          （见 API.md；迁移完成前代码可能仍为旧双路）
   │
-  ▼ routers/convert/router.py            收参；把 PipelineResult.status 写进 HTTP 状态码
+  ▼ routers/convert/                   收参与能力开关；写 HTTP 状态码
   │
-  ▼ pipelines/extract.py | pipelines/understand.py   只做「按序号调步骤」
+  ▼ pipelines/（统一编排）              按序号调步骤
   │
-  ├─ 步骤 1+2+3   step3_prepare.prepare_from_url() / prepare_from_upload()
-  │                 └ 内部依次走 step1_download（取字节）→ step2_detect（判型）→ 补后缀、组装 PreparedSource
+  ├─ 步骤 1+2+3   prepare_from_url / prepare_from_upload
+  │                 └ step1 取字节 → step2 判型 → 组装 PreparedSource
   │
-  ├─ 步骤 4       step4_extract.run_extraction(prepare_assets)
-  │                 └ dispatch() → processors/<格式>.py 的 extract_*()
-  │                    产出 content（交付文本，唯一来源）+ assets（素材清单）
+  ├─ 步骤 4       run_extraction
+  │                 └ extract_*() → 确定性 content + assets
   │
-  ├─ 步骤 4′      step4_extract.enhance()        ← 只有 understand 走
-  │                 └ 按格式把素材交模型读：独立图片判型、扫描页逐页、内嵌图批量、音轨转写
+  ├─ 步骤 4′      enhance              ← 对应 OCR/ASR/视觉开关开且扩展可用
   │
-  ├─ 步骤 5       step5_enhance.summarize()      ← 只有 understand 走
-  │                 └ 交付文本 + 识别文本 → summarize.txt 或 answer.txt
+  ├─ 步骤 5       summarize            ← LLM 开关开且可用
   │
-  └─ 步骤 6       step6_assemble.build_response() → ConvertResponse
-                    content 按上限截断并声明；meta / usage / timings / error 一次填齐
+  └─ 步骤 6       build_response → ConvertResponse
   │
-  ▼ finally       step3_prepare.cleanup()   整树删除本次请求的临时目录（DEBUG_ARTIFACTS 打开时先留档）
+  ▼ finally       cleanup 临时目录
 ```
 
-两条路的差异只有两处：
-
-| | `extract` | `understand` |
+| | 扩展全关 | 对应扩展开 |
 |---|---|---|
-| 步骤 4 的 `prepare_assets` | `False` | `True` |
-| 步骤 4′ 与步骤 5 | 不走 | 走 |
-| `content` | 完全相同（这是设计前提） | 完全相同 |
-| 模型产出去处 | 无 | `summary` / `meta.ocr_text` / `meta.asr_text` / `meta.notes` |
+| 文档类 `content` | 确定性段 | 确定性段 + 已跑过的转写 |
+| 图片 / 音视频 `content` | 常为空（基础信息在 meta） | OCR / ASR / 描述并入 |
+| `summary` | `null` | 仅 LLM 开时可能有 |
 
-失败不抛给调用方：入口阶段失败走 `step6_assemble.error_response()`（`type="error"`，带语义状态码），步骤 4 之后的失败转成 `meta.notes` 里的说明，HTTP 仍是 200。
+失败不抛给调用方：入口失败走 `error_response`；步骤 4 之后的扩展失败进 `meta.notes` / `model_error`，HTTP 仍可为 200。
 
 ## 2. 通用模块
 
@@ -126,13 +120,13 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 | 音频与视频 | 源是音视频 | `media.enhance_media()`：拿步骤 4 抽好的音轨送本机 ASR |
 | 其余 | 有素材清单的文档与网页 | `reading.enhance_assets()`：`kind="page"` 逐页识别，`kind="image"` 批量识读 |
 
-读素材的共用实现在 `models/reading.py`：
+读素材的共用实现在 `extensions/reading.py`：
 
 - 页面图：先做**确定性空白页预检**（缩到 64x64 灰度看亮度极差，≤8 判空白，直接跳过、不花模型调用）→ 整页识别 → 结果短于 `RENDERED_PAGE_RETRY_MIN_CHARS`（20 字）时切上下两半各识别一次，只有合计更长才采用；空白页与重试页数写进 `notes`。
 - 内嵌图：一次请求带上全部图（受 `MAX_EMBEDDED_IMAGES` 限制），要求模型按 `index` 返回 JSON，**index 对不上的结果丢弃**，再按素材顺序拼回去。
-- 送模型的图片统一走 `models/images.py` 的 `encode_image()`：长边超 1600 先等比缩小，统一转 JPEG 后编成 data URL。从不把 URL 交给服务端代下载。
+- 送模型的图片统一走 `extensions/images.py` 的 `encode_image()`：长边超 1600 先等比缩小，统一转 JPEG 后编成 data URL。从不把 URL 交给服务端代下载。
 
-模型出口（`models/`，一个模型一个文件）：
+模型出口（`extensions/`，一个模型一个文件）：
 
 | 出口 | 何时用 | 记账 |
 |---|---|---|
@@ -140,7 +134,7 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 | `paddle_ocr.py`（本机 `POST /ocr-b64`） | 独立图片判为文字图片后读字 | 不记账 |
 | `qwen3_asr.py`（本机 `POST /asr-b64`） | 音轨转写 | 不记账 |
 
-`deepseek.chat()` 统一负责：显式给 `max_tokens`、默认关思考模式、空内容与异常按 `LLM_MAX_RETRIES` 重试、每次调用记进账本。提示词模板都在 `models/prompts/`：`classify_image.txt`、`read_scanned_page.txt`、`read_embedded_images.txt`、`summarize.txt`、`answer.txt`。
+`deepseek.chat()` 统一负责：显式给 `max_tokens`、默认关思考模式、空内容与异常按 `LLM_MAX_RETRIES` 重试、每次调用记进账本。提示词模板都在 `extensions/prompts/`：`classify_image.txt`、`read_scanned_page.txt`、`read_embedded_images.txt`、`summarize.txt`、`answer.txt`。
 
 步骤 5 摘要（`step5_enhance.summarize()`）：
 

@@ -14,7 +14,7 @@
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `DEEPSEEK_API_KEY` | 空 | 不填则模型增强解析失败并说明原因，纯代码解析不受影响 |
+| `DEEPSEEK_API_KEY` | 空 | 不填则 LLM 扩展不可用并说明原因；确定性抽取不受影响 |
 
 ### 常用
 
@@ -28,13 +28,13 @@
 | `FRONTEND_PORT` | `5173` | 前端 dev server 端口 | 与后端端口一样读同一份 `.env`；Vite 开了 `strictPort`，被占用会直接失败而不是换端口 |
 | `ALLOW_PRIVATE_HOSTS` | `false` | 允许下载内网 / 回环地址 | 仅在本机串本地文件服务调试时打开；对外可访问的部署保持 `false` |
 | `ALLOW_HTTP_SOURCE` | `true` | 是否接受 `http://` 源。`false` 时只收 https，`http://` 在发起连接之前就被 422 拒掉（`download_http_not_allowed`）。**默认 `true` 就是既有行为** | 想让传输一律走加密时设 `false`；本机串内网的 HTTP 服务保持 `true` |
-| `OCR_API_URL` | `http://127.0.0.1:8021/ocr-b64` | 本机 Paddle OCR 服务地址（独立图片判型为文字图片时由它读字） | 换了 OCR 服务端口，或部署到别处时 |
-| `ASR_API_URL` | `http://127.0.0.1:8022/asr-b64` | 本机 Qwen3-ASR 服务地址（音频与视频的音轨由它转写） | 换了 ASR 服务端口，或部署到别处时 |
+| `OCR_API_URL` | `http://127.0.0.1:8021/ocr-b64` | 本仓 OCR 扩展地址（目标由 `optional/ocr` 拉起） | 换端口或部署位置时 |
+| `ASR_API_URL` | `http://127.0.0.1:8022/asr-b64` | 本仓 ASR 扩展地址（目标由 `optional/asr` 拉起） | 换端口或部署位置时 |
 | `ASR_MAX_AUDIO_SECONDS` | 600 | 送转写的音轨时长上限；超过则跳过转写（视频/容器音频会先探时长，超限不抽完整 wav；抽取时仍带 `-t` 封顶）。命中写进 `limits_hit` / `meta.notes` | 想转写更长录音时。**先把 ASR 服务的 `max_new_tokens` 调大**，否则上游会把尾部静默丢掉 |
 
 ### 成本相关
 
-想控花费时按这个顺序调。单价表与第三方成本闸在 `models/deepseek.py`（2026-10-10 按官方 Flash 价核对）。
+想控花费时按这个顺序调。单价表与第三方成本闸在 `extensions/deepseek.py`（2026-10-10 按官方 Flash 价核对）。
 
 | 变量 | 默认 | 影响 |
 |---|---|---|
@@ -240,7 +240,7 @@ uv run python -m pytest tests -m "capability_table or capability_limits" -v
 | 7b | `/understand` 同一份音频（需先起 Qwen3-ASR 服务） | `meta.asr_text` 有值，或 `meta.notes` 说明「音轨里没有说话声」；`timings.model_ms` 大于 0；`content` 与第 7 条的逐字节相同 |
 | 8 | 界面上点一个预设样例 | 本仓样例切到「本地文件」并选中文件（或远程条目填入 URL）、该预设高亮；点中栏「运行」后右栏仍显示未运行 |
 
-第 4 条是本项目最核心的不变量：它一旦不成立，「两条路可对比」这个前提就没了。
+验收条目中带 `/extract`·`/understand` 的，在代码迁移完成前仍可用来摸底；目标态不变量改为「开关 × 模态」矩阵（见 [TODO.md](../TODO.md) 计划），不再要求双路对比。
 
 ## 6. 故障处置
 
@@ -263,7 +263,7 @@ uv run python -m pytest tests -m "capability_table or capability_limits" -v
 
 ### 结构自查报「文件超预算」或「依赖方向不对」
 
-结构判据在 `backend/tests/test_structure.py`；依赖方向见 [architecture.md](./architecture.md) 第 4 节。单文件行数门禁已废除（ADR-0010）：`processors/` 按「一格式族一文件」收拢，不为过门禁拆文件。加东西前先想清楚它属于哪一层，别往 `pipelines/` 里塞跨格式公共逻辑（表格公共进 `utils/excel/`，模型侧进 `models/`）。
+结构判据在 `backend/tests/test_structure.py`；依赖方向见 [architecture.md](./architecture.md) 第 4 节。单文件行数门禁已废除（ADR-0010）：`processors/` 按「一格式族一文件」收拢，不为过门禁拆文件。加东西前先想清楚它属于哪一层，别往 `pipelines/` 里塞跨格式公共逻辑（表格公共进 `utils/excel/`，模型侧进 `extensions/`）。
 
 ### 改了前端代码，页面行为还是旧的
 
@@ -276,14 +276,14 @@ uv run python -m pytest tests -m "capability_table or capability_limits" -v
 ### 含文字的图报「Paddle OCR 服务不可达」
 
 独立图片判型为文字图片后要调本机 OCR 服务（`OCR_API_URL`，默认 `http://127.0.0.1:8021/ocr-b64`）。
-契约见 `backend/models/paddle_ocr.py`：先确认服务已起且 `GET /health` 返回 `"code": "200"`；
+契约见 `backend/extensions/paddle_ocr.py`：先确认服务已起且 `GET /health` 返回 `"code": "200"`；
 端口不同就改 `.env` 的 `OCR_API_URL`。服务没起不会让请求 500——那一张图的模型增强失败，
 原因写进 `meta.notes`，`summary` 相应缺失。
 
 ### 音频/视频报「Qwen3-ASR 服务不可达」
 
 音频与视频的音轨要交给本机 ASR 服务（`ASR_API_URL`，默认 `http://127.0.0.1:8022/asr-b64`）。
-契约见 `backend/models/qwen3_asr.py`：先确认服务已起（模型加载可能要十几秒）且 `GET /health` 返回 `"code": "200"`；
+契约见 `backend/extensions/qwen3_asr.py`：先确认服务已起（模型加载可能要十几秒）且 `GET /health` 返回 `"code": "200"`；
 端口不同就改 `.env` 的 `ASR_API_URL`。服务没起不会让请求 500——这一类源的转写失败，原因写进 `meta.notes`，
 `summary` 相应缺失，`meta.audio` 仍然有值（音轨参数是纯代码读出来的，不依赖服务）。
 

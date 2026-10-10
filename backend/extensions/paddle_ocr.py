@@ -26,7 +26,7 @@ import configs.limits as limits
 import configs.settings as settings
 from utils import request_budget
 from configs.log_config import logger
-from models.images import ImagePixelLimitError, open_image
+from extensions.images import ImagePixelLimitError, open_image
 from utils.egress import shared_httpx_client
 from utils.errors import LlmError
 

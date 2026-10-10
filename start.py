@@ -24,6 +24,9 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = PROJECT_DIR / "backend"
 FRONTEND_DIR = PROJECT_DIR / "frontend"
+OPTIONAL_OCR = PROJECT_DIR / "optional" / "ocr" / "main.py"
+OPTIONAL_ASR = PROJECT_DIR / "optional" / "asr" / "main.py"
+EXTENSIONS_MODELS = PROJECT_DIR / "backend" / "extensions" / "models"
 
 
 def _venv_python() -> Path:
@@ -81,6 +84,10 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv(PROJECT_DIR / ".env")
 BACKEND_PORT = int(os.getenv("ANYURL2TEXT_PORT", "8020"))
 FRONTEND_PORT = int(os.getenv("FRONTEND_PORT", "5173"))
+OCR_PORT = int(os.getenv("OCR_PORT", "8021"))
+ASR_PORT = int(os.getenv("ASR_PORT", "8022"))
+# 为 true 且 optional/*/main.py 存在、权重目录非空时，尝试一并拉起扩展子进程
+START_EXTENSIONS = os.getenv("START_EXTENSIONS", "true").strip().lower() in ("1", "true", "yes", "on")
 HEALTH_URL = f"http://127.0.0.1:{BACKEND_PORT}/probe/health"
 DOCS_URL = f"http://127.0.0.1:{BACKEND_PORT}/docs"
 FRONTEND_URL = f"http://localhost:{FRONTEND_PORT}/"
@@ -122,13 +129,35 @@ def step2_check_frontend() -> bool:
 
 def step3_check_ports() -> bool:
     """端口被占用就别再起第二个，免得两个服务抢同一个端口。"""
-    busy = [str(port) for port in (BACKEND_PORT, FRONTEND_PORT) if _port_in_use(port)]
+    required = [BACKEND_PORT, FRONTEND_PORT]
+    busy = [str(port) for port in required if _port_in_use(port)]
     if busy:
         print("这些端口已被占用：" + "、".join(busy))
         print(f"可能服务已经在跑：{DOCS_URL} 、{FRONTEND_URL}")
         print("要重启就先停掉旧进程，再运行本脚本。")
         return False
     return True
+
+
+def _weights_present() -> bool:
+    """扩展权重目录存在且非空（使用者自备）。"""
+    return EXTENSIONS_MODELS.is_dir() and any(EXTENSIONS_MODELS.iterdir())
+
+
+def _start_optional(label: str, main_py: Path, port: int) -> subprocess.Popen | None:
+    """条件满足时拉起 optional 子进程；已在听端口则跳过。"""
+    if not main_py.is_file():
+        print(f"跳过 {label}：尚未收编（缺少 {main_py.relative_to(PROJECT_DIR)}）")
+        return None
+    if not _weights_present():
+        print(f"跳过 {label}：{EXTENSIONS_MODELS} 无权重（见 backend/extensions/models/README.md）")
+        return None
+    if _port_in_use(port):
+        print(f"{label} 端口 {port} 已在听，复用现有进程")
+        return None
+    print(f"启动 {label}（子进程，cwd={main_py.parent}）…")
+    # 扩展自带环境：此处用「能 import 的 python」仅作占位；收编后应改读 optional 专用解释器
+    return subprocess.Popen([sys.executable, str(main_py.name)], cwd=str(main_py.parent))
 
 
 def step4_start_backend() -> subprocess.Popen:
@@ -176,19 +205,26 @@ def step7_open_browser() -> None:
 
 
 def run() -> int:
-    """只做编排：逐步检查与启动，Ctrl+C 时把两个子进程一起收掉。"""
+    """只做编排：逐步检查与启动，Ctrl+C 时把子进程一起收掉。"""
     if not step1_check_python() or not step2_check_frontend() or not step3_check_ports():
         return 1
 
     backend = None
     frontend = None
+    ocr_proc = None
+    asr_proc = None
     try:
+        if START_EXTENSIONS:
+            ocr_proc = _start_optional("OCR 扩展", OPTIONAL_OCR, OCR_PORT)
+            asr_proc = _start_optional("ASR 扩展", OPTIONAL_ASR, ASR_PORT)
+        else:
+            print("START_EXTENSIONS=false：不自动拉起 optional 扩展（可按 optional/*/README 手动起）")
         backend = step4_start_backend()
         frontend = step5_start_frontend()
         if not step6_wait_ready(backend, frontend):
             return 1
         step7_open_browser()
-        print("两个服务都在跑，按 Ctrl+C 一起停止。")
+        print("服务在跑，按 Ctrl+C 一起停止。")
         while True:
             if backend.poll() is not None or frontend.poll() is not None:
                 print("有服务退出了，一并收尾。")
@@ -200,6 +236,8 @@ def run() -> int:
     finally:
         _stop(frontend)
         _stop(backend)
+        _stop(ocr_proc)
+        _stop(asr_proc)
 
 
 def _stop(process) -> None:

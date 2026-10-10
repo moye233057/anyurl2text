@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
 r"""
-extract 缝的契约测试：只打 HTTP，不 import 项目内任何东西。
+convert 缝（扩展全关）的契约测试：只打 HTTP，不 import 项目内任何东西。
 
-职责：证明**真实服务**上这条链走得通、契约不漂——上传 → 抽取 → 组装 → 响应。
-不覆盖：各格式的完整抽取矩阵在缝 A（`test_processors_by_format.py`，免费、进程内、13 种格式），
-        `understand` 那条路要调模型与本机 OCR / ASR，属于贵缝（`test_understand_contract.py`）。
-        同一能力只在一个缝里验一次（AGENTS.md「测试用例怎么写」第 4 条），这里只抽查代表格式。
+职责：证明**真实服务**上确定性抽取走得通、契约不漂——上传 → 抽取 → 组装 → 响应。
+扩展开启见贵缝 `test_understand_contract.py`。同一能力只在一个缝里验一次。
 
 预期值不来自「跑一遍代码看它输出什么」，而来自：
 - `docs/RUNBOOK.md` 的验收清单
@@ -23,9 +21,8 @@ extract 缝的契约测试：只打 HTTP，不 import 项目内任何东西。
 缺包不要自己装：把缺什么、装它的命令报给用户，由用户决定；环境不全就不跑。
 
 沙箱注意：上传流要先落盘（`step3_prepare.prepare_from_upload` 用 `tempfile.mkdtemp`）。
-文件写入受限的环境里，服务能建目录却建不了文件，`/extract/file` 会一律 500，服务端报
-`PermissionError: ... upload.bin`。所以服务要在有文件写权限的地方起——人在自己终端里起就没
-这个问题；只把 `TEMP`/`TMP` 指到可写目录不够（本机实测）。
+文件写入受限的环境里，服务能建目录却建不了文件，`/convert/file` 会一律 500。
+服务要在有文件写权限的地方起。
 """
 import os
 from pathlib import Path
@@ -77,15 +74,17 @@ def service_is_answerable():
 
 
 def extract(file_name, raw=None, query=None):
-    """打一次 `/extract/file`，返回 (状态码, 响应体)。raw 给了就用它当上传内容。"""
+    """打一次 `/convert/file`（扩展全关），返回 (状态码, 响应体)。"""
     if raw is None:
         path = DATA_DIR / file_name
         if not path.exists():
             pytest.skip(f"样例不存在：{path}（先跑 python scripts/make_fixtures.py）")
         raw = path.read_bytes()
     files = {"file": (file_name, raw)}
-    data = {"query": query} if query else None
-    response = httpx.post(f"{BASE_URL}/extract/file", files=files, data=data, timeout=TIMEOUT)
+    data = {"ocr": "false", "asr": "false", "llm": "false"}
+    if query:
+        data["query"] = query
+    response = httpx.post(f"{BASE_URL}/convert/file", files=files, data=data, timeout=TIMEOUT)
     return response.status_code, response.json()
 
 
@@ -121,7 +120,7 @@ def test_failures_carry_a_structured_error_with_a_stable_code():
     这里用回环地址触发——`ALLOW_PRIVATE_HOSTS` 默认关，422 在发起连接之前就返回，不联网也不花钱。
     """
     response = httpx.post(
-        f"{BASE_URL}/extract", json={"url": "http://127.0.0.1/private"}, timeout=TIMEOUT
+        f"{BASE_URL}/convert", json={"url": "http://127.0.0.1/private"}, timeout=TIMEOUT
     )
     body = response.json()
     assert response.status_code == 422
@@ -226,6 +225,6 @@ def test_missing_file_is_rejected_as_invalid_input():
     来源：路由 docstring「状态码按语义返回（入参 422…）」。这一层由框架的入参校验给出，
     所以只断言「422 + 指名了 file 字段」，不钉框架的措辞。
     """
-    response = httpx.post(f"{BASE_URL}/extract/file", timeout=TIMEOUT)
+    response = httpx.post(f"{BASE_URL}/convert/file", timeout=TIMEOUT)
     assert response.status_code == 422
     assert "file" in response.text, "错误里应点明缺的是 file 字段"

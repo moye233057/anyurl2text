@@ -17,7 +17,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent  # backend/
 DATA_DIR = BASE_DIR / "data"
 DEBUG_DIR = DATA_DIR / "debug"
 # 提示词模板目录：模型调用处直接读文件，不做一层 load_prompt 之类的包装
-PROMPTS_DIR = BASE_DIR / "models" / "prompts"
+PROMPTS_DIR = BASE_DIR / "extensions" / "prompts"
 
 # ---------- HTTP 服务 ----------
 API_HOST = os.getenv("ANYURL2TEXT_HOST", "127.0.0.1")
@@ -88,13 +88,13 @@ THINKING_ENABLED = os.getenv("THINKING_ENABLED", "false").strip().lower() in ("1
 THINKING_EFFORT = os.getenv("THINKING_EFFORT", "high")
 
 # ---------- 本机 OCR 服务 ----------
-# 独立图片判型为「文字图片」时交给它读字（出口见 models/paddle_ocr.py）。
+# 独立图片判型为「文字图片」时交给它读字（出口见 extensions/paddle_ocr.py）。
 # 服务不计 token，usage 只反映 DeepSeek 调用；服务起不来时那一张图的增强会失败并写进 meta.notes。
 OCR_API_URL = os.getenv("OCR_API_URL", "http://127.0.0.1:8021/ocr-b64")
 OCR_TIMEOUT_SEC = float(os.getenv("OCR_TIMEOUT_SEC", "60"))
 
 # ---------- 本机语音识别服务 ----------
-# 音频与视频的音轨交给它转写（出口见 models/qwen3_asr.py）。
+# 音频与视频的音轨交给它转写（出口见 extensions/qwen3_asr.py）。
 # 与 OCR 同一套约定：不计 token、服务起不来只影响这一类源的增强并写进 meta.notes。
 ASR_API_URL = os.getenv("ASR_API_URL", "http://127.0.0.1:8022/asr-b64")
 ASR_TIMEOUT_SEC = float(os.getenv("ASR_TIMEOUT_SEC", "300"))
@@ -118,4 +118,4 @@ except Exception:
 # 打开后把中间产物（下载原文件、渲染出的页面图）落到 backend/data/debug/。默认关闭。
 DEBUG_ARTIFACTS = os.getenv("DEBUG_ARTIFACTS", "false").strip().lower() in ("1", "true", "yes", "on")
 
-# DeepSeek 单价表与第三方成本闸在 models/deepseek.py（一种模型一个文件）。
+# DeepSeek 单价表与第三方成本闸在 extensions/deepseek.py（一种模型一个文件）。

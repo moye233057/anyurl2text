@@ -3,13 +3,14 @@ import type { ConvertResponse, Health } from './types'
 // 后端地址走 Vite 代理，前端只认相对路径
 const BASE = '/api'
 
-export type Pipeline = 'extract' | 'understand'
-
 export interface ConvertInput {
   mode: 'url' | 'file'
   url: string
   file: File | null
   query: string
+  ocr: boolean
+  asr: boolean
+  llm: boolean
 }
 
 async function parseResponse(response: Response): Promise<ConvertResponse> {
@@ -18,14 +19,20 @@ async function parseResponse(response: Response): Promise<ConvertResponse> {
   return payload
 }
 
-export async function runPipeline(pipeline: Pipeline, input: ConvertInput): Promise<ConvertResponse> {
-  const endpoint = input.mode === 'url' ? `/${pipeline}` : `/${pipeline}/file`
+export async function runConvert(input: ConvertInput): Promise<ConvertResponse> {
+  const endpoint = input.mode === 'url' ? '/convert' : '/convert/file'
 
   if (input.mode === 'url') {
     const response = await fetch(`${BASE}${endpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: input.url, query: input.query || null }),
+      body: JSON.stringify({
+        url: input.url,
+        query: input.query || null,
+        ocr: input.ocr,
+        asr: input.asr,
+        llm: input.llm,
+      }),
     })
     return parseResponse(response)
   }
@@ -37,6 +44,9 @@ export async function runPipeline(pipeline: Pipeline, input: ConvertInput): Prom
   if (input.query) {
     form.append('query', input.query)
   }
+  form.append('ocr', String(input.ocr))
+  form.append('asr', String(input.asr))
+  form.append('llm', String(input.llm))
   const response = await fetch(`${BASE}${endpoint}`, { method: 'POST', body: form })
   return parseResponse(response)
 }

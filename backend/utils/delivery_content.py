@@ -19,7 +19,7 @@ def merge_understand_delivery(
     拼 understand 的交付正文。
 
     功能：保留确定性抽取段，再按段追加模型转写（段与段之间空一行）。
-    应用场景：`UnderstandPipeline` 在步骤 6 组装前调用一次。
+    应用场景：`ConvertPipeline` 在步骤 6 组装前调用一次。
     输入：base — 步骤 4 的 `result.content`；ocr/asr/description — 模型阶段产出。
     输出：写入响应 `content` 的字符串（可能仍为空）。
     """

@@ -38,8 +38,8 @@ pytestmark = pytest.mark.capability_structure
 ALLOWED: Dict[str, Set[str]] = {
     "configs": set(),
     "utils": {"configs"},
-    "models": {"configs", "utils"},
-    "pipelines": {"configs", "models", "utils"},
+    "extensions": {"configs", "utils"},
+    "pipelines": {"configs", "extensions", "utils"},
     "routers": {"configs", "pipelines", "utils"},
     "app": {"configs", "pipelines", "routers", "utils"},
 }
@@ -274,12 +274,11 @@ def test_the_rules_are_looking_at_real_modules():
         "app",
         "configs.formats",
         "configs.settings",
-        "pipelines.extract",
-        "pipelines.understand",
+        "pipelines.convert",
         "pipelines.steps.step4_extract",
         "routers.convert.schema",
         "utils.textfile",
-        "models.deepseek",
+        "extensions.deepseek",
     ):
         assert expected in names, f"结构判据没扫到 {expected}"
 

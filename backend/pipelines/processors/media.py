@@ -15,7 +15,7 @@ from typing import Optional
 import configs.settings as settings
 from configs.formats import FFMPEG_ONLY_AUDIO_EXTENSIONS, VIDEO_EXTENSIONS
 from configs.log_config import logger
-from models import qwen3_asr
+from extensions import qwen3_asr
 from utils.processor_schema import (
     EmbeddedAsset,
     EnhanceOutcome,

@@ -5,6 +5,10 @@
 # 而 README 让使用者复制它——不放行的话 clone 下来没有可复制的样本。
 !.env.example
 
+# 扩展权重（使用者自备；远程仓不收录；保留说明文件）
+backend/extensions/models/**
+!backend/extensions/models/README.md
+
 # 运行产物（都在 backend/data/ 下）
 backend/data/debug/
 backend/data/logs/

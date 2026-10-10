@@ -2,7 +2,7 @@
 
 本仓（anyurl2text）的例外与禁令。这里只放**本仓特有、且从代码与文档里查不到**的部分。
 
-事实源指针：跑法 [docs/RUNBOOK.md](docs/RUNBOOK.md) ｜ 叫法 [CONTEXT.md](CONTEXT.md) ｜ 为什么这么定 [docs/adr.md](docs/adr.md) ｜ 选做启发 [TODO.md](TODO.md)（勿默认逐项开工）｜ 评审余项归档 [docs/review-remainder.md](docs/review-remainder.md) ｜ 进展报告 [docs/plan-completed.md](docs/plan-completed.md)
+事实源指针：跑法 [docs/RUNBOOK.md](docs/RUNBOOK.md) ｜ 叫法 [CONTEXT.md](CONTEXT.md) ｜ 目标态 [docs/architecture.md](docs/architecture.md) ｜ 为什么 [docs/adr.md](docs/adr.md) ｜ 计划与选做 [TODO.md](TODO.md)（计划可开工；选做勿默认逐项）｜ 评审余项 [docs/review-remainder.md](docs/review-remainder.md) ｜ 进展 [docs/plan-completed.md](docs/plan-completed.md)
 
 ## 环境：用 uv，不用随便哪个 conda/pip
 
@@ -58,9 +58,9 @@ uv run python -m pytest tests -q    # 需要后端在跑
 
 ## 改代码时的三条硬约束
 
-1. **`processors/` 一格式族一文件**（ADR-0010 / ADR-0007）：不为过行数门禁再拆 `*_merges` / `*_visibility` 式兄弟文件；表格公共进 `utils/excel/`，契约进 `utils/processor_schema.py`，模型侧公共进 `models/`。单文件行数门禁已废除（原判据 2 测试已删）。
+1. **`processors/` 一格式族一文件**（ADR-0010 / ADR-0007）：不为过行数门禁再拆碎片文件；表格公共进 `utils/excel/`，契约进 `utils/processor_schema.py`，扩展调用公共进 `extensions/`。
 2. **上界与错误码各只有一个定义处**：`backend/configs/limits.py`、`backend/configs/errors.py`。
-3. **`content` 分接口**（ADR-0011）：extract 仅纯代码段；understand 合并模型转写，OCR/ASR 双写 `meta.*`。
+3. **`content` 跟能力开关走**（ADR-0014 / 0011）：确定性段只来自 `extract_*`；OCR/ASR/视觉转写仅在对应扩展实际启用时并进 `content`，并双写 `meta.*`。不要恢复双路对比产品身份；不要把权重提交进 git。
 
 ## Git
 

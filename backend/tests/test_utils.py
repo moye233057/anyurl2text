@@ -2,7 +2,7 @@
 r"""
 缝 D：通用件——文本解码与计价记账。
 
-缝：`utils/textfile.py` 的两个函数、`models/deepseek.py` 的时段判定与三档折算。纯函数，
+缝：`utils/textfile.py` 的两个函数、`extensions/deepseek.py` 的时段判定与三档折算。纯函数，
 不联网、不起服务、不碰真实模型。
 
 为什么选它：解码顺序与计价口径是两处「错了也不报错、但结果悄悄不对」的地方——
@@ -18,8 +18,8 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import configs.settings as settings
-import models.deepseek as deepseek_billing
-from models.deepseek import UsageLedger, compute_cost_cny, is_peak_hour
+import extensions.deepseek as deepseek_billing
+from extensions.deepseek import UsageLedger, compute_cost_cny, is_peak_hour
 from utils.textfile import HEADER_PREVIEW_BYTES, read_header_hex, read_text_file
 from utils.body_limit import (
     BodyTooLarge,
@@ -237,7 +237,7 @@ def test_peak_window_is_weekday_morning_and_afternoon(moment, expected):
     """
     行为：高峰 = 北京时间周一至周五 09:00-12:00、14:00-18:00，其余为空闲。
 
-    来源：`models/deepseek.py` 单价表注释与官方计价说明。
+    来源：`extensions/deepseek.py` 单价表注释与官方计价说明。
     2026-09-28 是周一，09-26 / 09-27 是周六周日。
     """
     assert is_peak_hour(moment) is expected
@@ -259,7 +259,7 @@ def test_each_token_bucket_is_priced_separately(offpeak):
 
 
 def test_peak_prices_are_double_the_offpeak_ones(peak):
-    """行为：高峰档单价翻倍。来源：`models/deepseek.PRICE_TABLE` 里 peak / offpeak 两档。"""
+    """行为：高峰档单价翻倍。来源：`extensions/deepseek.PRICE_TABLE` 里 peak / offpeak 两档。"""
     million = 1_000_000
     assert compute_cost_cny(MODEL, million, 0, 0) == pytest.approx(0.04)
     assert compute_cost_cny(MODEL, 0, million, 0) == pytest.approx(2.0)
@@ -270,7 +270,7 @@ def test_cached_input_is_two_orders_of_magnitude_cheaper(offpeak):
     """
     行为：命中价约为未命中的 1/50。
 
-    来源：`models/deepseek.compute_cost_cny`：命中价约为未命中的 1/50。
+    来源：`extensions/deepseek.compute_cost_cny`：命中价约为未命中的 1/50。
     """
     cached = compute_cost_cny(MODEL, 1_000_000, 0, 0)
     missed = compute_cost_cny(MODEL, 0, 1_000_000, 0)

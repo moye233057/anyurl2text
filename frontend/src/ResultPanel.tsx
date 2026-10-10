@@ -2,14 +2,11 @@ import type { ReactNode } from 'react'
 import type { ConvertResponse, Usage } from './types'
 
 interface Props {
-  pipeline: 'extract' | 'understand'
   title: string
   subtitle: string
   result: ConvertResponse | null
   loading: boolean
-  /** 只跑这一条管线；两条管线各有各的按钮，互不牵动 */
   onRun: () => void
-  /** 输入就绪才允许运行（没填地址时按钮禁用） */
   canRun: boolean
 }
 
@@ -136,25 +133,13 @@ function buildUsageRows(usage: Usage): Rows {
   ]
 }
 
-// 一条管线的固定区域。两条管线的区块划分与顺序都不同：
-// understand 的用量统计排在最前（先看到这次花了多少），摘要排在解析内容之前。
-export default function ResultPanel({
-  pipeline,
-  title,
-  subtitle,
-  result,
-  loading,
-  onRun,
-  canRun,
-}: Props) {
+export default function ResultPanel({ title, subtitle, result, loading, onRun, canRun }: Props) {
   const showError = Boolean(result?.error)
   const hasParsedText = Boolean(result && (result.content || result.meta.ocr_text || result.meta.asr_text))
-  const showMetaCopy =
-    pipeline === 'understand' &&
-    Boolean(
-      result?.meta.ocr_text &&
-        result.content.includes(result.meta.ocr_text.slice(0, Math.min(20, result.meta.ocr_text.length))),
-    )
+  const showMetaCopy = Boolean(
+    result?.meta.ocr_text &&
+      result.content.includes(result.meta.ocr_text.slice(0, Math.min(20, result.meta.ocr_text.length))),
+  )
 
   return (
     <section className="region">
@@ -184,15 +169,13 @@ export default function ResultPanel({
 
       {!loading && result && !showError && (
         <div className="region-body">
-          {pipeline === 'understand' && (
-            <Block title="用量统计">
-              {result.usage ? (
-                <KvGrid rows={buildUsageRows(result.usage)} />
-              ) : (
-                <p className="empty">（本次没有调用模型，无用量）</p>
-              )}
-            </Block>
-          )}
+          <Block title="用量统计">
+            {result.usage ? (
+              <KvGrid rows={buildUsageRows(result.usage)} />
+            ) : (
+              <p className="empty">（本次没有计费 LLM 调用）</p>
+            )}
+          </Block>
 
           <Block title="统计信息">
             <KvGrid rows={buildStatsRows(result)} />
@@ -211,7 +194,7 @@ export default function ResultPanel({
             )}
             {result.meta.model_error && (
               <div className="note-box">
-                模型阶段失败：{result.meta.model_error.message}
+                扩展阶段失败：{result.meta.model_error.message}
                 <code>{result.meta.model_error.code}</code>
               </div>
             )}
@@ -228,22 +211,18 @@ export default function ResultPanel({
             )}
           </Block>
 
-          {pipeline === 'understand' && (
-            <Block title="内容摘要">
-              {result.summary ? (
-                <pre className="fill prose">{result.summary}</pre>
-              ) : (
-                <p className="empty">（本次没有产出摘要）</p>
-              )}
-            </Block>
-          )}
+          <Block title="内容摘要">
+            {result.summary ? (
+              <pre className="fill prose">{result.summary}</pre>
+            ) : (
+              <p className="empty">（本次没有产出摘要）</p>
+            )}
+          </Block>
 
           <Block title="解析内容">
             {result.content && (
               <>
-                <div className="sub-label first">
-                  content · {pipeline === 'understand' ? '正文（含模型转写）' : '纯代码抽取'}
-                </div>
+                <div className="sub-label first">content · 交付正文</div>
                 <pre className="fill">{result.content}</pre>
               </>
             )}
@@ -253,7 +232,7 @@ export default function ResultPanel({
                 <pre className="fill">{result.meta.ocr_text}</pre>
               </>
             )}
-            {pipeline === 'understand' && result.meta.asr_text && (
+            {result.meta.asr_text && (
               <>
                 <div className={result.content ? 'sub-label' : 'sub-label first'}>
                   meta.asr_text · 转写副本

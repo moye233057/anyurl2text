@@ -4,7 +4,7 @@
 
 - `run_extraction()`：两条路共用的确定性抽取，产出 `content`（纯代码交付文本）与素材清单。
 
-模型增强分派在 `pipelines/understand.py` 的 `_run_model_enhance()`（ADR-0011）。
+扩展增强分派在 `pipelines/convert.py`（ADR-0011 / 0014）。
 `extract_*` 不调模型、也不感知调用方是哪个接口（ADR 0002/0007）。认不出的扩展名与缺依赖的类型
 走 `extract_file_info()` 的降级产出——那是正常结果，不是错误（ADR 0003）。
 """
@@ -160,7 +160,7 @@ def run_extraction(prepared: PreparedSource, prepare_assets: bool) -> Tuple[Extr
     步骤 4 的入口：跑一次确定性抽取（两条路共用）。
 
     功能：建处理器上下文 → 分派 → 计时；不碰模型，也不碰响应组装。
-    应用场景：`pipelines/extract.py` 与 `pipelines/understand.py` 的第 4 步。
+    应用场景：`pipelines/convert.py` 的第 4 步。
     输入：prepared — 步骤 1-3 产出的源；prepare_assets — 是否准备模型素材。
     输出：(ExtractResult, 解析耗时毫秒)。
     """
