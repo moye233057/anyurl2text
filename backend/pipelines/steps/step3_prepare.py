@@ -79,24 +79,24 @@ def prepare_from_url(url: str) -> Tuple[PreparedSource, int]:
     started = time.monotonic()
     try:
         fetched = download(url, temp_dir)
-    except FetchError:
+        head = read_head(fetched.path)
+        ext, detector = resolve_extension(
+            fetched.path, fetched.file_name or fetched.url, fetched.content_type, head
+        )
+        prepared = PreparedSource(
+            path=_align_extension(fetched.path, ext),
+            source=url,
+            file_name=fetched.file_name,
+            mime=fetched.content_type,
+            size_bytes=fetched.size_bytes,
+            ext=ext,
+            detector=detector,
+            page_url=fetched.url,
+        )
+    except BaseException:
+        # 不只 FetchError：写盘 OSError、InvalidURL 等若只清一类，临时目录会泄漏
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise
-
-    head = read_head(fetched.path)
-    ext, detector = resolve_extension(
-        fetched.path, fetched.file_name or fetched.url, fetched.content_type, head
-    )
-    prepared = PreparedSource(
-        path=_align_extension(fetched.path, ext),
-        source=url,
-        file_name=fetched.file_name,
-        mime=fetched.content_type,
-        size_bytes=fetched.size_bytes,
-        ext=ext,
-        detector=detector,
-        page_url=fetched.url,
-    )
     download_ms = int((time.monotonic() - started) * 1000)
     logger.info(f"prepare 完成 ext={ext or '(未知)'} detector={detector.value} cost={download_ms}ms")
     return prepared, download_ms

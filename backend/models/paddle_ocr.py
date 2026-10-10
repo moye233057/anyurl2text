@@ -22,9 +22,12 @@ from typing import Dict, List, Tuple
 import httpx
 from PIL import Image
 
+import configs.limits as limits
 import configs.settings as settings
 from utils import request_budget
 from configs.log_config import logger
+from models.images import ImagePixelLimitError, open_image
+from utils.egress import shared_httpx_client
 from utils.errors import LlmError
 
 # 切片几何是实现侧的固定取法，不是部署配置：长宽比到不了 LONG_IMAGE_ASPECT_RATIO 就整图识别。
@@ -60,7 +63,7 @@ def _recognize_bytes(image_bytes: bytes, label: str) -> str:
 
     payload = {"file_base64": base64.b64encode(image_bytes).decode("ascii")}
     try:
-        response = httpx.post(
+        response = shared_httpx_client().post(
             settings.OCR_API_URL,
             json=payload,
             timeout=request_budget.call_timeout(settings.OCR_TIMEOUT_SEC, stage="ocr"),
@@ -99,13 +102,17 @@ def _iter_slices(image: Image.Image) -> List[Tuple[int, int, int, Image.Image]]:
         index += 1
     return slices
 
-def _recognize_long_image(image: Image.Image, label: str) -> str:
-    """纵向超长图切片并发识别，再按切片顺序拼回文本。"""
+def _recognize_long_image(image: Image.Image, label: str) -> Tuple[str, List[str]]:
+    """纵向超长图切片并发识别，再按切片顺序拼回文本；切片数超上限只跑前 N 片。"""
     slices = _iter_slices(image)
+    hits: List[str] = []
     if not slices:
         # 空切片会让 ThreadPoolExecutor(max_workers=0) 抛 ValueError；那是个难懂的错，
         # 而且它不是 LlmError，会绕过 understand 对模型错误的处理。这里明确成带码的失败。
         raise LlmError("Paddle OCR 长图切片为空", "ocr_slice_empty", label)
+    if len(slices) > limits.MAX_OCR_SLICES:
+        slices = slices[: limits.MAX_OCR_SLICES]
+        hits.append("max_ocr_slices")
 
     def recognize_one(slice_info):
         index, y_start, y_end, piece = slice_info
@@ -127,24 +134,27 @@ def _recognize_long_image(image: Image.Image, label: str) -> str:
                     pending.cancel()
                 raise LlmError(str(failure), "ocr_slice_failed", f"切片{index}")
             by_index[index] = text
-    return "\n".join(by_index[index] for index in sorted(by_index) if by_index[index])
+    text = "\n".join(by_index[index] for index in sorted(by_index) if by_index[index])
+    return text, hits
 
-def recognize(path: Path) -> str:
+def recognize(path: Path) -> Tuple[str, List[str]]:
     """
     识别一张图里的文字。
 
-    功能：纵向超长图切片并发识别后拼回；其余图整图一次识别。
+    功能：纵向超长图切片并发识别后拼回；其余图整图一次识别；读图走像素预算。
     应用场景：`pipelines/processors/image.py` 的 `enhance_image` 判型为文字图片时调用。
     输入：path — 本地图片路径。
-    输出：识别出的文字（按行拼接）；图里没有文字时返回空串。
-    异常：LlmError — 读图失败、服务不可达、服务返回失败。
+    输出：(识别文字, 命中的上界名列表)；图里没有文字时文字为空串。
+    异常：LlmError — 读图失败、像素超限、服务不可达、服务返回失败。
     """
     try:
-        with Image.open(path) as image:
+        with open_image(path) as image:
             image.load()
             width, height = image.size
             long_vertical = _is_long_vertical(width, height)
             rgb = image.convert("RGB") if long_vertical else None
+    except ImagePixelLimitError as exc:
+        raise LlmError(str(exc), "ocr_read_image_failed", "max_image_pixels") from exc
     except Exception as exc:
         raise LlmError(f"Paddle OCR 读图失败: {exc}", "ocr_read_image_failed", "image") from exc
 
@@ -156,4 +166,4 @@ def recognize(path: Path) -> str:
         image_bytes = path.read_bytes()
     except OSError as exc:
         raise LlmError(f"Paddle OCR 读取图片字节失败: {exc}", "ocr_read_image_failed", "bytes") from exc
-    return _recognize_bytes(image_bytes, label)
+    return _recognize_bytes(image_bytes, label), []

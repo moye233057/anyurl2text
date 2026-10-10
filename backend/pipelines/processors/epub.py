@@ -27,6 +27,7 @@ from bs4 import BeautifulSoup
 import configs.limits as limits
 from utils.excel import html_tables
 from utils.processor_schema import ExtractContext, ExtractResult
+from utils.zip_read import ZipBudgetExceeded, ZipReadBudget, read_member
 
 # EPUB 规范要求容器里必有这个文件，它指向 OPF（真正的包描述）
 CONTAINER_PATH = "META-INF/container.xml"
@@ -57,26 +58,26 @@ def _degraded(reason: str) -> ExtractResult:
         degrade_reason=reason, degrade_code="epub_parse_failed",
     )
 
-def _opf_path(archive: zipfile.ZipFile) -> str:
+def _opf_path(archive: zipfile.ZipFile, budget: ZipReadBudget) -> str:
     """读 container.xml，返回 rootfile 的 full-path（OPF 在容器里的路径）。"""
-    root = ET.fromstring(archive.read(CONTAINER_PATH))
+    root = ET.fromstring(read_member(archive, CONTAINER_PATH, budget))
     rootfile = _child(_child(root, "rootfiles"), "rootfile")
     full_path = (rootfile.get("full-path") or "").strip() if rootfile is not None else ""
     if not full_path:
         raise ValueError("container.xml 里没有 rootfile 的 full-path")
     return full_path
 
-def _spine_members(archive: zipfile.ZipFile, opf_path: str) -> list:
+def _spine_members(archive: zipfile.ZipFile, opf_path: str, budget: ZipReadBudget) -> list:
     """
     按 spine 顺序返回可读的章节路径。
 
     功能：manifest 只用来建 id → href 表（**不按它的顺序**出章节），spine 的 itemref 按序查出
            href，再与 OPF 所在目录拼成容器里的真实路径；只留下容器里确实存在的那些。
     应用场景：extract_epub 定位到 OPF 之后调用。
-    输入：archive — 已打开的 EPUB；opf_path — OPF 在容器里的路径。
+    输入：archive — 已打开的 EPUB；opf_path — OPF 在容器里的路径；budget — 解压字节预算。
     输出：章节路径列表，顺序即阅读顺序。
     """
-    root = ET.fromstring(archive.read(opf_path))
+    root = ET.fromstring(read_member(archive, opf_path, budget))
     base = posixpath.dirname(opf_path)
     manifest = {}
     for item in _children(_child(root, "manifest"), "item"):
@@ -174,8 +175,11 @@ def extract_epub(path: Path, ctx: ExtractContext) -> ExtractResult:
         return _degraded(f"EPUB 容器打不开（不是有效的 ZIP）: {exc}")
 
     with archive:
+        budget = ZipReadBudget()
         try:
-            opf_path = _opf_path(archive)
+            opf_path = _opf_path(archive, budget)
+        except ZipBudgetExceeded as exc:
+            return _degraded(f"EPUB 容器解压总量超限，读不出 {CONTAINER_PATH}: {exc}")
         except KeyError:
             return _degraded(f"EPUB 容器里没有 {CONTAINER_PATH}，无法定位 OPF")
         except ET.ParseError as exc:
@@ -184,7 +188,9 @@ def extract_epub(path: Path, ctx: ExtractContext) -> ExtractResult:
             # 容器损坏 / 受保护 / 结构异常：一律降级，不让它冒成 500（ADR-0003）
             return _degraded(f"EPUB 容器读不出 {CONTAINER_PATH}: {exc}")
         try:
-            chapters = _spine_members(archive, opf_path)
+            chapters = _spine_members(archive, opf_path, budget)
+        except ZipBudgetExceeded as exc:
+            return _degraded(f"EPUB 容器解压总量超限，读不出 OPF（{opf_path}）: {exc}")
         except ET.ParseError as exc:
             return _degraded(f"EPUB 的 OPF（{opf_path}）不是合法 XML: {exc}")
         except Exception as exc:
@@ -204,11 +210,18 @@ def extract_epub(path: Path, ctx: ExtractContext) -> ExtractResult:
         table_kinds: list = []
         for index, chapter in enumerate(used, start=1):
             try:
-                markup = archive.read(chapter)
+                markup = read_member(archive, chapter, budget)
                 soup = BeautifulSoup(markup, "html.parser")
                 title = _chapter_title(soup)
                 body, chapter_hits, chapter_headers, chapter_kinds = _chapter_body(soup)
                 chapter_links = _chapter_links(soup, chapter)
+            except ZipBudgetExceeded as exc:
+                # 一章都还没交付 → 整份降级；已有章节 → 截断后续并上报（TRUNCATE）
+                if not blocks:
+                    return _degraded(f"EPUB 容器解压总量超限，尚未读出任何章节: {exc}")
+                hits.append("max_zip_uncompressed_bytes")
+                notes.append(f"解压总量超限，从第 {index} 章起未再读取: {exc}")
+                break
             except Exception as exc:
                 # 单章坏掉不该让整份文档失败：跳过它、如实说明，其余章照常交付。
                 # 这里必须接宽：zipfile 对损坏数据抛的是 zlib.error、对加密成员抛 RuntimeError，

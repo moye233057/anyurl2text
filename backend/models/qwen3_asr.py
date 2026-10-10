@@ -22,6 +22,7 @@ import httpx
 import configs.settings as settings
 from configs.log_config import logger
 from utils import request_budget
+from utils.egress import shared_httpx_client
 from utils.errors import LlmError
 
 class Transcription(NamedTuple):
@@ -49,7 +50,7 @@ def transcribe(path: Path) -> Transcription:
 
     payload = {"audio_base64": base64.b64encode(audio_bytes).decode("ascii")}
     try:
-        response = httpx.post(
+        response = shared_httpx_client().post(
             settings.ASR_API_URL,
             json=payload,
             timeout=request_budget.call_timeout(settings.ASR_TIMEOUT_SEC, stage="asr"),

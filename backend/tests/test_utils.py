@@ -2,8 +2,8 @@
 r"""
 缝 D：通用件——文本解码与计价记账。
 
-缝：`utils/textfile.py` 的两个函数、`utils/usage.py` 的时段判定与三档折算。纯函数，
-不联网、不起服务、不碰模型。
+缝：`utils/textfile.py` 的两个函数、`models/deepseek.py` 的时段判定与三档折算。纯函数，
+不联网、不起服务、不碰真实模型。
 
 为什么选它：解码顺序与计价口径是两处「错了也不报错、但结果悄悄不对」的地方——
 解码退化成 replace 会让交付文本出现替换字符，计价把命中价按未命中价算会高估几十倍。
@@ -18,9 +18,16 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import configs.settings as settings
-import utils.usage as usage
+import models.deepseek as deepseek_billing
+from models.deepseek import UsageLedger, compute_cost_cny, is_peak_hour
 from utils.textfile import HEADER_PREVIEW_BYTES, read_header_hex, read_text_file
-from utils.usage import UsageLedger, compute_cost_cny, is_peak_hour
+from utils.body_limit import (
+    BodyTooLarge,
+    declared_over_limit,
+    method_may_have_body,
+    wrap_receive,
+)
+from utils.zip_read import ZipBudgetExceeded, ZipReadBudget, read_member
 
 # 能力域见 AGENTS.md「测试用例怎么写」；按域跑：python -m pytest tests -m capability_utils
 pytestmark = pytest.mark.capability_utils
@@ -38,13 +45,13 @@ def write(work_dir, name: str, data: bytes):
 @pytest.fixture
 def offpeak(monkeypatch):
     """把计价时段钉在空闲（官方空闲档为高峰的半价）。"""
-    monkeypatch.setattr(usage, "is_peak_hour", lambda now=None: False)
+    monkeypatch.setattr(deepseek_billing, "is_peak_hour", lambda now=None: False)
 
 
 @pytest.fixture
 def peak(monkeypatch):
     """把计价时段钉在高峰。"""
-    monkeypatch.setattr(usage, "is_peak_hour", lambda now=None: True)
+    monkeypatch.setattr(deepseek_billing, "is_peak_hour", lambda now=None: True)
 
 
 # ---------- 文本解码 ----------
@@ -103,6 +110,113 @@ def test_header_hex_of_missing_file_is_empty(work_dir):
     assert read_header_hex(work_dir / "does-not-exist.bin") == ""
 
 
+# ---------- ZIP 解压预算 ----------
+
+def _zip_with(work_dir, name: str, members: dict):
+    """把 {路径: 字节} 写成一个 ZIP，返回路径。"""
+    import zipfile
+
+    path = work_dir / name
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for member, payload in members.items():
+            archive.writestr(member, payload)
+    return path
+
+
+def test_zip_member_within_budget_reads_exactly(work_dir):
+    """行为：未超预算时原样读出，不谎报命中。"""
+    import zipfile
+
+    path = _zip_with(work_dir, "ok.zip", {"a.txt": b"hello"})
+    budget = ZipReadBudget(limit=64)
+    with zipfile.ZipFile(path) as archive:
+        assert read_member(archive, "a.txt", budget) == b"hello"
+    assert budget.used == 5
+    assert budget.hit is False
+
+
+def test_zip_declared_size_over_remaining_is_refused(work_dir):
+    """
+    行为：成员声明的未压缩体积已超过剩余额度时拒读，并标记命中。
+
+    来源：A-④「读前用 ZipInfo.file_size 预检」——经典 zip bomb 声明巨大、压后很小，
+    必须在解压之前挡住，不能等 `read()` 把声明体积当目标去分配。
+    """
+    import zipfile
+
+    path = _zip_with(work_dir, "declared.zip", {"big.txt": b"0123456789"})
+    budget = ZipReadBudget(limit=4)
+    with zipfile.ZipFile(path) as archive:
+        with pytest.raises(ZipBudgetExceeded):
+            read_member(archive, "big.txt", budget)
+    assert budget.hit is True
+    assert budget.used == 0, "拒读时不得先把额度花掉"
+
+
+def test_zip_budget_accumulates_across_members(work_dir):
+    """
+    行为：跨成员累计解压字节；第二份会触达上界时拒读，第一份已读字节仍计入。
+
+    来源：`max_zip_uncompressed_bytes` 是一次抽取请求的总量，不是单文件上限。
+    """
+    import zipfile
+
+    path = _zip_with(work_dir, "two.zip", {"a.txt": b"abcd", "b.txt": b"efgh"})
+    budget = ZipReadBudget(limit=6)
+    with zipfile.ZipFile(path) as archive:
+        assert read_member(archive, "a.txt", budget) == b"abcd"
+        with pytest.raises(ZipBudgetExceeded):
+            read_member(archive, "b.txt", budget)
+    assert budget.used == 4
+    assert budget.hit is True
+
+
+# ---------- 请求体早拒 ----------
+
+def test_declared_content_length_over_limit_is_flagged():
+    """行为：声明的 Content-Length 已超额度时返回该声明值，供中间件直接 413。"""
+    assert declared_over_limit({"content-length": "100"}, limit=50) == 100
+    assert declared_over_limit({"content-length": "50"}, limit=50) is None
+    assert declared_over_limit({}, limit=50) is None
+
+
+def test_get_requests_skip_body_counting():
+    """行为：GET / HEAD 等不会带请求体，不必包 receive。"""
+    assert method_may_have_body("GET") is False
+    assert method_may_have_body("POST") is True
+
+
+def test_wrap_receive_raises_when_accumulated_body_exceeds_limit():
+    """
+    行为：没有可信声明时，边收边数；累计超过额度立刻抛 BodyTooLarge，不再交出后续块。
+
+    来源：A-②；与下载层「边下边数」同形。用假 receive 模拟分块到达，不启真实服务。
+    """
+    import asyncio
+
+    chunks = [b"aa", b"bb", b"cccc"]  # 2 + 2 + 4；额度 5 时第三块触发
+    index = {"i": 0}
+
+    async def fake_receive():
+        i = index["i"]
+        body = chunks[i]
+        index["i"] += 1
+        return {"type": "http.request", "body": body, "more_body": index["i"] < len(chunks)}
+
+    limited, size = wrap_receive(fake_receive, limit=5)
+
+    async def drive():
+        assert (await limited())["body"] == b"aa"
+        assert (await limited())["body"] == b"bb"
+        assert size() == 4
+        with pytest.raises(BodyTooLarge) as caught:
+            await limited()
+        assert caught.value.received == 8
+        assert caught.value.limit == 5
+
+    asyncio.run(drive())
+
+
 # ---------- 峰谷时段 ----------
 
 @pytest.mark.parametrize(
@@ -123,7 +237,7 @@ def test_peak_window_is_weekday_morning_and_afternoon(moment, expected):
     """
     行为：高峰 = 北京时间周一至周五 09:00-12:00、14:00-18:00，其余为空闲。
 
-    来源：`configs/settings.py` 的单价表注释与官方计价说明。
+    来源：`models/deepseek.py` 单价表注释与官方计价说明。
     2026-09-28 是周一，09-26 / 09-27 是周六周日。
     """
     assert is_peak_hour(moment) is expected
@@ -145,7 +259,7 @@ def test_each_token_bucket_is_priced_separately(offpeak):
 
 
 def test_peak_prices_are_double_the_offpeak_ones(peak):
-    """行为：高峰档单价翻倍。来源：`PRICE_TABLE` 里 peak / offpeak 两档。"""
+    """行为：高峰档单价翻倍。来源：`models/deepseek.PRICE_TABLE` 里 peak / offpeak 两档。"""
     million = 1_000_000
     assert compute_cost_cny(MODEL, million, 0, 0) == pytest.approx(0.04)
     assert compute_cost_cny(MODEL, 0, million, 0) == pytest.approx(2.0)
@@ -156,7 +270,7 @@ def test_cached_input_is_two_orders_of_magnitude_cheaper(offpeak):
     """
     行为：命中价约为未命中的 1/50。
 
-    来源：`utils/usage.compute_cost_cny` 的 docstring 明说「用单一输入价算会高估几十倍」。
+    来源：`models/deepseek.compute_cost_cny`：命中价约为未命中的 1/50。
     """
     cached = compute_cost_cny(MODEL, 1_000_000, 0, 0)
     missed = compute_cost_cny(MODEL, 0, 1_000_000, 0)
@@ -224,4 +338,47 @@ def test_snapshot_carries_the_price_effective_date():
     """行为：usage 带上所用单价表的生效日，便于按当时单价复核历史调用。"""
     ledger = UsageLedger(model=MODEL)
     ledger.add({})
-    assert ledger.snapshot().price_effective_from == settings.PRICE_TABLE[MODEL]["effective_from"]
+    assert ledger.snapshot().price_effective_from == deepseek_billing.PRICE_TABLE[MODEL]["effective_from"]
+
+
+# ---------- 第三方成本闸（默认关；开后用阈值卡住后续 DeepSeek 调用） ----------
+
+def test_cost_gate_off_by_default_allows_any_spend(offpeak, monkeypatch):
+    """行为：费用开关默认关时，哪怕累计费用很高也不拦下一枪。"""
+    monkeypatch.setattr(deepseek_billing, "DEEPSEEK_COST_LIMIT_ENABLED", False)
+    monkeypatch.setattr(deepseek_billing, "DEEPSEEK_TOKEN_LIMIT_ENABLED", False)
+    ledger = UsageLedger(model=MODEL)
+    ledger.add({"prompt_tokens": 1_000_000, "completion_tokens": 1_000_000})
+    ledger.assert_within_cost_limits()  # 不抛
+
+
+def test_cost_gate_blocks_next_call_when_enabled_and_over_cap(offpeak, monkeypatch):
+    """行为：开启费用上限后，累计 cost_cny 达阈值则下一枪抛 llm_cost_limit。"""
+    from utils.errors import LlmError
+
+    monkeypatch.setattr(deepseek_billing, "DEEPSEEK_COST_LIMIT_ENABLED", True)
+    monkeypatch.setattr(deepseek_billing, "DEEPSEEK_MAX_COST_CNY", 0.001)
+    monkeypatch.setattr(deepseek_billing, "DEEPSEEK_TOKEN_LIMIT_ENABLED", False)
+    ledger = UsageLedger(model=MODEL)
+    # 空闲：未命中 1000 + 输出 0 → 0.001 元，刚好踩线
+    ledger.add({"prompt_tokens": 1000, "completion_tokens": 0})
+    assert ledger.cost_cny == pytest.approx(0.001)
+    with pytest.raises(LlmError) as exc:
+        ledger.assert_within_cost_limits()
+    assert exc.value.code == "llm_cost_limit"
+    assert "deepseek_max_cost_cny" in ledger.limits_hit
+
+
+def test_token_gate_blocks_next_call_when_enabled_and_over_cap(offpeak, monkeypatch):
+    """行为：开启 token 上限后，prompt+completion 达阈值则下一枪抛 llm_token_limit。"""
+    from utils.errors import LlmError
+
+    monkeypatch.setattr(deepseek_billing, "DEEPSEEK_COST_LIMIT_ENABLED", False)
+    monkeypatch.setattr(deepseek_billing, "DEEPSEEK_TOKEN_LIMIT_ENABLED", True)
+    monkeypatch.setattr(deepseek_billing, "DEEPSEEK_MAX_TOKENS_PER_REQUEST", 100)
+    ledger = UsageLedger(model=MODEL)
+    ledger.add({"prompt_tokens": 80, "completion_tokens": 20})
+    with pytest.raises(LlmError) as exc:
+        ledger.assert_within_cost_limits()
+    assert exc.value.code == "llm_token_limit"
+    assert "deepseek_max_tokens_per_request" in ledger.limits_hit

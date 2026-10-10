@@ -279,7 +279,7 @@ def test_the_rules_are_looking_at_real_modules():
         "pipelines.steps.step4_extract",
         "routers.convert.schema",
         "utils.textfile",
-        "utils.usage",
+        "models.deepseek",
     ):
         assert expected in names, f"结构判据没扫到 {expected}"
 

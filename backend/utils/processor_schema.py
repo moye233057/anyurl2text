@@ -165,13 +165,15 @@ class EnhanceOutcome:
         asr_text — 本机语音识别服务从音轨转写出的文字；只有它进 `meta.asr_text`。
         description — 独立图片的客观描述；图里没有文字时它就是摘要的来源。
         notes — 过程说明（几页判为空白、几页重试过），由管线放进 `meta.notes`。
-    四项都不碰 content：content 只在 `extract_*` 里产生，这是两条路可对比的前提。
+        limits_hit — 增强阶段命中的上界名（如送模型前 `max_long_edge`），由管线并进 `meta.limits_hit`。
+    五项都不碰 content：content 只在 `extract_*` 里产生，这是两条路可对比的前提。
     """
 
     ocr_text: Optional[str] = None
     asr_text: Optional[str] = None
     description: Optional[str] = None
     notes: List[str] = field(default_factory=list)
+    limits_hit: List[str] = field(default_factory=list)
 
 @dataclass
 class GridSpan:

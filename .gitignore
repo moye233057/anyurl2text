@@ -7,6 +7,7 @@
 
 # 运行产物（都在 backend/data/ 下）
 backend/data/debug/
+backend/data/logs/
 *.log
 
 # 大件样例：18.67 MB，由 make_fixtures.py 阶段 6 生成，不入库。

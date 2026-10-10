@@ -15,13 +15,13 @@ HTTP 状态码。每条只有一个码；同一触发点不得两个码；不同
 - 第 2 组（降级）→ `meta.degrade_code`，HTTP 200（ADR-0003：降级是能力边界而不是故障）；
 - 第 3 组（模型阶段失败）→ `meta.model_error.code`，HTTP 200（确定性抽取产出仍然交付）。
 
-**第 1、2、3 组已全落**：硬失败 18 个、降级 25 个（音轨与转码 5 + 类型与格式 20；
-`media_track_read_failed` 算类型侧）、模型阶段失败 15 个。每个码后面注明它的触发点，
+**第 1、2、3 组已全落**：硬失败 19 个、降级 25 个（音轨与转码 5 + 类型与格式 20；
+`media_track_read_failed` 算类型侧）、模型阶段失败 17 个。每个码后面注明它的触发点，
 就是为了防止「同一个码两处用」。
 """
 
 HARD_FAILURE_CODES = frozenset({
-    "request_body_too_large",              # app.reject_oversized_body：按 Content-Length 提前拒（413）
+    "request_body_too_large",              # app.reject_oversized_body：声明超限或累计接收超限（413）
     "upload_too_large",                    # step3_prepare.prepare_from_upload：上传边写边校验（413）
     "download_declared_too_large",         # step1_download._stream_to_file：Content-Length 声明超限（413）
     "download_stream_too_large",           # step1_download._stream_to_file：流式写入超限（413）
@@ -30,8 +30,9 @@ HARD_FAILURE_CODES = frozenset({
     "download_http_not_allowed",           # step1_download._assert_safe_url：ALLOW_HTTP_SOURCE=false 时拒 http（422）
     "download_host_missing",               # step1_download._assert_safe_url：缺主机名（422）
     "download_private_host",               # step1_download._assert_public_host：内网/保留地址（422）
-    "download_dns_failed",                 # step1_download._assert_public_host：域名解析失败（502）
+    "download_dns_failed",                 # step1_download._assert_public_host：域名解析失败或地址无法识别（502）
     "download_redirect_missing_location",  # step1_download.download：重定向缺 Location（502）
+    "download_redirect_insecure",          # step1_download.download：https → http 协议降级（422）
     "download_http_error",                 # step1_download.download：上游非 2xx（502）
     "download_network_error",              # step1_download.download：网络异常（502；也是默认码）
     "download_redirect_limit",             # step1_download.download：跳转次数超过上限（502）
@@ -80,6 +81,8 @@ DEGRADE_CODES = frozenset({
 MODEL_FAILURE_CODES = frozenset({
     "llm_api_key_missing",                 # deepseek.DeepSeekClient：未配置 DEEPSEEK_API_KEY
     "llm_call_failed",                     # deepseek.chat：重试后仍失败
+    "llm_cost_limit",                      # deepseek：单请求费用达 DEEPSEEK_MAX_COST_CNY
+    "llm_token_limit",                     # deepseek：单请求 token 达 DEEPSEEK_MAX_TOKENS_PER_REQUEST
     "image_encode_failed",                 # images.encode_image：图片编码失败
     "ocr_input_empty",                     # paddle_ocr：输入图片为空
     "ocr_unreachable",                     # paddle_ocr：本机 OCR 服务不可达

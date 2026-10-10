@@ -1,113 +1,199 @@
 # anyurl2text
 
 把任意 URL 或本地文件转成**尽可能保留原始信息**的文本。
+`/extract` 只靠代码抽取（稳、快、不花钱）
+`/understand` 在同一份结果上叠加模型（慢、计费，可读图、扫描件、语音，可按问题作答）
 
-同一份源有两条路：一条只靠代码抽取，稳定、快、不花钱；一条在这份结果之上叠加模型能力，慢且计费，但能读图、能还原扫描件、能按问题作答。界面**对比正文**：纯代码能完整交付的类型两路相同；需要模型转写非文本内容的类型，understand 正文更长（摘要仅 understand 有）。
+设计原型：
 
-| | 纯代码解析 | 模型增强解析 |
-|---|---|---|
-| 接口 | `POST /extract` | `POST /understand` |
-| 调用模型 | 否 | 是 |
-| 典型耗时 | 毫秒到数百毫秒 | 秒级起 |
-| 费用 | 0 | 按 token 计，响应里给出折算金额 |
-| 图片 | 只给尺寸、格式、EXIF 等结构信息 | 先判型：含文字的图交本机 Paddle OCR 读字，语义图给客观内容描述 |
-| 扫描件 PDF | 正文为空，并在 `meta` 里声明「没有文字层」 | 逐页渲染交给视觉模型，还原出全文 |
-| 文档内嵌图 | 标出位置占位 | 读出图里的文字 |
-| 音频 / 视频 | 只给时长、采样率、声道等音轨参数 | 抽音轨后交本机 Qwen3-ASR 转写，文字进 `content` 与 `meta.asr_text` |
-| 带 `query` | 不消费（会明确说明被忽略） | 针对问题作答；不带则给通用摘要 |
+- 架构见 [docs/architecture.md](docs/architecture.md)
+- 术语见 [CONTEXT.md](CONTEXT.md)
+- 接口契约见 [docs/API.md](docs/API.md)
+- 现行为什么见 [docs/adr.md](docs/adr.md)；废决策见 [docs/HISTORY.md](docs/HISTORY.md)
+- 各格式链路见 [docs/PIPELINES.md](docs/PIPELINES.md)
+- 配置、验收与对外部署见 [docs/RUNBOOK.md](docs/RUNBOOK.md)
+- 扩展入口见 [docs/EXTENDING.md](docs/EXTENDING.md)
+- 本仓给 AI 的规矩见 [AGENTS.md](AGENTS.md)
 
-两个接口的入参完全相同：URL 走 `POST /{接口}` 传 JSON，本地文件走 `POST /{接口}/file` 传 multipart。字段含义见 [docs/API.md](./docs/API.md)。
+## 生产信息
 
-## 快速开始
+- 接口文档：http://127.0.0.1:8020/docs
+- 对比页：http://127.0.0.1:5173
+- 健康检查：http://127.0.0.1:8020/probe/health
+- GitHub：无（当前远端在 Gitee）
 
-需要 **Python 3.9+**（代码只用到 `zoneinfo`、`ElementTree.indent` 这类 3.9 起的标准库特性；开发与验证环境是 3.13）与 **Node 18+**（Vite 5 的要求）。
+## 获取代码
 
-一条命令起两个服务（在项目根目录执行，Ctrl+C 一起停）：
-
-```bash
-python start.py                   # 后端 http://127.0.0.1:8020/docs · 前端 http://localhost:5173
+```powershell
+git clone <本仓库地址>
+cd anyurl2text
 ```
 
-它用**你运行它的那个 Python 环境**起后端，所以请先在这个环境里装好后端依赖。要分开调试、或只想起其中一个，照下面两步来：
+目录名以你 clone 下来的为准。以下命令均在**仓库根目录**执行，除非写了 `cd`。
+
+## 环境要求
+
+| 工具 | 版本 |
+|---|---|
+| uv | 终端能执行 `uv --version` |
+| Python | ≥ 3.12（由 uv 按 `.python-version` 安装） |
+| Node.js | ≥ 18（自带 npm） |
+
+### 安装 uv
+
+Windows（PowerShell）：
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+macOS / Linux：
 
 ```bash
-# 后端
-cd backend
-pip install -r requirements.txt
-cp ../.env.example ../.env        # Windows: copy ..\.env.example ..\.env
-#   编辑项目根目录的 .env，填 DEEPSEEK_API_KEY
-#   注意：.env 必须在项目根目录，不是 backend/
-python app.py                     # http://127.0.0.1:8020/docs
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
-# 前端（另开一个终端）
+装完后**新开一个终端**，确认：
+
+```powershell
+uv --version
+```
+
+### 安装 Node.js
+
+安装 Node.js **18 或更高**。确认：
+
+```powershell
+node -v
+npm -v
+```
+
+## 配置
+
+Windows：
+
+```powershell
+copy .env.example .env
+```
+
+macOS / Linux：
+
+```bash
+cp .env.example .env
+```
+
+用编辑器打开仓库根目录的 `.env`，按需填写 `DEEPSEEK_API_KEY`。  
+读图字 / 转写语音时，另起本机 OCR（`8021`）与 ASR（`8022`）。
+
+## 后端
+
+安装依赖（仓库根目录）：
+
+```powershell
+uv sync
+```
+
+启动：
+
+```powershell
+cd backend
+uv run uvicorn app:app --host 127.0.0.1 --port 8020
+```
+
+`--port` 须与 `.env` 里 `ANYURL2TEXT_PORT` 一致（默认 `8020`）。
+
+确认：
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:8020/probe/health -UseBasicParsing
+```
+
+应返回 HTTP 200。接口文档：http://127.0.0.1:8020/docs
+
+## 前端
+
+另开一个终端，在仓库根目录：
+
+```powershell
 cd frontend
 npm install
-npm run dev                       # http://127.0.0.1:5173
+npm run dev
 ```
 
-没有 Key 也能起：纯代码解析完全不受影响，模型增强解析会返回明确原因。配置项全表见 [docs/RUNBOOK.md](./docs/RUNBOOK.md)。
+确认浏览器打开 http://127.0.0.1:5173 。  
+前端开发服把 `/api` 代理到后端；后端须已在跑。
 
-界面是三栏：左栏输入（可一键填入预设样例），中栏纯代码解析，右栏模型增强解析。**两栏各有自己的「运行」按钮，点哪栏只跑哪栏**，所以可以先用纯代码那一路确认文件本身没问题，再单独跑模型那一路。
+## 一键启动
 
-左栏的预设样例来自 `frontend/public/presets.config.js`——一个带注释的顶层配置文件，改它**不用改代码**：开发服务器下刷新页面即生效，跑的是构建产物时要重新 build（或直接改 `dist/` 里那份副本）。本仓样例文件在 `frontend/public/samples/`，点击后走本地上传口（不依赖外网私有桶）；也可写 `url` 指向任意 http(s) 地址。字段含义与校验规则写在那个文件的头部。
+两端依赖都装好后（已执行过 `uv sync` 与 `frontend` 下的 `npm install`），可在仓库根同时拉起前后端：
 
-生成演示用的样例文件：
-
-```bash
-cd backend
-python scripts/make_fixtures.py   # 输出到 backend/data/
+```powershell
+uv run python start.py
 ```
 
-## 支持哪些输入
+Ctrl+C 一起停止。对外部署见 [RUNBOOK](docs/RUNBOOK.md#对外部署下载者自配)。
 
-以「纯 Python 库能否做到」划线。能做的完整实现，缺依赖的**降级为文件基础信息，且不算错误**。
+## 系统依赖
 
-| 类别 | 格式 | 处理 |
+| 能力 | 依赖 | 缺了会怎样 |
 |---|---|---|
-| 文档 | pdf、docx、pptx、xlsx、xlsm、xls、ods、odt、odp、epub、ofd、rtf、csv、tsv、txt、md、markdown、json、xml | 完整解析（版面顺序、表格、文本框、内嵌图位置、docx 超链接、EPUB 按 spine 拼章节、OFD 按文档根声明的页序取正文） |
-| 网页 | html、htm | 标题 + 摘要 + 正文 + 去重链接 |
-| 图片 | png、jpg、jpeg、gif、bmp、tif、tiff、webp、heic、heif、ico、svg | 结构信息（尺寸 / 格式 / 色彩模式 / 帧数 / EXIF） |
-| 音频 | mp3、wav、aac、flac、ogg、wma、m4a | 结构信息（时长 / 采样率 / 声道 / 音轨格式） |
-| 视频 | mp4、avi、mkv、mov、wmv、flv、webm、mpeg、mpg | 同上，报的是它音轨的参数 |
-| 压缩包 | zip、tar、gz、tgz、bz2、tbz2、xz、txz、7z、rar | 条目清单（**不解压内容**），识别密码保护 |
-| 安装包 | apk、ipa、exe | 文件头 + 容器条目 + APK/IPA 结构指纹 |
-| **降级** | 老版 Office（doc/ppt/wps） | 只返回文件类型与大小，`meta.degraded` 与 `degrade_reason` 说明缺的是什么；Office 锁文件（`~$` 前缀）与 `.DS_Store` / `Thumbs.db` 这类噪音文件同样判为「不是文档本体」（`degrade_code="temporary_lock_file"`） |
+| 纯代码抽取 | `uv sync` 安装的解析库 | 对应格式降级或起不来 |
+| 模型摘要 / 识图描述 | `.env` 的 `DEEPSEEK_API_KEY` | `/understand` 写明原因；`/extract` 不受影响 |
+| 图片读字 | 本机 Paddle OCR（`8021`） | 文字图增强失败进 `meta.model_error` |
+| 音视频转写 | 本机 ASR（`8022`）+ `imageio-ffmpeg` | 退回结构信息 / 降级，其余格式不受影响 |
 
-音频与视频的语音转写要本机另起一个兼容的 ASR 服务（默认 `http://127.0.0.1:8022`，契约见 `backend/models/qwen3_asr.py`）；
-视频与 m4a/aac/wma 这些容器还要先抽音轨，用 `imageio-ffmpeg` 自带的 ffmpeg，**不要求系统装 ffmpeg**——
-装不上时这一类退回降级，其余格式不受影响。
+扩展名与分派表见 [PIPELINES §2.3](docs/PIPELINES.md)。
 
-## 几个关键取舍
+## 项目结构
 
-- **摘要不替换正文**：摘要进 `summary`；`content` 是交付正文（extract 仅纯代码段，understand 可含模型转写，见 [ADR-0011](./docs/adr.md)）。
-- **模型转写双写字段**：OCR/ASR 并进 understand 的 `content`，同时保留 `meta.ocr_text` / `meta.asr_text` 副本。
-- **响应形状恒定**：7 个固定字段，`error` 恒存在（成功为 `null`），调用方不必判两种形状；失败时它是 `{code, message, param}`，`code` 是稳定机器名（码表见 `backend/configs/errors.py`），文案改措辞也不影响按 `code` 分组。
-- **成本按真实 token 记账**：缓存命中 / 未命中 / 输出三档分别计价，带峰谷时段与单价生效日；纯代码那一路 `usage` 为 `null`（没调模型就没有用量，给 0 是噪音）。
-- **下载层四条基线不可协商**：SSRF 防护、流式写盘时的大小上限、TLS 不降级、请求体在解析前早拒。已知边界：SSRF 校验与建连各解析一次 DNS，存在 DNS rebinding 的时间窗（见 `docs/architecture.md`「现状缺口」）；对外暴露前应补「解析一次、按 IP 连接」，或保持本机自用。
-- **降级是能力边界而非故障**：缺依赖的类型返回「这是什么、多大」，HTTP 仍是 200。
-- **扫描件逐页渲染补全**：带页数上限，空白页在调用模型之前就被判掉。
+```text
+pyproject.toml / uv.lock     后端依赖
+start.py                     一键拉起前后端
+.env.example                 配置模板 → 复制为根目录 .env
+backend/app.py               FastAPI 入口
+backend/configs/             设置、格式表、限额、错误码、日志
+backend/routers/             /extract · /understand · /probe
+backend/pipelines/           编排 + steps 六步 + processors（一格式一文件）
+backend/models/              DeepSeek / OCR / ASR / 读图
+backend/utils/               契约、下载辅助、表格公共件、出站复用等
+backend/tests/               自检缝与契约测试
+backend/scripts/             make_fixtures.py 等
+frontend/                    三栏对比页（Vite）
+docs/                        架构、ADR、API、RUNBOOK、管线
+```
 
-每条仍有效的决策理由与被否掉的备选方案见 [docs/adr.md](./docs/adr.md)；被取代或废弃的选定见 [docs/HISTORY.md](./docs/HISTORY.md)。
+```text
+app → routers → pipelines → { models , utils } → configs
+```
 
-## 文档
+一次请求：下载/落盘 → 判型 → 确定性抽取 →（仅 understand）模型增强与摘要 → 组装七字段响应。
 
-| 文档 | 看它解决什么问题 |
-|---|---|
-| [docs/architecture.md](./docs/architecture.md) | 项目是什么、明确不做什么、模块落在哪、一次请求如何走完 |
-| [docs/API.md](./docs/API.md) | 两个接口怎么调、响应每个字段什么意思、失败长什么样 |
-| [docs/adr.md](./docs/adr.md) | 为什么这样设计，以及为什么不那样（只记仍有效的） |
-| [docs/HISTORY.md](./docs/HISTORY.md) | 被取代或废弃的选定（问「为什么曾经那样」时读） |
-| [docs/RUNBOOK.md](./docs/RUNBOOK.md) | 配置项全表、样例生成、验收清单、故障处置 |
-| [docs/EXTENDING.md](./docs/EXTENDING.md) | 要加格式 / 加模型调用 / 改契约时该动哪里 |
-| [docs/PIPELINES.md](./docs/PIPELINES.md) | 每种输入类型各走了哪几步、判定与上限在哪、产出落到哪个字段 |
-| [CONTEXT.md](./CONTEXT.md) | 术语表：本项目的词有确切含义，改代码前先对齐 |
-| [TODO.md](./TODO.md) | 评审后的待办与待裁决：上生产、发开源、文档修订各有哪些没做（当前工作清单） |
+## 使用说明
 
-## 已知边界
+### 1. 界面对比
 
-- 老版 Office 只返回文件基础信息（见上表）。音视频要本机 ASR 服务起着，且视频与容器音频还要 ffmpeg（`imageio-ffmpeg`）能抽音轨，缺任一项都退回降级并在 `meta.notes` 里说明。
-- 压缩包只列条目，不解压、不递归。
-- 扫描件页面渲染默认最多 10 页，超出部分会在 `meta.notes` 里说明。
-- `content` 默认上限 20 万字符，送模型的输入上限 12 万字符；两者都会在 `meta.truncated` 与 `meta.notes` 里声明。
-- 送转写的音轨默认上限 10 分钟（`ASR_MAX_AUDIO_SECONDS`），超过就跳过并说明；ASR 服务自身的 `max_new_tokens` 决定单次转写的实际长度。
-- 模型调用用现行模型名 `deepseek-flash`（旧的 `deepseek-v4-flash` / `vision-exp` 已下线，仅作兼容路由）。
+打开 http://127.0.0.1:5173 。左输入，中栏纯代码，右栏模型增强；两栏各有「运行」。预设见 [RUNBOOK §4](docs/RUNBOOK.md#4-界面怎么用)。
+
+```powershell
+cd backend
+uv run python scripts/make_fixtures.py
+```
+
+### 2. 调接口
+
+URL：`POST /extract` 或 `POST /understand`（JSON）；本地文件：`…/file`（multipart）。字段见 [docs/API.md](docs/API.md)。
+
+| | `/extract` | `/understand` |
+|---|---|---|
+| 调模型 | 否 | 是 |
+| 费用 | 0，`usage` 为 `null` | 按 DeepSeek token 记账 |
+| 图片 / 扫描件 / 音视频 | 结构信息或空正文 | OCR / 逐页还原 / ASR 等 |
+
+### 3. 自检
+
+```powershell
+cd backend
+uv run python -m pytest tests --ignore=tests/test_extract_contract.py -q
+```
+
+HTTP 契约与贵缝见 [RUNBOOK](docs/RUNBOOK.md)。

@@ -61,7 +61,7 @@ POST /extract | /extract/file | /understand | /understand/file
 | URL | 去空格并把空格换成 `%20` → 校验协议（只收 http/https；`ALLOW_HTTP_SOURCE=false` 时 `http://` 直接 422）与主机 → 手工逐跳跟随重定向（每跳重新校验协议与地址）→ 流式写盘 |
 | 上传 | 分块写进 `upload.bin`，边写边累计字节，与下载共用同一个大小上限 |
 
-安全与边界（不可协商）：DNS 返回的每个地址都判定，命中私网 / 回环 / 链路本地 / 保留 / 组播一律 422；字节数在写入过程中累计，超 `MAX_DOWNLOAD_BYTES`（默认 200MB）立刻中断并删半成品（413）；超时按剩余预算递减（504），不出现「连接与读取各自用满」；TLS 校验恒开，证书问题直接失败。
+安全与边界（不可协商）：DNS 返回的每个地址都判定，命中私网 / 回环 / 链路本地 / 保留 / 组播一律 422；地址无法识别亦拒；**解析一次并钉 IP 建连**（Host/SNI 仍用原主机名）；重定向逐跳重检，**禁止 https→http**；字节数在写入过程中累计，超 `MAX_DOWNLOAD_BYTES`（默认 200MB）立刻中断并删半成品（413）；超时按剩余预算递减（504）；TLS 校验恒开，证书问题直接失败。
 
 文件名取 `Content-Disposition` 的 `filename=`，取不到退回 URL 路径末段。
 
@@ -105,7 +105,7 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 | 音频与视频 | mp3 / wav / aac / flac / ogg / wma / m4a / mp4 / avi / mkv / mov / wmv / flv / webm / mpeg / mpg | `media.py` |
 | 压缩包 | zip / tar / gz / tgz / bz2 / tbz2 / xz / txz / 7z / rar | `archive.py` |
 | 安装包 | apk / ipa / exe | `install_package.py` |
-| 降级 | 空 ext、doc / ppt / wps、其余未覆盖扩展名 | `extract_file_info()`（同文件内） |
+| 降级 | 空 ext、doc / ppt / wps、其余未覆盖扩展名；另：Office 锁文件（`~$`）与 `.DS_Store` / `Thumbs.db` 在分派前拦下（`temporary_lock_file`） | `extract_file_info()`（同文件内） |
 
 所有 `extract_*` 的共同约定：
 
@@ -183,13 +183,13 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 `extract` 关键步骤：
 
 1. `pymupdf.open()`；打不开返回降级。`needs_pass` 且空密码认证失败 → 降级「PDF 受密码保护」。
-2. 逐页 `get_text("blocks")`，丢掉空块，按 **(y, x)** 排序后拼成一页；每页前加 `=== 第N页 ===`，页间空行。
-3. 累加 `get_images(full=True)` 得到图片总数（进 `meta.images`）。
-4. 文字层判定：全部页文本合计少于 `TEXT_LAYER_MIN_CHARS`（30 字）即视为「没有文字层（疑似扫描件）」。
+2. 总页数超过 `MAX_PDF_PAGES`（200）只处理前 N 页，并记 `max_pdf_pages`；逐页 `get_text("blocks")`，丢掉空块，按 **(y, x)** 排序后拼成一页；每页前加 `=== 第N页 ===`，页间空行。
+3. 累加 `get_images(full=True)` 得到图片总数（进 `meta.images`；只扫已处理页）。
+4. 文字层判定：已处理页文本合计少于 `TEXT_LAYER_MIN_CHARS`（30 字）即视为「没有文字层（疑似扫描件）」。
 5. `prepare_assets=False`（extract 路）：只加一条说明 `notes`，不做任何渲染。
 6. `prepare_assets=True`（understand 路）分两种互斥情况：
-   - **扫描件**（无文字层且 `RENDERED_PAGE_OCR_ENABLED`）：渲染前 `min(页数, RENDERED_PAGE_MAX)` 页为 PNG（`RENDERED_PAGE_DPI`，默认 150），`pages_used` 记为已渲染页数。**不再抽内嵌图**——整页渲染已覆盖页面上的图，两条都走会让同一页文字被识别两遍、付两份钱。
-   - **有文字层**：按 xref 去重后取前 `MAX_EMBEDDED_IMAGES` 张**不同的**内嵌图（xref → PNG，`images_used` 记数）——同一个图像对象出现在 N 页上只落一次盘。
+   - **扫描件**（无文字层且 `RENDERED_PAGE_OCR_ENABLED`）：渲染前 `min(已处理页数, RENDERED_PAGE_MAX)` 页为 PNG（`RENDERED_PAGE_DPI`，默认 150）；单页估算或实际 pixmap 超 `MAX_PDF_PAGE_PIXELS` 则跳过该页并记 `max_pdf_page_pixels`。**不再抽内嵌图**。
+   - **有文字层**：按 xref 去重后取前 `MAX_EMBEDDED_IMAGES` 张**不同的**内嵌图；pixmap 超像素预算同样跳过并记命中。
 
 `understand`：走 `reading.enhance_assets()`，页面图逐页识别（含空白页预检与切半重试）、内嵌图一次性批量识读，两者按素材顺序拼进 `meta.ocr_text`。
 
@@ -251,7 +251,7 @@ CSV 的分隔符嗅探规则（确定性，实现只在 `excel._sniff_delimiter`
 
 `extract` 关键步骤：
 
-1. `zipfile` 取出容器内的 `content.xml`；容器损坏或条目缺失 → 降级。
+1. `zipfile` 经 `utils/zip_read.read_member` 取出容器内的 `content.xml`（计入解压总量预算）；容器损坏、条目缺失或超 `MAX_ZIP_UNCOMPRESSED_BYTES` → 降级。
 2. 标准库 `ElementTree` 从 `office:body` **按文档结构递归**——不用全局 `root.iter()`，那个会把所有 `text:p` 拉平，表格因此坍成「一段一行」（列对应关系丢失）、嵌套列表的层级也没了。遇到 `table:table` 与 `text:list` 交给各自的渲染并**不再往下走**（否则单元格与列表项里的段落会被再收一遍），其余容器继续递归。
 3. `table:table` → 格位网格（`grid.py`），与 docx / pptx / xlsx 同一份渲染与不变式：`number-columns-spanned` / `number-rows-spanned` → `place(span)`、`covered-table-cell` → `covered()`、`number-columns-repeated` / `number-rows-repeated` 循环落位；超 `MAX_TABLE_ROWS=2000` 行截断并说明。**收行要往里走一层**：`table:table-row` 不只直接挂在表下，`table:table-header-rows`（表头行组）、`table:table-rows`、`table:table-row-group` 都会再包一层——只取直属行的话整组内容凭空消失（实测表头行组里的文字一个字都没进正文）。表头行**照渲**，同时按 `table:table-header-rows` 里的行数（含 `number-rows-repeated`）报出「源自己标出的表头行数」。
 4. `text:list` → Markdown 列表，每深一层多缩进两个空格（`LIST_INDENT`）；`text:list-header` 与 `text:list-item` 同等对待。
@@ -297,7 +297,7 @@ CSV 的分隔符嗅探规则（确定性，实现只在 `excel._sniff_delimiter`
 `extract` 关键步骤（只给结构信息，不给文字，ADR 0004）：
 
 - **SVG** 走独立分支：`ElementTree` 解析 `width/height`（缺则退回 `viewBox` 的第 3、4 个值），统计元素总数，产出 `ImageMeta(format="SVG", mode="vector")` 与一条说明——矢量图不需要光栅化就能报结构。
-- **位图**：Pillow 打开并 `load()`，取宽高、色彩模式、格式、帧数（>1 才填）、DPI，以及白名单里的 10 项 EXIF（厂商 / 机型 / 软件 / 方向 / 两个时间 / 曝光 / 光圈 / ISO / 焦距；**不整包倒出**，避免带出 GPS）。附加说明：HEIC 无 `pillow-heif` 时提示解码可能不完整；ICO 列出内含尺寸；多帧图提示只报首帧。解码失败 → 降级。
+- **位图**：经 `open_image` 打开（读前宽×高超过 `MAX_IMAGE_PIXELS` 直接拒并记 `max_image_pixels`），再 `load()`，取宽高、色彩模式、格式、帧数（>1 才填）、DPI，以及白名单里的 10 项 EXIF（**不整包倒出**）。附加说明：HEIC 无 `pillow-heif` 时提示解码可能不完整；ICO 列出内含尺寸；多帧图提示只报首帧。解码失败 → 降级。
 - `content` 恒为空串：纯代码对一张图拿不到文字。
 
 `understand` 走 `enhance_image()`：
@@ -305,7 +305,7 @@ CSV 的分隔符嗅探规则（确定性，实现只在 `excel._sniff_delimiter`
 1. `encode_image()` 编码后调视觉模型，提示词 `classify_image.txt`，`json_mode=True`，**一次调用同时拿到判型和描述**。
 2. `kind == "semantic"` → 直接用这次调用给出的 `description`（`EnhanceOutcome.description`），不再 OCR。
 3. 其余情况（判为文字图片，或**判型输出解析不出来**）→ 交本机 Paddle OCR 读字进 `ocr_text`。拿不准就 OCR：本机服务不花 token，漏掉整页文字代价更大。
-4. 本机 OCR 出口对纵向超长图（高宽比 ≥ 2.5）按 1400 高切段、留 120 重叠、4 路并发识别后按序拼回（任一切片失败即整图失败，避免半张文字混进来）；其余图整图原字节发送。
+4. 本机 OCR 出口对纵向超长图（高宽比 ≥ 2.5）按 1400 高切段、留 120 重叠、最多 `MAX_OCR_SLICES` 片、4 路并发识别后按序拼回（超片数截断并记 `max_ocr_slices`；任一切片失败即整图失败）；其余图整图原字节发送。
 5. 步骤 5：没有 query 且已有 `description` 时直接复用为 `summary`。
 
 ### 3.9 音频与视频（`media.py`）
@@ -313,15 +313,15 @@ CSV 的分隔符嗅探规则（确定性，实现只在 `excel._sniff_delimiter`
 `extract` 关键步骤：
 
 1. `soundfile` 未安装 → 降级（缺的只是这一类的结构信息，不影响其他格式）。
-2. 取音轨：`mp3 / wav / flac / ogg` 直接用源文件；**视频全部**与 `m4a / aac / wma` 这几个 libsndfile 不认的容器先用 `utils/ffmpeg.py` 抽成 16kHz 单声道 wav（`imageio-ffmpeg` 自带的静态 ffmpeg，不要求系统安装；失败或超时抛 `FfmpegError` → 降级）。
-3. `soundfile.info()` 读时长、采样率、声道数、音轨格式，填进 `meta.audio`；抽过音轨的额外说明「这里报的是音轨的参数」。
+2. 取音轨：`mp3 / wav / flac / ogg` 直接用源文件；**视频全部**与 `m4a / aac / wma` 这几个 libsndfile 不认的容器先用 `utils/ffmpeg.py` 抽成 16kHz 单声道 wav（`imageio-ffmpeg` 自带的静态 ffmpeg，不要求系统安装；失败或超时抛 `FfmpegError` → 降级）。抽之前先 `probe_duration_seconds`：已超 `ASR_MAX_AUDIO_SECONDS` 则**跳过转码**，只报探测时长并记 `asr_max_audio_seconds`；仍抽取时带 ffmpeg `-t` 封顶，避免探不出时长时先写满临时 wav。
+3. `soundfile.info()` 读时长、采样率、声道数、音轨格式，填进 `meta.audio`（有探测时长时优先报源时长）；抽过音轨的额外说明「这里报的是音轨的参数」。
 4. `content` 恒为空：视频容器里没有可确定性抽取的文本，语音是模型产出。
-5. `prepare_assets=True` 时把音轨登记成 `assets` 里的 `kind="audio_track"`——**一次请求只转码一次**，`enhance_media()` 直接复用它。
+5. `prepare_assets=True` 且未因超限跳过时，把音轨登记成 `assets` 里的 `kind="audio_track"`——**一次请求只转码一次**，`enhance_media()` 直接复用它。
 
 `understand` 走 `enhance_media()`：
 
 1. 从 `assets` 取音轨；没有（降级）→ 只写 `notes`，不发请求。
-2. 时长超过 `ASR_MAX_AUDIO_SECONDS`（600 秒）→ 不转写，在 `notes` 里说明（ASR 单次输出有 token 上限，长音轨尾部会被静默丢掉）。
+2. 时长超过 `ASR_MAX_AUDIO_SECONDS`（600 秒）→ 不转写（抽取阶段多半已跳过转码 / 未登记 assets）；在 `notes` / `limits_hit` 说明（ASR 单次输出有 token 上限，长音轨尾部会被静默丢掉，本项目不静默截断送转写）。
 3. 否则把音轨字节 base64 发本机 Qwen3-ASR 的 `/asr-b64`，文字进 `meta.asr_text`，语种与字数写进 `notes`；没有说话声时只写说明。
 
 ### 3.10 压缩包（`archive.py`）
@@ -364,7 +364,7 @@ EPUB 也是 ZIP 容器，真实身份写在容器里：识别那一步读 `META-
 3. 每章是 XHTML，用 BeautifulSoup 取正文：`script` / `style` / `noscript` / `iframe` / `svg` 与 `<head>` 整块丢掉。**CSS 一律不进交付文本**——`<link rel="stylesheet">` 与内联 `<style>` 都不是这份文档的内容（`<title>` 已进了分章标记，留着会重复出现）。**表格走与网页同一条路**（`html_tables.py`）：先换哨兵行、清洗后回填，所以章内表格也是制表符块而不是被拉平。
 4. 章节块形如 `=== 章节 N: <标题> ===`；标题取该章 `<title>`，没有就退第一个 `h1`–`h6`，都没有只写章号。
 5. 链接：外部 `http(s)` 保留绝对地址；**内部引用提升成文档级目标**——EPUB 的 `#frag` 只在**单章内**有意义，跨章拼成一整篇之后不带上章路径，「这个锚点指向哪儿」就是歧义。所以章内自链 `#sec` → `ch2.xhtml#sec`，相对引用按该章所在目录解析（`../ch2.xhtml#sec2` → `ch2.xhtml#sec2`），`javascript` / `mailto` / `tel` 跳过。按目标去重后截到 `MAX_LINKS=100`（命中报 `max_links`），输出成末尾的 `## 链接` 段，与 `html.py` / `docx.hyperlink_lines` 同形。
-6. 单章读不出来（容器截断、成员 CRC 坏、加密）**只跳过那一章**并在 `notes` 里点名章节与原因，其余章照常交付；一章都读不出来才整份降级。这里按 `except Exception` 接，因为 zipfile 对损坏数据抛的是 `zlib.error`、对加密成员抛 `RuntimeError`，都不在 `BadZipFile` 之下——按类型列举一定会漏（实测过）。spine 章数超过 `MAX_ENTRIES=500` 时只读前 500 章并报 `max_entries`。
+6. 单章读不出来（容器截断、成员 CRC 坏、加密）**只跳过那一章**并在 `notes` 里点名章节与原因，其余章照常交付；一章都读不出来才整份降级。这里按 `except Exception` 接，因为 zipfile 对损坏数据抛的是 `zlib.error`、对加密成员抛 `RuntimeError`，都不在 `BadZipFile` 之下——按类型列举一定会漏（实测过）。spine 章数超过 `MAX_ENTRIES=500` 时只读前 500 章并报 `max_entries`。成员读取走 `utils/zip_read.read_member`（声明体积预检 + 流式封顶）；一次请求解压总量超 `MAX_ZIP_UNCOMPRESSED_BYTES` 时停读后续章并报 `max_zip_uncompressed_bytes`，必要结构（container / OPF）超限则整份降级。
 
 已知边界：只还原文字与链接，不还原样式与版式；`pages` 这一族不适用（为 `null`）。
 
@@ -380,7 +380,7 @@ OFD 也是 ZIP 容器，真实身份写在容器里：识别那一步读**根级
 2. 解析文档根取 `Pages/Page` 序列：**页序以这份声明为准**，`BaseLoc` 给出该页 `Content.xml` 的路径。规范说它相对文档根，但导出件也有按容器根写的，两种都认；一个都没写、或写出来的路径在容器里全不存在时，退回「容器里所有以 `Content.xml` 结尾的条目」，按名字里的数字升序（`Page_2` 排在 `Page_10` 前）。
 3. 每页取正文：按文档顺序遍历 `TextObject`，把它的 `TextCode` 片段拼成一行——版式文档里长行就是这么拆的，各片段带自己的 X 坐标。
 4. 页块形如 `=== 第N页 ===`（与 PDF 同形），页间空行分隔；`pages` 是声明的页数、`pages_used` 是真读到的页数。
-5. 单页 XML 非法**只跳过那一页**并在 `notes` 里点名原因，其余页照常交付；一页都读不出才整份降级（`ofd_content_failed`）。元素按 local-name 匹配：规范里前缀是 `ofd:`，各厂商导出时的前缀与命名空间声明并不统一。
+5. 单页 XML 非法**只跳过那一页**并在 `notes` 里点名原因，其余页照常交付；一页都读不出才整份降级（`ofd_content_failed`）。元素按 local-name 匹配：规范里前缀是 `ofd:`，各厂商导出时的前缀与命名空间声明并不统一。成员读取同 EPUB，走 `utils/zip_read`；解压总量超限时停读后续页并报 `max_zip_uncompressed_bytes`，`OFD.xml` / 文档根超限则整份降级。
 
 已知边界：只还原文字与页序，不还原版面坐标、字形与矢量图形；图像对象只计数（在 `notes` 里说明），图像内容不进交付文本——认字是 understand 的事（ADR-0004）。
 
@@ -405,9 +405,45 @@ OFD 也是 ZIP 容器，真实身份写在容器里：识别那一步读**根级
 行号会随任何一次编辑腐烂）与命中文案模板。**处理器命中时只把名字记进 `result.limits_hit`**，
 文案由 `step6_assemble` 按模板统一生成：改说法只动一处，不必翻十几个处理器。
 
+### 4.1 资源防护公共件 · ZIP 解压预算（`utils/zip_read.py`）
+
+这是 [CONTEXT.md](../CONTEXT.md) 里说的**资源防护公共件**：不解析 EPUB/OFD/ODF 本身，只保证「解压进进程的字节」有上界。值登记为 `max_zip_uncompressed_bytes`（默认 20MB）；强制逻辑只在这一处，`epub.py` / `ofd.py` / `odf.py` 共用。
+
+**为什么要单独一层**：这三族格式本质是 ZIP。原先 `ZipFile.read(name)` 会把某个成员整份解压进内存，且多次 `read` 互不记账。下载层的 `MAX_DOWNLOAD_BYTES` 只限**外壳**体积，挡不住「壳不大、里面解出来巨大」。压缩炸弹常见两种套路——声明巨大、压后很小；或声明很小、实际膨胀——都必须在解压路径上挡。
+
+**怎么挡（两道闸 + 一份预算）**：一次抽取请求共用一个 `ZipReadBudget`；每个成员走 `read_member`：
+
+1. **声明预检**：读前看 `ZipInfo.file_size`，已超过剩余额度 → 拒读、不解压（挡经典「声明巨大」）。
+2. **流式封顶**：`ZipFile.open()` 最多读「剩余 + 1」字节；实际长度超剩余 → 拒读（挡「声明撒谎、实际膨胀」；不解到超额才停）。
+3. **跨成员累计**：多份中等成员加总仍会计入同一额度。
+
+命中后的产品行为与其它上界同构：
+
+| 情形 | 行为 |
+|---|---|
+| 必要成员超限（`container.xml` / OPF / `OFD.xml` / 文档根 / `content.xml`） | 整份**降级**——残缺 XML 不能截断着用 |
+| 已有章节/页再超限 | **截断**后续，名字进 `limits_hit`（`max_zip_uncompressed_bytes`） |
+
+**优点（新人读模块时对照）**：内存峰值可预期；比只限下载更贴威胁模型；比整份 `read()` 更安全；与 `limits.py` 报告链路一致；尽量保住已读产出；三族格式不复制三份预检逻辑。
+
+**刻意不做**：普通 zip/tar「只列目录」的路径本来就不解压成员，不走这里；Excel 等其它 ZIP 容器若要对齐，接同一工具即可，不要另写一套。
+
+### 4.2 资源防护公共件 · 请求体早拒（`utils/body_limit.py`）
+
+与下载层同一形状，挡的是**上传入口**：
+
+| 原来 | 现在 |
+|---|---|
+| 只看「声明有多大」；没声明就整包先接下来 | 声明超限 → 直接拒；否则边收边数，到上限就停 |
+| 超大请求可能先写满系统临时目录再 413 | 413 发生在框架写满临时目录之前 |
+
+中间件在 `app.py`；额度 = `MAX_DOWNLOAD_BYTES` + 约 1MB multipart 余量。业务落盘（`prepare_from_upload`）仍按文件实字节再挡一道。生产再在反代设请求体上限（RUNBOOK「请求返回 413」）。
+
+### 4.3 配置与写死上界表
+
 | 配置项 | 默认 | 作用点 |
 |---|---|---|
-| `MAX_DOWNLOAD_BYTES` | 200MB | 下载与上传边写边校验 |
+| `MAX_DOWNLOAD_BYTES` | 200MB | 下载与上传边写边校验；请求体早拒同用此量级（另加 multipart 余量） |
 | `REQUEST_BUDGET_SEC` / `CONNECT_TIMEOUT_SEC` / `READ_TIMEOUT_SEC` | 120 / 10 / 30 秒 | 下载层预算与超时 |
 | `MAX_REDIRECTS` | 5 | 逐跳重校验的最大跳数 |
 | `MAX_CONTENT_CHARS` | 20 万字符 | 步骤 6 的 `content` 截断 |
@@ -424,14 +460,17 @@ OFD 也是 ZIP 容器，真实身份写在容器里：识别那一步读**根级
 | `MAX_LINKS` | 100 条 | 网页与 docx 的链接清单 |
 | `TEXT_LAYER_MIN_CHARS` | 30 字 | PDF 文字层判定**阈值**（不是上界） |
 | `MAX_TEXT_BYTES` | 20MB | 文本类读取上限 |
+| `MAX_ZIP_UNCOMPRESSED_BYTES` | 20MB | EPUB / OFD / ODT·ODP 的 ZIP 解压字节总量（`utils/zip_read.py`） |
 | `MAX_LONG_EDGE` | 1600 | 送模型前图片长边缩放目标 |
+| `MAX_PDF_PAGES` / `MAX_PDF_PAGE_PIXELS` | 200 页 / 3.6e7 像素 | PDF 页数与单页渲染预算 |
+| `MAX_IMAGE_PIXELS` / `MAX_OCR_SLICES` | 4e7 像素 / 40 片 | 读图像素预算与长图 OCR 切片上限 |
 
 **哪些会出现在 `meta.limits_hit` 里**（按行为逐条，不要一刀切）：
 
 - **`error`**：下载体积、跳转数等——失败响应本身就说清楚了，不必再进 `limits_hit`。
 - **`truncate`**：少读了字节 / 行 / 页 / 张的，应上报（含 `max_text_bytes`、`llm_max_tokens` 等已接好的）。
-- **`clamp` 且上报**：`max_visibility_ranges`（只钳登记段数，正文不少）——命中会进 `limits_hit`。
-- **`clamp` 且当前不上报**：`max_repeated_slots`（ODF 补位次数）、`max_long_edge`（送模型前长边缩放，见 `models/images.py` 只缩放不回传命中名）。二者登记在表里备查；`max_long_edge` 的报告链路缺口见 `TODO.md` B-⑧。
+- **`clamp` 且上报**：`max_visibility_ranges`（只钳登记段数，正文不少）；`max_long_edge`（送模型前长边缩放，`encode_image` 回传命中名，经 `EnhanceOutcome.limits_hit` 并进 meta）。
+- **`clamp` 且当前不上报**：`max_repeated_slots`（ODF 补位次数，登记在表里备查）。
 
 加新上界时：登记进 `LIMITS` 的同时接上报告链路（或在本名单里写明「故意不报告」）。
 

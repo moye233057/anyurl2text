@@ -9,6 +9,7 @@
 import zipfile
 from pathlib import Path
 
+import configs.limits as limits
 from utils.textfile import read_header_hex
 from pipelines.processors.archive import entries_to_content
 from utils.processor_schema import ExtractResult
@@ -27,6 +28,7 @@ def extract_install_package(path: Path, ext: str) -> ExtractResult:
 
     功能：APK/IPA 本质是 ZIP，先列目录再按特征文件判定包类型；
           .exe 只读 PE 头，不解析内部结构（那是另一个量级的工作）。
+          条目名只保留上限内的前若干条写入 content；指纹扫描仍过一遍中央目录。
     应用场景：dispatch 分派 install_package 组时调用。
     输入：path — 文件路径；ext — 已识别的小写扩展名。
     输出：ExtractResult，content 为条目清单加指纹行。
@@ -41,7 +43,7 @@ def extract_install_package(path: Path, ext: str) -> ExtractResult:
 
     try:
         with zipfile.ZipFile(path) as archive:
-            entries = [info.filename for info in archive.infolist()]
+            infos = archive.infolist()
     except zipfile.BadZipFile as exc:
         return ExtractResult(
             content="\n".join(lines),
@@ -52,21 +54,36 @@ def extract_install_package(path: Path, ext: str) -> ExtractResult:
             degrade_code="install_package_parse_failed",
         )
 
+    total = len(infos)
+    entries = []
+    apk_hits = []
+    flutter = False
+    ipa_plists = []
+    # 清单只留上限内条目；指纹扫描仍过中央目录（特征文件可能在截断之后）
+    for index, info in enumerate(infos):
+        name = info.filename
+        if index < limits.MAX_ENTRIES:
+            entries.append(name)
+        if name in APK_MARKERS:
+            apk_hits.append(name)
+        if name.startswith(FLUTTER_MARKER):
+            flutter = True
+        if name.startswith("Payload/") and name.endswith("Info.plist"):
+            ipa_plists.append(name)
+
     if ext == "apk":
-        hit = [marker for marker in APK_MARKERS if marker in entries]
-        if hit:
-            kind = "Flutter APK" if any(name.startswith(FLUTTER_MARKER) for name in entries) else "Android APK"
-            lines.append(f"识别为 {kind}，特征文件: {', '.join(hit)}")
+        if apk_hits:
+            kind = "Flutter APK" if flutter else "Android APK"
+            lines.append(f"识别为 {kind}，特征文件: {', '.join(apk_hits)}")
         else:
             lines.append("疑似 Android 安装包，但缺少 APK 特征文件")
     elif ext == "ipa":
-        plist = [name for name in entries if name.startswith("Payload/") and name.endswith("Info.plist")]
-        if plist:
-            lines.append(f"识别为 iOS IPA，主 plist: {plist[0]}")
+        if ipa_plists:
+            lines.append(f"识别为 iOS IPA，主 plist: {ipa_plists[0]}")
         else:
             lines.append("疑似 iOS 安装包，但缺少 Payload/*.app/Info.plist")
 
-    content, count, hits = entries_to_content(entries, f"{ext.upper()} 容器")
+    content, count, hits = entries_to_content(entries, f"{ext.upper()} 容器", total=total)
     return ExtractResult(
         content="\n".join(lines) + "\n\n" + content,
         engines=["zipfile"],

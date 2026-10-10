@@ -37,6 +37,14 @@
 - **做法**：贵缝与 README 强调逐字节一致；OCR/ASR 不进 `content`。
 - **废弃原因**：与产品对比目标冲突。后继 [ADR-0011](./adr.md)；合并逻辑在 `utils/delivery_content.py`；判据 4（enhance 不碰 content）废除。
 
+## 2026-10-10 · 通用 usage.py + settings 单价表
+
+- **背景**：计价与账本曾放在 `utils/usage.py`，单价表又在 `configs/settings.py`，与「一种模型一个文件」不一致。
+- **原因**：成本口径实际只服务第三方 DeepSeek；本机 OCR/ASR 不计费。分散两处容易让人以为全仓统一计费。
+- **做法**：`UsageLedger` / `PRICE_TABLE` / 峰谷折算进 `models/deepseek.py`；单请求费用与 token 上限用开关 + 阈值控制（默认关）。
+- **意义**：换价与调闸只改 DeepSeek 一处；文档改称「第三方成本控制」。
+- **废弃原因**：落点迁走后删除 `utils/usage.py`，settings 不再持单价表。
+
 ## 2026-10-10 · RAG 抽取独立契约（原 ADR-0009）与 utils/rag
 
 - **背景**：检索入库需要页列表与印刷目录区间，ConvertResponse 的 `content` 不能为入库改形状。

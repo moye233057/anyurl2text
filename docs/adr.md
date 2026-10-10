@@ -24,14 +24,14 @@
 
 `/extract` 处理图片返回格式、尺寸、色彩模式、帧数与白名单 EXIF，`content` 为空串、`meta.ocr_text` 为 `null`；认字是 understand 的职责。这条边界让两条路的差别可检验（毫秒级结构信息 vs 秒级内容理解）；在纯代码那一路塞个本地 OCR，差别就退化成「慢一点的 OCR vs 快一点的 OCR」，还会把「本地起两个服务就能用」变成「先下几个模型」（权重动辄数百 MB）。否掉内置 PaddleOCR / RapidOCR / Tesseract 与调用系统自带 OCR（跨平台能力与结果格式不一致，无法稳定验收）。
 
-## ADR-0005 · 2026-09-11 · 下载层四条安全基线不可协商
+## ADR-0005 · 2026-10-10 · 下载层四条安全基线不可协商
 
 服务接受用户可控 URL，这四条是必答题，任何为「提高成功率」放松它们的改动都应被拒绝：
 
-1. **SSRF 防护**：每次实际连接前判定 DNS 返回的每一个地址，命中私网 / 回环 / 链路本地 / 保留 / 组播一律拒；重定向**逐跳**重新校验目标，否则外部域名可以 302 到内网。
+1. **SSRF 防护**：每次实际连接前判定 DNS 返回的每一个地址，命中私网 / 回环 / 链路本地 / 保留 / 组播一律拒；地址无法识别亦拒（fail-closed）；**解析一次并把连接钉到该 IP**（Host / SNI 仍用原主机名），关掉 DNS rebinding 时间窗；重定向**逐跳**重新校验；**禁止 https → http** 协议降级。
 2. **下载大小上限**：流式写盘时累计字节数，超 `MAX_DOWNLOAD_BYTES` 立刻中断并删半成品——不是下载完再检查。
 3. **TLS 不降级**：证书问题直接失败并说明原因，绝不用 `verify=False` 换成功率。
-4. **请求体早拒**：上传超限在读取请求体之前按 `Content-Length` 拒掉；只在路由里查的话，Starlette 已经把整个 multipart 缓冲到临时文件，磁盘那时已被写满，413 来得太晚。
+4. **请求体早拒**：有 `Content-Length` 且已超限 → 一字节都不收；没有声明或声明偏小 → 中间件边收边数，超限立刻 413（`utils/body_limit.py`）。只在路由里查的话，框架往往已经把整包缓冲到系统临时目录，磁盘那时已被写满，413 来得太晚。生产前再在反代上设请求体上限（见 RUNBOOK）。
 
 ## ADR-0006 · 2026-09-11 · 扫描件 PDF 在 understand 里走页面渲染，但要设上限
 
@@ -41,9 +41,9 @@
 
 处理流程按序号排成步骤文件（`pipelines/steps/step1_download` … `step6_assemble`），两条管线只做「按顺序调这几步」；一种格式一个文件收在 `pipelines/processors/`（确定性的 `extract_*` 与它自己的 `enhance_*` 同处一室，调试一种格式只开一个文件）；分派入口就放在用它的那一步（`step4_extract.py` 的 `dispatch()` / `enhance()`），从类型识别跳过去一眼能看出这件事属于哪条管线；静态清单（扩展名 / MIME / 魔数 / ZIP 指纹 / 降级分类）统一进 `configs/formats.py`，代码里不留散落字面量；通用件（文本解码、`LlmError`、计价记账）统一进 `utils/`；**契约跟着它的主人走**且都做成叶子模块（不 import 实现层，任何层都能拿它当数据结构用而不成环）。落点与状态表见 [architecture.md](./architecture.md)。否掉「建独立 `contracts/` 包」（层次最干净，但 `contracts` 不是日常 FastAPI 项目里的词，读接口的人第一眼找不到请求体与响应体）、「保留 `core/` 只拆文件」（改动最小，但名字继续不提供信息，循环依赖也还在）、「按技术角色严格分层 `api/` `service/` `domain/` `infra/`」（十来个实现文件不值四层抽象）。
 
-## ADR-0008 · 2026-09-12 · 音视频接本机 ASR：纯代码给音轨参数，转写文字进 meta.asr_text
+## ADR-0008 · 2026-10-10 · 音视频接本机 ASR：纯代码给音轨参数，转写文字进 meta.asr_text
 
-把音视频划进退化的两条理由都不成立了：本机起了 Qwen3-ASR 服务（第二条「所用模型没有语音识别能力」失效），转码用 pip 装得上的 `imageio-ffmpeg`（自带静态 ffmpeg 二进制）就能绕开（第一条「缺系统级转码工具」失效）。所以 `/extract` 报音轨参数（时长 / 采样率 / 声道 / 音轨格式；视频报的是**它音轨**的参数，容器里没有可确定性抽取的文本），`content` 为空；`/understand` 把音轨交给 `models/qwen3_asr.py`，转写文字进 `meta.asr_text`，**不进 `content`**——否则 ADR-0002 的逐字节可对比立刻不成立。音轨取自一处：音频文件本身就是音轨，视频与 m4a / aac / wma 先抽一条 16kHz 单声道 wav，抽出的音轨登记进 `result.assets`（`kind="audio_track"`）供增强阶段复用，**一次请求只转码一次**。送音频走 `/asr-b64` 传字节，不把 URL 交给上游代下载（上游没有本项目的超时、体积与 SSRF 基线）。加 `ASR_MAX_AUDIO_SECONDS`（默认 600 秒）上限：ASR 单次输出有 token 上限，长音轨尾部会被静默丢掉，而本项目不静默截断。否掉「只为音频接 ASR、视频继续降级」（视频恰恰最需要转写）与「转写文字复用 `meta.ocr_text`」（`ocr_text` 的定义是「模型从图像读出的文字」，塞进语音会让术语边界糊掉）。
+把音视频划进退化的两条理由都不成立了：本机起了 Qwen3-ASR 服务（第二条「所用模型没有语音识别能力」失效），转码用 pip 装得上的 `imageio-ffmpeg`（自带静态 ffmpeg 二进制）就能绕开（第一条「缺系统级转码工具」失效）。所以 `/extract` 报音轨参数（时长 / 采样率 / 声道 / 音轨格式；视频报的是**它音轨**的参数，容器里没有可确定性抽取的文本），`content` 为空；`/understand` 把音轨交给 `models/qwen3_asr.py`，转写文字进 `meta.asr_text`，**不进 `content`**——否则 ADR-0002 的逐字节可对比立刻不成立。音轨取自一处：音频文件本身就是音轨，视频与 m4a / aac / wma 先抽一条 16kHz 单声道 wav，抽出的音轨登记进 `result.assets`（`kind="audio_track"`）供增强阶段复用，**一次请求只转码一次**。送音频走 `/asr-b64` 传字节，不把 URL 交给上游代下载（上游没有本项目的超时、体积与 SSRF 基线）。加 `ASR_MAX_AUDIO_SECONDS`（默认 600 秒）上限：ASR 单次输出有 token 上限，长音轨尾部会被静默丢掉，而本项目不静默截断——超限则跳过转写；抽音轨前先探时长，已超限不写完整临时 wav，仍抽取时用 ffmpeg `-t` 封顶。否掉「只为音频接 ASR、视频继续降级」（视频恰恰最需要转写）与「转写文字复用 `meta.ocr_text`」（`ocr_text` 的定义是「模型从图像读出的文字」，塞进语音会让术语边界糊掉）。
 
 ## ADR-0010 · 2026-10-10 · 废除单文件行数门禁；processors 一格式族一文件；共享按是否调模型分流
 
@@ -72,3 +72,11 @@
 **并发**：扩展名在图片/音视频集合内走 **media 慢池**（`CONCURRENCY_MEDIA`），其余走 **fast 快池**（`CONCURRENCY_FAST`）；池满 HTTP **429**（`request_concurrency_limit`）。实现见 `utils/concurrency.py`。
 
 否掉「两路 content 永远逐字节相同且模型字只进 meta」（2026-10-10 前文案）与「单一全局 Semaphore」。
+
+## ADR-0012 · 2026-10-10 · 对外部署由下载者自配；仓内只给说明、不附托管脚手架
+
+本仓默认是本机开发形态（`RELOAD` 默认开、单进程、`start.py` + Vite dev）。生产机上的「标明当前是生产环境、再加载另一套配置」属于部署方自己的约定；本服务**不读**单独的「生产开关」环境变量，只认已有项（如 `RELOAD`、`ANYURL2TEXT_HOST`）。公开仓库只在 [RUNBOOK](./RUNBOOK.md) 写清建议怎么关热重载、多 worker、静态前端与反代体积上限，**不附带** Dockerfile / systemd / 完整反代样板——避免把运维成本绑进本仓、也避免假装本仓负责别人的生产。否掉「仓内做一套生产默认进程模型与容器」：下载者的环境与编排各不相同，硬编码一套只会过时且误导。
+
+## ADR-0013 · 2026-10-10 · 后端环境与依赖由 uv 管
+
+后端「装什么、用哪个解释器」统一走仓库根的 `pyproject.toml` + `uv.lock` + 本仓 `.venv`：`uv sync` 装齐，`uv run …` 跑 `start.py` / `backend/app.py` / pytest。`start.py` 若不在本仓 `.venv` 内且 PATH 有 uv，会自动 `uv run` 重入，避免静默用到装错包的 conda/全局 Python。前端仍用 npm，不并进 uv。否掉「任意已激活环境 + `pip install -r backend/requirements.txt`」：多环境并存时最常见的故障是「起得来但缺包 / 起错解释器」，把环节收口到 uv 后路径唯一、锁文件可复现。`backend/requirements.txt` 只留迁移提示，不再当安装清单。

@@ -75,6 +75,10 @@ function readPreset(entry: unknown, index: number, problems: string[]): Preset |
     problems.push(`${label}的 ${missing.join(' / ')} 缺失或不是字符串，已跳过`)
     return null
   }
+  if (!kind) {
+    problems.push(`${label}的 kind 不能为空，已跳过`)
+    return null
+  }
 
   const urlValue = url && url.length > 0 ? url : null
   const fileValue = file && file.length > 0 ? file : null

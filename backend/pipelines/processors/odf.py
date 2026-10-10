@@ -26,6 +26,7 @@ from utils.excel import cell_text, table_kind
 from utils.excel.odf_table_rows import table_rows as collect_odf_table_rows
 from utils.excel.grid import GridBuilder, grid_notes, render_tsv
 from utils.processor_schema import ExtractResult
+from utils.zip_read import ZipBudgetExceeded, ZipReadBudget, read_member
 
 TEXT_NS = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}"
 TABLE_NS = "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}"
@@ -219,7 +220,15 @@ def extract_odf(path: Path, ext: str) -> ExtractResult:
     kind = "ODT 文本文档" if ext == "odt" else "ODP 演示文稿"
     try:
         with zipfile.ZipFile(path) as archive:
-            content_xml = archive.read("content.xml")
+            content_xml = read_member(archive, "content.xml", ZipReadBudget())
+    except ZipBudgetExceeded as exc:
+        return ExtractResult(
+            content="",
+            engines=["标准库"],
+            degraded=True,
+            degrade_reason=f"{kind}容器解压总量超限: {exc}",
+            degrade_code="odf_parse_failed",
+        )
     except (zipfile.BadZipFile, KeyError) as exc:
         return ExtractResult(
             content="",

@@ -8,7 +8,7 @@ r"""
 **对比规则（ADR-0011）**：纯代码能完整交付正文的源，两条路 `content` 仍相同；需要模型转写
 非文本内容的源，understand 的 `content` 更长，且 OCR/ASR 仍双写进 `meta.*`。
 
-为什么用真账本（`utils/usage.py` 的 `UsageLedger`）：它是纯计算（单价表 × token），不依赖网络。
+为什么用真账本（`models/deepseek.py` 的 `UsageLedger`）：它是纯计算（单价表 × token），不依赖网络。
 
 不在这里验的两类源：图片（判型后要本机 Paddle OCR 8021）与音视频（要本机 Qwen3-ASR 8022）——
 它们不由模型客户端控制，仍留在贵缝里验。
@@ -25,7 +25,7 @@ from pipelines.extract import ExtractPipeline
 from pipelines.steps import step3_prepare
 from pipelines.understand import UnderstandPipeline
 from utils.errors import LlmError
-from utils.usage import UsageLedger
+from models.deepseek import UsageLedger
 
 pytestmark = pytest.mark.capability_understand
 

@@ -10,13 +10,11 @@
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from PIL import Image
-
 import configs.settings as settings
 from configs.log_config import logger
 from configs.settings import PROMPTS_DIR
 from models.deepseek import DeepSeekClient, parse_json_object
-from models.images import encode_image
+from models.images import encode_image, open_image
 from utils.processor_schema import EmbeddedAsset, EnhanceOutcome, ExtractResult
 
 # ---------- 读素材的共用件 ----------
@@ -39,16 +37,16 @@ def is_blank_page(image_path: Path) -> bool:
     输出：True 表示判定为空白；读取失败返回 False，让流程照常走模型。
     """
     try:
-        with Image.open(image_path) as image_file:
+        with open_image(image_path) as image_file:
             thumbnail = image_file.convert("L").resize((BLANK_PAGE_THUMB, BLANK_PAGE_THUMB))
             lowest, highest = thumbnail.getextrema()
     except Exception:
         return False
     return (highest - lowest) <= BLANK_PAGE_LUMA_TOLERANCE
 
-def read_page_text(client: DeepSeekClient, image_path: Path) -> str:
-    """识别一张页面图；返回空串表示这一页没有可识别文字。"""
-    data_url = encode_image(image_path)
+def read_page_text(client: DeepSeekClient, image_path: Path) -> Tuple[str, List[str]]:
+    """识别一张页面图；返回 (正文, 编码阶段命中的上界名)。空串表示这一页没有可识别文字。"""
+    data_url, hits = encode_image(image_path)
     messages = [
         {"role": "system", "content": (PROMPTS_DIR / "read_scanned_page.txt").read_text(encoding="utf-8").strip()},
         {
@@ -61,8 +59,8 @@ def read_page_text(client: DeepSeekClient, image_path: Path) -> str:
     ]
     raw = client.chat(messages)
     if raw.strip().upper().startswith(NO_TEXT_SENTINEL):
-        return ""
-    return raw
+        return "", hits
+    return raw, hits
 
 def split_vertical(image_path: Path) -> List[Path]:
     """
@@ -74,7 +72,7 @@ def split_vertical(image_path: Path) -> List[Path]:
     输出：两张半页图路径；切分失败返回空列表。
     """
     try:
-        with Image.open(image_path) as image_file:
+        with open_image(image_path) as image_file:
             width, height = image_file.size
             if height < 40:
                 return []
@@ -90,7 +88,9 @@ def split_vertical(image_path: Path) -> List[Path]:
         logger.error(f"页面切分失败: {exc}")
         return []
 
-def _read_scanned_pages(client: DeepSeekClient, page_assets: List[EmbeddedAsset]) -> Tuple[str, List[str]]:
+def _read_scanned_pages(
+    client: DeepSeekClient, page_assets: List[EmbeddedAsset]
+) -> Tuple[str, List[str], List[str]]:
     """
     逐页识别扫描件；整页认不出来时按上下两半重试。
 
@@ -100,23 +100,31 @@ def _read_scanned_pages(client: DeepSeekClient, page_assets: List[EmbeddedAsset]
           再拼回去（ADR 0006）。常态不花多余 token，只有真正模糊的页才加钱。
     应用场景：渲染出整页图（kind="page"）的源，understand 处理时调用。
     输入：client — 模型客户端；page_assets — kind="page" 的素材。
-    输出：(按页拼接的原文（含页标记）, 过程说明)；过程说明由调用方放进 meta.notes。
+    输出：(按页拼接的原文（含页标记）, 过程说明, 编码阶段命中的上界名)；
+          过程说明由调用方放进 meta.notes。
     异常：LlmError — 模型调用失败，由调用方处理。
     """
     blocks = []
     notes = []
+    hits: List[str] = []
     retried = 0
     blank = 0
     for asset in sorted(page_assets, key=lambda item: item.order):
         if is_blank_page(asset.path):
             blank += 1
             continue
-        text = read_page_text(client, asset.path)
+        text, page_hits = read_page_text(client, asset.path)
+        hits.extend(page_hits)
         if len(text) < settings.RENDERED_PAGE_RETRY_MIN_CHARS:
             halves = split_vertical(asset.path)
             if halves:
-                half_texts = [read_page_text(client, half) for half in halves]
-                merged = "\n".join(part for part in half_texts if part)
+                half_parts = []
+                for half in halves:
+                    part, half_hits = read_page_text(client, half)
+                    hits.extend(half_hits)
+                    if part:
+                        half_parts.append(part)
+                merged = "\n".join(half_parts)
                 # 只有切半确实读出了更多内容才算「重试成功」，否则说明这页本来就没字
                 if len(merged) > len(text):
                     text = merged
@@ -127,21 +135,24 @@ def _read_scanned_pages(client: DeepSeekClient, page_assets: List[EmbeddedAsset]
         notes.append(f"其中 {blank} 页判定为空白页，未调用模型")
     if retried:
         notes.append(f"其中 {retried} 页整页识别效果不佳，已按上下两半重新识别后采用")
-    return "\n\n".join(blocks), notes
+    return "\n\n".join(blocks), notes, hits
 
-def read_embedded_images(client: DeepSeekClient, image_assets: List[EmbeddedAsset]) -> str:
+def read_embedded_images(client: DeepSeekClient, image_assets: List[EmbeddedAsset]) -> Tuple[str, List[str]]:
     """
     批量识别文档内嵌图。
 
     功能：一次请求带上多张图，模型按 index 返回每张图的文字；index 对不上的结果丢弃。
     应用场景：PDF / DOCX / PPTX 的内嵌图，三条路共用这一份实现。
     输入：client — 模型客户端；image_assets — kind="image" 的素材。
-    输出：按素材顺序拼接的原文，每条带标签；都没文字时返回空串。
+    输出：(按素材顺序拼接的原文, 编码阶段命中的上界名)；都没文字时正文为空串。
     异常：LlmError — 调用失败。
     """
     content: List[Dict[str, Any]] = [{"type": "text", "text": "按 json 结构读出这些图片里的文字。"}]
+    hits: List[str] = []
     for asset in image_assets:
-        content.append({"type": "image_url", "image_url": {"url": encode_image(asset.path)}})
+        data_url, image_hits = encode_image(asset.path)
+        hits.extend(image_hits)
+        content.append({"type": "image_url", "image_url": {"url": data_url}})
     messages = [
         {"role": "system", "content": (PROMPTS_DIR / "read_embedded_images.txt").read_text(encoding="utf-8").strip()},
         {"role": "user", "content": content},
@@ -149,7 +160,7 @@ def read_embedded_images(client: DeepSeekClient, image_assets: List[EmbeddedAsse
     raw = client.chat(messages, json_mode=True)
     parsed = parse_json_object(raw)
     if not isinstance(parsed, dict):
-        return raw
+        return raw, hits
 
     by_index: Dict[int, str] = {}
     for item in parsed.get("images", []) or []:
@@ -165,7 +176,7 @@ def read_embedded_images(client: DeepSeekClient, image_assets: List[EmbeddedAsse
         text = by_index.get(position, "")
         if text:
             blocks.append(f"[{asset.label}]\n{text}")
-    return "\n\n".join(blocks)
+    return "\n\n".join(blocks), hits
 
 def enhance_assets(client: DeepSeekClient, result: ExtractResult) -> EnhanceOutcome:
     """
@@ -184,12 +195,16 @@ def enhance_assets(client: DeepSeekClient, result: ExtractResult) -> EnhanceOutc
 
     parts: List[str] = []
     notes: List[str] = []
+    hits: List[str] = []
     if page_assets:
-        page_text, page_notes = _read_scanned_pages(client, page_assets)
+        page_text, page_notes, page_hits = _read_scanned_pages(client, page_assets)
         parts.append(page_text)
         notes.extend(page_notes)
+        hits.extend(page_hits)
     if image_assets:
-        parts.append(read_embedded_images(client, image_assets))
+        embedded_text, image_hits = read_embedded_images(client, image_assets)
+        parts.append(embedded_text)
+        hits.extend(image_hits)
 
     joined = "\n\n".join(part for part in parts if part)
-    return EnhanceOutcome(ocr_text=joined or None, notes=notes)
+    return EnhanceOutcome(ocr_text=joined or None, notes=notes, limits_hit=hits)

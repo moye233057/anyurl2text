@@ -2144,6 +2144,58 @@ def test_a_plain_zip_renamed_to_epub_degrades(ctx, work_dir):
     assert "container.xml" in result.degrade_reason, result.degrade_reason
 
 
+@pytest.mark.capability_epub
+def test_epub_reports_the_zip_uncompressed_limit(monkeypatch, ctx, fixture_copy):
+    """
+    行为：解压总量超限时已读章节照常交付，停读后续章，命中名进 `limits_hit`。
+
+    来源：A-④ + `configs/limits.py` 的 `max_zip_uncompressed_bytes`（TRUNCATE）。
+    做法：把上限压到刚够读完前两章（按样例实测算），第三独有字样不应出现。
+    """
+    import zipfile
+
+    from configs import limits
+    from utils.zip_read import ZipReadBudget, read_member
+
+    path, _ = fixture_copy(EPUB_FIXTURE)
+    with zipfile.ZipFile(path) as archive:
+        # container + OPF + 前两章（spine 顺序）的解压字节合计，作为刚好切在第三章前的额度
+        from pipelines.processors import epub as epub_mod
+
+        budget = ZipReadBudget(limit=10**9)
+        opf = epub_mod._opf_path(archive, budget)
+        chapters = epub_mod._spine_members(archive, opf, budget)
+        for chapter in chapters[:2]:
+            read_member(archive, chapter, budget)
+        ceiling = budget.used
+
+    monkeypatch.setattr(limits, "MAX_ZIP_UNCOMPRESSED_BYTES", ceiling)
+    result = run(EPUB_FIXTURE, ctx, fixture_copy)
+    assert "max_zip_uncompressed_bytes" in result.limits_hit
+    assert EPUB_BODY_MARKS[0] in result.content
+    assert EPUB_BODY_MARKS[2] not in result.content, "超解压额度的章节不该被读出来"
+
+
+@pytest.mark.capability_document
+def test_odt_degrades_when_zip_budget_blocks_content_xml(monkeypatch, ctx, work_dir):
+    """
+    行为：`content.xml` 声明体积已超解压额度时整份降级为 `odf_parse_failed`，不把残缺 XML 拿去解析。
+
+    来源：A-④；必要成员超限不能走截断（截断后的 XML 不是合法文档）。
+    """
+    from configs import limits
+
+    monkeypatch.setattr(limits, "MAX_ZIP_UNCOMPRESSED_BYTES", 8)
+    path = work_dir / "oversize.odt"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("content.xml", b"<office:document-content>" + b"x" * 40)
+    result = dispatch("odt", path, ctx)
+    assert result.degraded is True
+    assert result.degrade_code == "odf_parse_failed"
+    assert result.content == ""
+    assert "超限" in result.degrade_reason, result.degrade_reason
+
+
 # ---------- OFD：页序取自文档根，逐页取正文 ----------
 
 OFD_FIXTURE = "sample.ofd"

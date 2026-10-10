@@ -7,16 +7,19 @@ PDF 抽取。
   往往也没有可抽的内嵌图，少了这一步就无内容可取；渲染本身是确定性的，不调用模型。
 - 版面按 (页码, y, x) 排序；图片位置锚点只取左上角，同页多图可能键相近，
   但不影响文本顺序。
+- 总页数与单页像素各有上界（`limits.max_pdf_pages` / `max_pdf_page_pixels`），命中进 limits_hit。
 """
 from pathlib import Path
 
 import pymupdf  # PyMuPDF
 
+import configs.limits as limits
 import configs.settings as settings
 from utils.processor_schema import EmbeddedAsset, ExtractContext, ExtractResult
 
 # 判定「这份 PDF 没有文字层」的字符数下限：低于它就走页面渲染
 TEXT_LAYER_MIN_CHARS = 30
+
 
 def _page_text(page: "pymupdf.Page") -> str:
     """取一页的文本块，按 (y, x) 排序后拼成文本；空页返回空串。"""
@@ -31,6 +34,25 @@ def _page_text(page: "pymupdf.Page") -> str:
     items.sort(key=lambda item: (item[0], item[1]))
     return "\n".join(item[2] for item in items)
 
+
+def _page_render_pixels(page: "pymupdf.Page", dpi: float) -> int:
+    """按目标 DPI 估算渲染后的像素数（宽×高）。"""
+    scale = float(dpi) / 72.0
+    width = max(1, int(page.rect.width * scale))
+    height = max(1, int(page.rect.height * scale))
+    return width * height
+
+
+def _pixmap_within_budget(pixmap: "pymupdf.Pixmap", result: ExtractResult) -> bool:
+    """pixmap 像素超预算则记 limits_hit 并返回 False。"""
+    pixels = int(pixmap.width) * int(pixmap.height)
+    if pixels > limits.MAX_PDF_PAGE_PIXELS:
+        if "max_pdf_page_pixels" not in result.limits_hit:
+            result.limits_hit.append("max_pdf_page_pixels")
+        return False
+    return True
+
+
 def _save_embedded_images(doc: "pymupdf.Document", pages: int, ctx: ExtractContext, result: ExtractResult) -> list:
     """
     把前若干张内嵌图落盘成 PNG 素材，返回素材列表。
@@ -38,6 +60,7 @@ def _save_embedded_images(doc: "pymupdf.Document", pages: int, ctx: ExtractConte
     功能：按 xref 去重——同一个图像对象出现在 N 页上只落一次盘，
            `MAX_EMBEDDED_IMAGES` 也因而记在**不同的图**上，跨页重复引用不会挤掉后面的图。
            真的因上限少读了图时，把 `max_embedded_images` 记到 result 上（以前这里是静默的）。
+           单图 pixmap 超像素预算则跳过并记 `max_pdf_page_pixels`。
     应用场景：有文字层的 PDF 在 `prepare_assets=True` 时调用（扫描件走整页渲染，不经过这里）。
     输入：doc — 已打开的 PyMuPDF 文档；pages — 页数；ctx — 抽取上下文；
           result — 抽取产出，只用来记命中的上界名。
@@ -60,6 +83,8 @@ def _save_embedded_images(doc: "pymupdf.Document", pages: int, ctx: ExtractConte
                 pixmap = pymupdf.Pixmap(doc, xref)
                 if pixmap.n - pixmap.alpha >= 4:
                     pixmap = pymupdf.Pixmap(pymupdf.csRGB, pixmap)
+                if not _pixmap_within_budget(pixmap, result):
+                    continue
                 target = ctx.work_dir / f"pdf_p{page_index + 1}_x{xref}.png"
                 pixmap.save(str(target))
             except Exception:
@@ -74,19 +99,30 @@ def _save_embedded_images(doc: "pymupdf.Document", pages: int, ctx: ExtractConte
             )
     return assets
 
-def render_pages(doc: "pymupdf.Document", page_indexes: list, ctx: ExtractContext) -> list:
+
+def render_pages(doc: "pymupdf.Document", page_indexes: list, ctx: ExtractContext,
+                 result: ExtractResult) -> list:
     """
     把指定页渲染成 PNG 素材。
 
-    功能：按配置 DPI 逐页渲染并落盘；单页渲染失败只跳过该页，不影响其余页。
+    功能：按配置 DPI 逐页渲染并落盘；单页超像素预算或渲染失败只跳过该页，不影响其余页。
     应用场景：扫描件补全（ADR 0006）；understand 会把这些页面交给视觉模型。
-    输入：doc — 已打开的 PyMuPDF 文档；page_indexes — 从 0 开始的页序号列表；ctx — 抽取上下文。
+    输入：doc — 已打开的 PyMuPDF 文档；page_indexes — 从 0 开始的页序号列表；
+          ctx — 抽取上下文；result — 用来记 `max_pdf_page_pixels`。
     输出：EmbeddedAsset 列表（kind="page"）。
     """
     assets = []
+    dpi = settings.RENDERED_PAGE_DPI
     for page_index in page_indexes:
         try:
-            pixmap = doc[page_index].get_pixmap(dpi=settings.RENDERED_PAGE_DPI)
+            page = doc[page_index]
+            if _page_render_pixels(page, dpi) > limits.MAX_PDF_PAGE_PIXELS:
+                if "max_pdf_page_pixels" not in result.limits_hit:
+                    result.limits_hit.append("max_pdf_page_pixels")
+                continue
+            pixmap = page.get_pixmap(dpi=dpi)
+            if not _pixmap_within_budget(pixmap, result):
+                continue
             target = ctx.work_dir / f"page_{page_index + 1:03d}.png"
             pixmap.save(str(target))
         except Exception:
@@ -101,12 +137,14 @@ def render_pages(doc: "pymupdf.Document", page_indexes: list, ctx: ExtractContex
         )
     return assets
 
+
 def extract_pdf(path: Path, ctx: ExtractContext) -> ExtractResult:
     """
     抽取 PDF 文本与结构信息。
 
     功能：逐页取文本块并按版面排序；统计内嵌图并在需要时落盘为素材；
           无文字层时在需要时渲染页面为素材（供 understand 识别）。
+          总页数超过 `max_pdf_pages` 时只处理前 N 页并登记 limits_hit。
     应用场景：dispatch 分派 PDF 时调用。
     输入：path — 文件路径；ctx — 抽取上下文。
     输出：ExtractResult；纯扫描件在 extract 下 content 为空且 notes 声明无文字层。
@@ -132,9 +170,10 @@ def extract_pdf(path: Path, ctx: ExtractContext) -> ExtractResult:
             )
 
         pages = doc.page_count
+        pages_to_read = min(pages, limits.MAX_PDF_PAGES)
         page_texts = []
         images_total = 0
-        for page_index in range(pages):
+        for page_index in range(pages_to_read):
             page = doc[page_index]
             text = _page_text(page)
             if text:
@@ -148,10 +187,13 @@ def extract_pdf(path: Path, ctx: ExtractContext) -> ExtractResult:
             content=content,
             engines=["PyMuPDF"],
             pages=pages,
-            pages_used=pages,
+            pages_used=pages_to_read,
             images=images_total,
             images_used=0,
         )
+        if pages > pages_to_read:
+            result.limits_hit.append("max_pdf_pages")
+            result.unprocessed_pages = list(range(pages_to_read + 1, pages + 1))
 
         if not ctx.prepare_assets:
             if text_chars < TEXT_LAYER_MIN_CHARS:
@@ -160,27 +202,27 @@ def extract_pdf(path: Path, ctx: ExtractContext) -> ExtractResult:
 
         # 扫描件判定：没有文字层，且渲染开关打开
         needs_page_render = (
-            text_chars < TEXT_LAYER_MIN_CHARS and settings.RENDERED_PAGE_OCR_ENABLED and pages > 0
+            text_chars < TEXT_LAYER_MIN_CHARS and settings.RENDERED_PAGE_OCR_ENABLED and pages_to_read > 0
         )
 
         if needs_page_render:
             # 页面渲染与内嵌图抽取**互斥**：扫描件的每一页本身就是一张整页图，
             # `get_images()` 照样会把它列出来。两条路都走的话，同一页文字会被识别两遍、
             # 付两份钱，meta.ocr_text 里还会出现重复段落。
-            limit = min(pages, settings.RENDERED_PAGE_MAX)
-            assets = render_pages(doc, list(range(limit)), ctx)
+            limit = min(pages_to_read, settings.RENDERED_PAGE_MAX)
+            assets = render_pages(doc, list(range(limit)), ctx, result)
             result.pages_used = limit
-            if pages > limit:
-                result.limits_hit.append("rendered_page_max")
-                # 缺了哪几页要能直接读出来：机器只看到 pages_used < pages 时，
-                # 没法知道缺的是哪一些，也没法把它们列给使用者。
-                result.unprocessed_pages = list(range(limit + 1, pages + 1))
+            skipped = list(range(limit + 1, pages + 1))
+            if skipped:
+                if pages_to_read > limit and "rendered_page_max" not in result.limits_hit:
+                    result.limits_hit.append("rendered_page_max")
+                result.unprocessed_pages = skipped
             result.notes.append(
                 f"没有文字层，已渲染前 {limit} 页交给视觉模型；"
                 "整页渲染已覆盖页面上的图，不再单独抽内嵌图"
             )
         else:
-            assets = _save_embedded_images(doc, pages, ctx, result)
+            assets = _save_embedded_images(doc, pages_to_read, ctx, result)
             result.images_used = len(assets)
 
         result.assets = assets

@@ -1,6 +1,6 @@
 # 运行 · 配置 · 验收
 
-> **用途**：首次启动见 [README 的快速开始](../README.md#快速开始)；这份讲跑起来之后的配置项、样例生成、验收清单与故障处置。
+> **用途**：首次启动见 [README 的启动方式](../README.md#启动方式)；这份讲跑起来之后的配置项、样例生成、验收清单与故障处置。
 > **关联**：[architecture.md](./architecture.md)（模块与落点） · [API.md](./API.md)（字段契约）
 > **基线**：2026-09-12
 
@@ -24,16 +24,17 @@
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | 模型端点 | 换供应商 |
 | `THINKING_ENABLED` | `false` | 思考模式 | 想让摘要质量更高时打开。**默认关闭是刻意的**：思维链按输出侧计费，输出价约为输入未命中价的 4 倍 |
 | `THINKING_EFFORT` | `high` | 思考模式的推理力度（随请求发成 `reasoning_effort`） | 只在 `THINKING_ENABLED` 打开时才发出去：想更快更省就调低，想更深就调高 |
-| `ANYURL2TEXT_PORT` | `8020` | 后端端口 | 改这里要同步改 `frontend/vite.config.ts` 的代理目标。本机连号：本服务 8020、OCR 8021、ASR 8022 |
+| `ANYURL2TEXT_PORT` | `8020` | 后端端口 | `start.py` 与 `vite.config.ts` 同读项目根 `.env`，改完重启即可。本机连号：本服务 8020、OCR 8021、ASR 8022 |
+| `FRONTEND_PORT` | `5173` | 前端 dev server 端口 | 与后端端口一样读同一份 `.env`；Vite 开了 `strictPort`，被占用会直接失败而不是换端口 |
 | `ALLOW_PRIVATE_HOSTS` | `false` | 允许下载内网 / 回环地址 | 仅在本机串本地文件服务调试时打开；对外可访问的部署保持 `false` |
 | `ALLOW_HTTP_SOURCE` | `true` | 是否接受 `http://` 源。`false` 时只收 https，`http://` 在发起连接之前就被 422 拒掉（`download_http_not_allowed`）。**默认 `true` 就是既有行为** | 想让传输一律走加密时设 `false`；本机串内网的 HTTP 服务保持 `true` |
 | `OCR_API_URL` | `http://127.0.0.1:8021/ocr-b64` | 本机 Paddle OCR 服务地址（独立图片判型为文字图片时由它读字） | 换了 OCR 服务端口，或部署到别处时 |
 | `ASR_API_URL` | `http://127.0.0.1:8022/asr-b64` | 本机 Qwen3-ASR 服务地址（音频与视频的音轨由它转写） | 换了 ASR 服务端口，或部署到别处时 |
-| `ASR_MAX_AUDIO_SECONDS` | 600 | 送转写的音轨时长上限；超过就跳过并写进 `meta.notes` | 想转写更长录音时。**先把 ASR 服务的 `max_new_tokens` 调大**，否则上游会把尾部静默丢掉 |
+| `ASR_MAX_AUDIO_SECONDS` | 600 | 送转写的音轨时长上限；超过则跳过转写（视频/容器音频会先探时长，超限不抽完整 wav；抽取时仍带 `-t` 封顶）。命中写进 `limits_hit` / `meta.notes` | 想转写更长录音时。**先把 ASR 服务的 `max_new_tokens` 调大**，否则上游会把尾部静默丢掉 |
 
 ### 成本相关
 
-想控花费时按这个顺序调。
+想控花费时按这个顺序调。单价表与第三方成本闸在 `models/deepseek.py`（2026-10-10 按官方 Flash 价核对）。
 
 | 变量 | 默认 | 影响 |
 |---|---|---|
@@ -42,6 +43,10 @@
 | `RENDERED_PAGE_MAX` | 10 | 扫描件最多渲染几页 |
 | `MAX_CONTENT_CHARS` | 200000 | `content` 的字符上限（也会影响送模型的量） |
 | `LLM_MAX_TOKENS` | 8192 | 单次模型输出上限。长文档摘要看着被截断就提高它 |
+| `DEEPSEEK_COST_LIMIT_ENABLED` | `false` | 是否开启「单请求 DeepSeek 费用上限」；本机 OCR/ASR 不计费、不读此开关 |
+| `DEEPSEEK_MAX_COST_CNY` | `1.0` | 开启后：累计 `cost_cny` 达此值则中止后续 DeepSeek 调用 |
+| `DEEPSEEK_TOKEN_LIMIT_ENABLED` | `false` | 是否开启「单请求 DeepSeek token 上限」 |
+| `DEEPSEEK_MAX_TOKENS_PER_REQUEST` | `200000` | 开启后：prompt+completion 累计达此值则中止后续 DeepSeek 调用 |
 | `DEBUG_ARTIFACTS` | `false` | 打开后把中间产物留档到 `backend/data/debug/`，用于排查 |
 
 ### 其余
@@ -49,10 +54,11 @@
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `ANYURL2TEXT_HOST` | `127.0.0.1` | 监听地址；要让局域网访问改成 `0.0.0.0` |
-| `RELOAD` | `true` | 自动重载：改 `backend/` 下的 `.py` 立即生效。`python app.py` 与 `start.py` 起的后端都认这个开关 | 不想多一个监督进程就设 `false`（那时改完要手动重启）。注意它只监视 `.py`：改 `.env` 仍要重启 |
+| `RELOAD` | `true` | 自动重载：改 `backend/` 下的 `.py` 立即生效。`cd backend` 后 `uv run python app.py`，或仓库根 `uv run python start.py`，都认这个开关 | 不想多一个监督进程就设 `false`（那时改完要手动重启）。注意它只监视 `.py`：改 `.env` 仍要重启 |
 | `REQUEST_BUDGET_SEC` | 120 | 单请求全链路时间预算（下载+解析+模型） |
 | `DOWNLOAD_BUDGET_SEC` | 20 | 下载层单独上限（不超过全链路剩余） |
 | `CONCURRENCY_FAST` / `CONCURRENCY_MEDIA` | 32 / 8 | 文档类等快池与图片/音视频慢池并发；满员 HTTP 429 |
+| `EGRESS_LLM_CONCURRENCY` | 64 | DeepSeek 出口同时在途调用上限（进程内信号量）。默认很宽，本机自用几乎碰不到；只有极大请求量才需要调低。OCR/ASR 只复用连接、不加这道闸 |
 | `CONNECT_TIMEOUT_SEC` / `READ_TIMEOUT_SEC` | 10 / 30 | 连接与读取超时（秒） |
 | `MAX_DOWNLOAD_BYTES` | 209715200（200 MB） | 下载与上传的内容上限 |
 | `MAX_REDIRECTS` | 5 | 重定向跟随上限 |
@@ -84,7 +90,12 @@
 | `MAX_REPEATED_SLOTS` | 100 | `backend/configs/limits.py` | odf 的 `number-*-repeated` 重复次数上限 |
 | `MAX_VISIBILITY_RANGES` | 24 | `backend/configs/limits.py` | 隐藏行列的**登记段数**上限：只钳 `notes` 篇幅，隐藏工作表与隐藏行列的内容一律照抽 |
 | `MAX_TEXT_BYTES` | 20971520（20 MB） | `backend/configs/limits.py` | 文本类文件的体积上限，超过则只读头部，避免超级大的日志整份进内存 |
+| `MAX_ZIP_UNCOMPRESSED_BYTES` | 20971520（20 MB） | `backend/configs/limits.py` | EPUB / OFD / ODT·ODP 一次请求内 ZIP 成员解压字节总量；读前预检声明体积，再用流式封顶 |
 | `MAX_LONG_EDGE` | 1600 | `backend/configs/limits.py` | 送模型前图片长边缩到多少像素 |
+| `MAX_PDF_PAGES` | 200 | `backend/configs/limits.py` | PDF 抽取最多处理多少页 |
+| `MAX_PDF_PAGE_PIXELS` | 36000000 | `backend/configs/limits.py` | 单页渲染 / 内嵌图 pixmap 像素上限（宽×高） |
+| `MAX_IMAGE_PIXELS` | 40000000 | `backend/configs/limits.py` | 读图像素预算；超过拒绝解码 |
+| `MAX_OCR_SLICES` | 40 | `backend/configs/limits.py` | 纵向长图 OCR 最多切多少片 |
 | `TEXT_LAYER_MIN_CHARS` | 30 | 名字见 `limits.py` 的 `NON_LIMIT_THRESHOLDS`；**值**在 `backend/pipelines/processors/pdf.py` | **判定阈值，不是上界**：上界值只在 `limits.py`；阈值只登记名字，数值仍在各自模块 |
 
 ## 2. 启动服务
@@ -92,18 +103,42 @@
 一条命令把后端与前端都拉起来（两个服务仍是各自独立的进程，只是由一个脚本拉起与收尾）：
 
 ```bash
-python start.py          # 项目根目录执行；无参数
+uv sync                  # 首次或改完 pyproject.toml 后
+uv run python start.py   # 项目根目录执行；无参数
 ```
 
-它按顺序做这些事：打印用的是哪个解释器 → 检查后端依赖与 `frontend/node_modules` → 检查 8020 / 5173 是否已被占用（占用就直接说明「可能已经在跑」并退出，不会起第二个）→ 起后端（`python app.py`，cwd=`backend/`）与前端（`npm run dev`，cwd=`frontend/`）→ 等到两个都真的能应答 → 打开浏览器 → 按 Ctrl+C 把两个进程一起收掉（Windows 上用 `taskkill /T`，否则 npm 拉起的 node 会变成占着端口的孤儿进程）。
+它按顺序做这些事：确认解释器是本仓 `.venv`（否则有 uv 则自动重入）→ 打印解释器并检查后端依赖与 `frontend/node_modules` → 检查 `.env` 里的 `ANYURL2TEXT_PORT` / `FRONTEND_PORT`（默认 8020 / 5173）是否已被占用（占用就直接说明「可能已经在跑」并退出，不会起第二个）→ 起后端（同解释器跑 `app.py`，cwd=`backend/`）与前端（`npm run dev`，cwd=`frontend/`）→ 等到两个都真的能应答 → 打开浏览器 → 按 Ctrl+C 把两个进程一起收掉（Windows 上用 `taskkill /T`，否则 npm 拉起的 node 会变成占着端口的孤儿进程）。
 
-不想自动开浏览器就把文件顶部的 `OPEN_BROWSER` 改成 `False`。只想起后端、或要分开调试，仍照 [README 的快速开始](../README.md#快速开始) 分别启动。
+不想自动开浏览器就把文件顶部的 `OPEN_BROWSER` 改成 `False`。只想起后端、或要分开调试，仍照 [README 的启动方式](../README.md#启动方式) 分别启动。
+
+### 日志与 request id
+
+- 每条日志是单行 JSON（stdout + 落盘），字段含 `request_id`（无请求时为 `-`）。
+- 每次 HTTP 请求自动生成或沿用请求头 `X-Request-ID`，响应头带回同名；access 日志形如 `GET /probe/health status=200 duration_ms=1.2`（**不含 query**）。
+- 转换接口打 URL 时只留 scheme+host+path，query / fragment 不进日志。
+- 落盘：`backend/data/logs/anyurl2text.log`，单文件约 10MB、保留 5 个备份（轮转）；目录在 `.gitignore` 里。
+
+### 对外部署（下载者自配）
+
+本仓默认按**本机开发**起：`RELOAD` 默认 `true`、单进程、`start.py` 拉 Vite 开发服。公开仓库**不附带** Dockerfile、systemd 单元或一整套反代配置——生产环境由谁下载谁在自己的机器 / 编排里配（ADR-0012）。
+
+运维常见做法是：在生产机上设一个「当前是生产」的环境变量（名字由你们的规范定，例如 `APP_ENV=production`），再据此加载另一份 `.env` 或注入下列项。**本服务代码不读「是不是生产」这个开关**；它只认下面这些已有配置。
+
+| 你要什么 | 怎么做 |
+|---|---|
+| 关掉改代码自动重启 | `.env` 设 `RELOAD=false`，再启后端（改 `.env` 本身也不触发重载） |
+| 多进程扛并发 | 不要用 `start.py`；`cd backend` 后 `uv run uvicorn app:app --host 0.0.0.0 --port 8020 --workers 4`。worker 数按 CPU 与内存自定 |
+| 非本机访问 | `ANYURL2TEXT_HOST=0.0.0.0`（并自行处理网络暴露面；本仓默认不做鉴权，见 architecture「明确不做」） |
+| 前端静态托管 | `cd frontend && npm run build`，用 nginx / Caddy 等托管 `frontend/dist/`；API 反代到后端。不要把 Vite `npm run dev` 当生产前端 |
+| 请求体再挡一道 | 反代设体积上限，见下文「请求返回 413」里的 `client_max_body_size` 示例 |
+
+验收：生产配置下进程日志不应再出现「自动重载已打开」；前端用的是 build 产物而不是 5173 开发服。
 
 ## 3. 生成样例
 
 ```bash
 cd backend
-python scripts/make_fixtures.py
+uv run python scripts/make_fixtures.py
 ```
 
 输出到 `backend/data/`，与随仓库提供的文本类样例同级：`plain.txt`、`table.csv`、`sample.json`、`feed.xml`、`page.html`、`sample.rtf`、`notes.md` 这 7 个是**仓库自带的手写样例**，脚本既不生成也不覆盖它们（`notes.md` 还是 `/extract` 验收用例的必需样例）。需要后端依赖已安装（脚本用到 python-docx / python-pptx / openpyxl / pymupdf / pillow）。
@@ -136,14 +171,14 @@ mp4 那一份需要 `imageio-ffmpeg`（可选依赖），没装时脚本跳过�
 
 | # | 做什么 | 判据 |
 |---|---|---|
-| 0a | 后端在跑时 `cd backend && python -m pytest tests -q` | 自检缝全过：**5 条结构判据 + 2 条自检 = 7 项**（`tests/test_structure.py`；单文件行数门禁已按 ADR-0010 废除）+ 各格式抽取 + 判型 + 通用件（不联网下载、不调模型、不花钱）。**这一条里有 13 条 HTTP 用例（`tests/test_extract_contract.py`），所以后端必须在跑**；只要进程内自检、不起服务时加 `--ignore=tests/test_extract_contract.py` |
-| 0b | 起服务后 `cd backend && python -m pytest tests -m model -q` | 贵缝全过：ADR-0011 正文对比、模型增强产出、独立图片判型分流、音视频转写（真调模型，且本机 OCR（8021）/ ASR（8022）在跑） |
+| 0a | 后端在跑时 `cd backend` 后 `uv run python -m pytest tests -q` | 自检缝全过：**5 条结构判据 + 2 条自检 = 7 项**（`tests/test_structure.py`；单文件行数门禁已按 ADR-0010 废除）+ 各格式抽取 + 判型 + 通用件（不联网下载、不调模型、不花钱）。**这一条里有 13 条 HTTP 用例（`tests/test_extract_contract.py`），所以后端必须在跑**；只要进程内自检、不起服务时加 `--ignore=tests/test_extract_contract.py` |
+| 0b | 起服务后 `cd backend` 后 `uv run python -m pytest tests -m model -q` | 贵缝全过：ADR-0011 正文对比、模型增强产出、独立图片判型分流、音视频转写（真调模型，且本机 OCR（8021）/ ASR（8022）在跑） |
 
 **别为了跑测试另起一个后端**：端口只有一个，第二个起不来（`10048`）或者两个互相抢端口。改完后端代码时，开着自动重载的那个服务会自己加载新代码（见第 6 节），直接在它上面跑 0a/0b 就行；服务没开就先按第 2 节起一个，再跑。
 
 pytest 的缓存是关掉的（`backend/pytest.ini` 里的 `-p no:cacheprovider`），所以跑完不会在 `backend/` 下留 `.pytest_cache` 或 `pytest-cache-files-*`。代价是没有 `--lf` / `--ff`——本套件跑一次只要几秒，直接全跑。
 
-两条 0 号命令之外都是人工核查。样例缺失时新套件**跳过**该条而不是失败——样例由 `python scripts/make_fixtures.py` 生成（见第 3 节）。
+两条 0 号命令之外都是人工核查。样例缺失时新套件**跳过**该条而不是失败——样例由 `cd backend` 后 `uv run python scripts/make_fixtures.py` 生成（见第 3 节）。
 
 ### 怎么看测试结果
 
@@ -151,9 +186,9 @@ pytest 的缓存是关掉的（`backend/pytest.ini` 里的 `-p no:cacheprovider`
 
 | 缝 | 覆盖什么 | 前置 | 命令（cwd=`backend/`） |
 |---|---|---|---|
-| 自检缝 | 处理器产出、判型、通用件、结构判据、错误码 | 无（几秒） | `python -m pytest tests --ignore=tests/test_extract_contract.py` |
-| HTTP 缝 | 真实服务上的代表格式 + 契约形状（13 条） | **后端在 8020 应答** | `python -m pytest tests/test_extract_contract.py -v` |
-| 贵缝 | `/understand` 两条路一致、模型增强、音视频转写 | 真模型 + 本机 8021/8022 | `python -m pytest tests -m model` |
+| 自检缝 | 处理器产出、判型、通用件、结构判据、错误码 | 无（几秒） | `cd backend` → `uv run python -m pytest tests --ignore=tests/test_extract_contract.py` |
+| HTTP 缝 | 真实服务上的代表格式 + 契约形状（13 条） | **后端在 8020 应答** | `cd backend` → `uv run python -m pytest tests/test_extract_contract.py -v` |
+| 贵缝 | `/understand` 两条路一致、模型增强、音视频转写 | 真模型 + 本机 8021/8022 | `cd backend` → `uv run python -m pytest tests -m model` |
 
 **按能力域看**（跑完的汇总就照这个口径给，别再只数条数）：
 
@@ -170,13 +205,14 @@ pytest 的缓存是关掉的（`backend/pytest.ini` 里的 `-p no:cacheprovider`
 | `capability_limits` | 16 | 命的哪条上界、文案是否来自同一模板 |
 | `capability_errors` | 14 | 码表白名单、`error` 对象、模型失败通道、`internal` 兜底 |
 | `capability_http` | 13 | 真实服务上的代表格式 + 契约形状（**只抽查代表，不重复进程内矩阵**） |
-| `capability_utils` | 25 | 解码顺序、峰谷计价、账本累计 |
+| `capability_utils` | 34 | 解码顺序、峰谷计价、账本累计、第三方成本闸 |
 | `capability_structure` | 7 | 依赖方向、扩展名覆盖、`__init__` 无逻辑、上界值只准写一处、前端契约镜像（另含 2 条自检；行数门禁已废） |
 | `capability_understand` | 16 | 进程内 + 假客户端：ADR-0011 正文对比、合并 OCR、记账、模型失败通道、跳过模型 |
 
 ```powershell
-python -m pytest tests -m capability_epub -v          # 只跑 EPUB 这一个能力域
-python -m pytest tests -m "capability_table or capability_limits" -v
+cd backend
+uv run python -m pytest tests -m capability_epub -v          # 只跑 EPUB 这一个能力域
+uv run python -m pytest tests -m "capability_table or capability_limits" -v
 ```
 
 **别只报条数**：15 种格式各一条是**清单驱动的覆盖**，它算 1 个能力点里的 15 个覆盖项。汇报与验收按「**能力域 × 覆盖项**」说（跑完的汇总就是按域给的）。加能力域要同时登记进 `backend/pytest.ini` 的 `markers`，否则 `--strict-markers` 会挡下。
@@ -187,7 +223,7 @@ python -m pytest tests -m "capability_table or capability_limits" -v
 2. `--durations=5` 标出最慢的五条——「跑了十几分钟」时一眼看出是谁；
 3. **全量清单落盘**到 `backend/data/debug/last_test_run.txt`：**按能力域分组**，每条给状态、用时、用例名与「这条在测什么」（`data/debug/` 在 `.gitignore` 里）。`-ra` 另会把跳过/失败的原因收尾列出。
 
-想看每条用例的实时名字加 `-v`（注意 `-q` 与 `-v` 相抵，别一起用）；只想跑一条用 `-k 关键字`，例如 `python -m pytest tests -k epub -v`。
+想看每条用例的实时名字加 `-v`（注意 `-q` 与 `-v` 相抵，别一起用）；只想跑一条用 `-k 关键字`，例如 `uv run python -m pytest tests -k epub -v`（须先 `cd backend`）。
 
 **卡住、或只看到一行行 `F` 与一个数字**：先探后端，`Invoke-WebRequest http://127.0.0.1:8020/probe/health -TimeoutSec 5 -UseBasicParsing`。两种坏法要分清——**没在听**（连接被拒，用例立刻失败）与**连着却不回话**（半死的旧进程占着端口，每条 HTTP 用例都要等满超时才红）。后者用 `Get-NetTCPConnection -LocalPort 8020 -State Listen | Select-Object OwningProcess` 找到占用进程，结束掉再按第 2 节重起。HTTP 缝现在有启动探活前置：后端不应答会**当场**用一条可读消息点明，不会让你等十几分钟；单次请求上限也压到 20 秒（本地上传口正常 1 秒内返回）。
 
@@ -212,7 +248,7 @@ python -m pytest tests -m "capability_table or capability_limits" -v
 
 后端**默认开了自动重载**（`RELOAD` 默认 `true`）：改完 `backend/` 下的 `.py` 会自动重载，日志里出现 `Reloading...`，直接在这个服务上跑验收就行。别拿还在跑的旧进程当成新代码已通过。
 
-想退回手动重启就把 `RELOAD` 设成 `false`，再重启 `python app.py` 或 `python start.py`。两种情况下的四条边界一样：
+想退回手动重启就把 `RELOAD` 设成 `false`，再重启（`cd backend` 后 `uv run python app.py`，或仓库根 `uv run python start.py`）。两种情况下的四条边界一样：
 
 - **只监视 `.py`**：改 `.env`、`frontend/`、样例文件都不触发重载，仍要手动重启。
 - **它多起一个监督进程**（父进程看文件、子进程才是服务）。`start.py` 用 `taskkill /T` 收树，Ctrl+C 仍能一次收干净；手工起的进程要按 Ctrl+C 停，别只关窗口。
@@ -253,11 +289,7 @@ python -m pytest tests -m "capability_table or capability_limits" -v
 
 ### 视频与 m4a/aac/wma 报「未安装 imageio-ffmpeg」
 
-这几个容器要先抽音轨才能读，靠 `imageio-ffmpeg` 自带的静态 ffmpeg，不需要系统装 ffmpeg：
-
-```bash
-pip install imageio-ffmpeg
-```
+这几个容器要先抽音轨才能读，靠 `imageio-ffmpeg` 自带的静态 ffmpeg，不需要系统装 ffmpeg。该包装在 `pyproject.toml` 主依赖里，项目根执行 `uv sync` 即有；不要对本仓再单独 `pip install`。
 
 装之前/装不上时这一类走降级（`meta.degraded` 为 `true`），mp3/wav/flac/ogg 这些 libsndfile 直接读得动的音频不受影响。
 `/probe/health` 的 `ffmpeg_available` 就是这项能力的开关状态。
@@ -273,8 +305,19 @@ pip install imageio-ffmpeg
 
 ### 请求返回 413
 
-超过 `MAX_DOWNLOAD_BYTES`（默认 200 MB）。上传的超限是在读请求体之前就拒掉的，不会先把文件缓冲到磁盘。
+超过 `MAX_DOWNLOAD_BYTES`（默认 200 MB）。上传侧两道：
+
+1. **声明就超大** → 一字节都不收，直接 413（`request_body_too_large`）。
+2. **没报大小、或边收边发现超了** → 中间件累计收到的字节，到上限就断开（同样 413），避免框架先把整包写进系统临时目录；业务落盘还有一道同名上限。
+
+挂到 nginx / Caddy 等反代后面时，**再设一道请求体上限**（建议 ≥ 本服务的 `MAX_DOWNLOAD_BYTES` + 约 1MB 余量）。例如 nginx：
+
+```nginx
+client_max_body_size 201m;   # 与 MAX_DOWNLOAD_BYTES=200MB 对齐，略留余量
+```
+
+反代先挡，应用再挡；只配应用、不配反代时，超大请求仍可能先打满反代自己的缓冲。
 
 ### 前端所有请求都失败
 
-先查端口：`frontend/vite.config.ts` 里代理的目标端口必须与后端 `.env` 的 `ANYURL2TEXT_PORT` 一致。这两处是手工同步的，改一边忘一边的症状就是「前端全挂、控制台只有网络错误」。
+先查端口：`start.py`、后端与 `vite.config.ts` 都读项目根 `.env` 的 `ANYURL2TEXT_PORT` / `FRONTEND_PORT`。改完须重启两端；若只起了其中一端、或旧进程仍占着旧端口，症状是「前端全挂、控制台只有网络错误」。

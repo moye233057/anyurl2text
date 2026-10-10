@@ -2,7 +2,11 @@
 
 本仓（anyurl2text）的例外与禁令。这里只放**本仓特有、且从代码与文档里查不到**的部分。
 
-事实源指针：跑法 [docs/RUNBOOK.md](docs/RUNBOOK.md) ｜ 叫法 [CONTEXT.md](CONTEXT.md) ｜ 为什么这么定 [docs/adr.md](docs/adr.md) ｜ 待办 [TODO.md](TODO.md)
+事实源指针：跑法 [docs/RUNBOOK.md](docs/RUNBOOK.md) ｜ 叫法 [CONTEXT.md](CONTEXT.md) ｜ 为什么这么定 [docs/adr.md](docs/adr.md) ｜ 选做启发 [TODO.md](TODO.md)（勿默认逐项开工）｜ 评审余项归档 [docs/review-remainder.md](docs/review-remainder.md) ｜ 进展报告 [docs/plan-completed.md](docs/plan-completed.md)
+
+## 环境：用 uv，不用随便哪个 conda/pip
+
+后端解释器与依赖只认本仓 `.venv`（`uv sync` / `uv run`）。不要 `pip install -r backend/requirements.txt`（该文件已是迁移动态提示）。改依赖只改根目录 `pyproject.toml`，再 `uv lock` / `uv sync`。
 
 ## 后端由维护者启动
 
@@ -17,8 +21,9 @@ Invoke-WebRequest http://127.0.0.1:8020/probe/health -TimeoutSec 5 -UseBasicPars
 ## 验收：可跑自检缝
 
 ```powershell
+# 仓库根先 uv sync；再：
 cd backend
-python -m pytest tests -q    # 需要后端在跑
+uv run python -m pytest tests -q    # 需要后端在跑
 ```
 
 本仓既定验收标准是「用例通过才算过」。贵缝 `-m model` 真调模型花钱，**由维护者决定何时跑**。

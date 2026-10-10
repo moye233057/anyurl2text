@@ -21,6 +21,7 @@ import zipfile
 from pathlib import Path
 
 from utils.processor_schema import ExtractResult
+from utils.zip_read import ZipBudgetExceeded, ZipReadBudget, read_member
 
 KIND = "OFD 版式文档"
 ENTRY_NAME = "OFD.xml"
@@ -42,9 +43,9 @@ def _natural_key(name: str) -> list:
     """名字里的数字段按数值比较，免得 Page_10 排在 Page_2 前面。"""
     return [(1, int(part)) if part.isdigit() else (0, part) for part in re.split(r"(\d+)", name)]
 
-def _document_root(archive: zipfile.ZipFile) -> str:
+def _document_root(archive: zipfile.ZipFile, budget: ZipReadBudget) -> str:
     """从 `OFD.xml` 取文档根路径（形如 `Doc_0/Document.xml`）；没写返回空串。"""
-    entry = ET.fromstring(archive.read(ENTRY_NAME))
+    entry = ET.fromstring(read_member(archive, ENTRY_NAME, budget))
     roots = _named(entry, "DocRoot")
     return _text_of(roots[0]) if roots else ""
 
@@ -112,22 +113,47 @@ def extract_ofd(path: Path) -> ExtractResult:
     """
     blocks = []
     notes = []
+    hits = []
     locations = []
     skipped = []
     images = 0
+    pages_attempted = 0
     try:
         with zipfile.ZipFile(path) as archive:
-            doc_root = _document_root(archive)
+            budget = ZipReadBudget()
+            try:
+                doc_root = _document_root(archive, budget)
+            except ZipBudgetExceeded as exc:
+                return _degraded(
+                    f"{KIND}容器解压总量超限，读不出 {ENTRY_NAME}: {exc}", "ofd_parse_failed"
+                )
             if not doc_root:
                 raise KeyError(f"{ENTRY_NAME} 里没有 DocRoot")
-            locations = _page_locations(archive, doc_root, archive.read(doc_root))
+            try:
+                doc_bytes = read_member(archive, doc_root, budget)
+            except ZipBudgetExceeded as exc:
+                return _degraded(
+                    f"{KIND}容器解压总量超限，读不出文档根: {exc}", "ofd_parse_failed"
+                )
+            locations = _page_locations(archive, doc_root, doc_bytes)
             for page_no, name in enumerate(locations, start=1):
                 try:
-                    lines, page_images = _page_lines(archive.read(name))
+                    lines, page_images = _page_lines(read_member(archive, name, budget))
+                except ZipBudgetExceeded as exc:
+                    if not blocks and not skipped:
+                        return _degraded(
+                            f"{KIND}容器解压总量超限，尚未读出任何页面: {exc}",
+                            "ofd_parse_failed",
+                        )
+                    hits.append("max_zip_uncompressed_bytes")
+                    notes.append(f"解压总量超限，从第{page_no}页起未再读取: {exc}")
+                    break
                 except (KeyError, zipfile.BadZipFile, ET.ParseError) as exc:
+                    pages_attempted += 1
                     skipped.append(page_no)
                     notes.append(f"第{page_no}页读不出来已跳过: {exc}")
                     continue
+                pages_attempted += 1
                 images += page_images
                 if lines:
                     blocks.append(PAGE_MARK.format(page_no) + "\n" + "\n".join(lines))
@@ -138,7 +164,7 @@ def extract_ofd(path: Path) -> ExtractResult:
 
     if not locations:
         return _degraded(f"{KIND}的文档根里没有任何页面", "ofd_content_failed")
-    if not blocks and len(skipped) == len(locations):
+    if not blocks and skipped and pages_attempted == len(skipped):
         return _degraded(f"{KIND}的页面全部读不出来", "ofd_content_failed")
 
     if images:
@@ -149,6 +175,7 @@ def extract_ofd(path: Path) -> ExtractResult:
         content="\n\n".join(blocks),
         engines=["ElementTree"],
         notes=notes,
+        limits_hit=hits,
         pages=len(locations),
-        pages_used=len(locations) - len(skipped),
+        pages_used=pages_attempted - len(skipped),
     )

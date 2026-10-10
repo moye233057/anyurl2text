@@ -12,8 +12,9 @@
 
 ```bash
 cd backend
-python -m pytest tests -q            # 默认含 HTTP 缝（13 条），**后端须在 8020 应答**；只要进程内自检则加 --ignore=tests/test_extract_contract.py
-python -m pytest tests -m model -q   # 贵缝：ADR-0011 正文对比 + 模型增强产出（服务已起，真调模型与本机 OCR / ASR）
+cd backend
+uv run python -m pytest tests -q            # 默认含 HTTP 缝（13 条），**后端须在 8020 应答**；只要进程内自检则加 --ignore=tests/test_extract_contract.py
+uv run python -m pytest tests -m model -q   # 贵缝：ADR-0011 正文对比 + 模型增强产出（服务已起，真调模型与本机 OCR / ASR）
 ```
 
 进程内自检（结构判据 + 各格式抽取 + 判型 + 通用件）本身不联网、不调模型；但 `pytest tests -q` 若不加 `--ignore`，会连同 HTTP 缝一起跑。
@@ -38,7 +39,7 @@ python -m pytest tests -m model -q   # 贵缝：ADR-0011 正文对比 + 模型�
 
 **完成标准**：
 
-- `python -m pytest tests -q` 全过（后端在跑；或加 `--ignore=tests/test_extract_contract.py` 只跑进程内）：结构判据（`tests/test_structure.py`）与各格式抽取、判型、通用件；其中「扩展名覆盖」就是替你比对两个集合，别靠肉眼。
+- `cd backend` 后 `uv run python -m pytest tests -q` 全过（后端在跑；或加 `--ignore=tests/test_extract_contract.py` 只跑进程内）：结构判据（`tests/test_structure.py`）与各格式抽取、判型、通用件；其中「扩展名覆盖」就是替你比对两个集合，别靠肉眼。
 - 用真实文件跑一次两个接口：`type` 正确；extract 的 `content` 符合 ADR-0004（图片类 extract 可为空）；understand 按 ADR-0011 合并模型转写。
 - `meta.ext` 是具体格式而不是容器名（`zip` / `ole`），`meta.engine` 是该格式的解析库——只看「请求成功」会漏掉整族格式被判成压缩包这类错误。
 - 若新格式**纯代码即可完整交付正文**，两条路 `content` 仍应相同；若需模型转写，understand 更长且 OCR/ASR 双写 `meta.*`（见 `test_understand_stubbed.py` / 贵缝）。
@@ -58,7 +59,7 @@ python -m pytest tests -m model -q   # 贵缝：ADR-0011 正文对比 + 模型�
 
 - 每次调用都必须显式给 `max_tokens`——不给的话非思考模式的默认上限会把长输出静默截断。
 - 思考模式默认是关的。要开就开在真正受益的阶段（如按 query 作答），别全局开：思维链按输出侧计费。
-- 耗时记进 `timings.model_ms`，用量由 `client.ledger` 自动记账（`utils/usage.py`），不要另写一套统计。
+- 耗时记进 `timings.model_ms`，用量由 `client.ledger` 自动记账（`models/deepseek.py`），不要另写一套统计。
 
 **完成标准**：
 
@@ -107,7 +108,7 @@ frontend/src/ResultPanel.tsx 界面渲染
 **要确认的三件事**：
 
 1. 目标模型**能读图**。本项目只有一个模型同时吃文本与图片；换成一个纯文本模型，图片与扫描件那两条链会失败。
-2. **单价表**在 `backend/configs/settings.py` 的 `PRICE_TABLE` 里。换了模型要新增一条记录（**不要改旧记录**，旧记录按生效日留着历史可复核）。没配的记录成本折算会返回 0，`usage` 里的金额就不可信。
+2. **单价表**在 `backend/models/deepseek.py` 的 `PRICE_TABLE` 里（第三方 DeepSeek 专属）。换了模型要新增一条记录（**不要改旧记录**，旧记录按生效日留着历史可复核）。没配的记录成本折算会返回 0，`usage` 里的金额就不可信。单请求费用/token 闸用 `DEEPSEEK_COST_LIMIT_ENABLED` / `DEEPSEEK_TOKEN_LIMIT_ENABLED` 与对应阈值控制；本机 OCR/ASR 不走这道闸。
 3. **图片传入方式**：本项目统一自己下载后传 base64（`models/images.py`），不把 URL 交给服务端代下载——服务端代下载对鉴权、防盗链、内网、慢跳转都不可靠。
 
 **完成标准**：
@@ -123,7 +124,7 @@ frontend/src/ResultPanel.tsx 界面渲染
 **动两个地方**：
 
 1. `backend/models/<模型>.py`（新建）—— 一个模型一个文件，这是 ADR 0007 定的形态。它只做出口该做的事：把输入发给服务、拿回结果、出错时抛 `utils/errors.py` 的 `LlmError`。**不写业务编排**——什么时候调它是处理器的事。
-   计价与记账共用 `utils/usage.py`；服务不计 token 费用（如 OCR）时不记账、也不伪造 token 数，`usage` 只反映 DeepSeek 调用。
+   计价与记账写在该模型文件里（DeepSeek 即 `deepseek.py`）；本机服务不计 token 费用（如 OCR）时不记账、也不伪造 token 数，`usage` 只反映 DeepSeek 调用。
 2. `backend/pipelines/processors/<格式>.py` 的 `enhance_*()` —— 由它决定什么时候调这个出口，并把「走了哪条分支」写进 `EnhanceOutcome.notes`。
 
 **已接好的 Paddle OCR**：出口在 `backend/models/paddle_ocr.py`（本机 `POST /ocr-b64`，纵向超长图在本地切片并发识别；地址与超时见 `.env` 的 `OCR_API_URL` / `OCR_TIMEOUT_SEC`）；编排在 `pipelines/processors/image.py` 的 `enhance_image()`——独立图片先用视觉模型判型（提示词 `models/prompts/classify_image.txt`）：判为语义图片就用那次调用给出的描述，判为文字图片就交 Paddle OCR 读字；判型输出解析不出来时按文字图片处理。
@@ -132,6 +133,6 @@ frontend/src/ResultPanel.tsx 界面渲染
 
 **完成标准**：
 
-- `python -m pytest tests -q` 全过：结构判据（`tests/test_structure.py`）查依赖方向等；**不再**查单文件行数（ADR-0010）。新格式进 `processors/` 一族一文件，跨格式表格逻辑进 `utils/excel/`。
+- `cd backend` 后 `uv run python -m pytest tests -q` 全过：结构判据（`tests/test_structure.py`）查依赖方向等；**不再**查单文件行数（ADR-0010）。新格式进 `processors/` 一族一文件，跨格式表格逻辑进 `utils/excel/`。
 - 外部服务连不上不该让整条请求 500：`tests/test_understand_contract.py` 里已有独立图片判型与音视频转写两类用例；再手工把服务停掉打一张含文字的图 / 一段音频，`meta.notes` 应说明原因且 HTTP 仍是 200。
 - 确认 understand 的正文合并符合 ADR-0011：纯代码段保留，模型转写并进 `content` 且双写 `meta.ocr_text` / `meta.asr_text`。

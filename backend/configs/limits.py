@@ -58,8 +58,19 @@ MAX_LINKS = 100
 MAX_VISIBILITY_RANGES = 24
 # 文本类（txt/md/json/xml/csv…）读取上限
 MAX_TEXT_BYTES = 20 * 1024 * 1024
+# ZIP 容器内解压字节总量上限（epub / ofd / odt·odp 共享一次请求预算）
+# 与 MAX_TEXT_BYTES 同量级：挡的是声明巨大或实际膨胀的成员，不是下载层的 200MB 外壳。
+MAX_ZIP_UNCOMPRESSED_BYTES = 20 * 1024 * 1024
 # 送模型前图片长边缩到多大（不是截断，是编码前的等比缩放）
 MAX_LONG_EDGE = 1600
+# PDF 抽取最多处理多少页（文字层与内嵌图扫描都封顶；扫描件渲染另有 rendered_page_max）
+MAX_PDF_PAGES = 200
+# 单页渲染 / 内嵌图 pixmap 像素上限（宽×高）；约等于 6000×6000@1×，挡畸形页
+MAX_PDF_PAGE_PIXELS = 36_000_000
+# 读图（Pillow）像素预算：宽×高超过即拒，不再只告警
+MAX_IMAGE_PIXELS = 40_000_000
+# 纵向长图 OCR 最多切多少片；超出只识别前 N 片并报命中
+MAX_OCR_SLICES = 40
 
 class Limit(NamedTuple):
     """
@@ -96,14 +107,20 @@ LIMITS: Dict[str, Limit] = {
         "送模型的文本超过 {value} 字符，摘要只覆盖前一部分"),
     "llm_max_tokens": Limit(settings.LLM_MAX_TOKENS, "tokens", TRUNCATE, True, "deepseek.chat",
         "模型单次输出上限 {value} token，超出部分被截断"),
+    # 阈值真源在 models/deepseek.py 的环境变量；此处 value 仅作登记占位（文案不嵌入数值）
+    "deepseek_max_cost_cny": Limit(1.0, "cny", TRUNCATE, True, "deepseek.UsageLedger",
+        "第三方 DeepSeek 单请求费用已达上限，后续模型调用已中止"),
+    "deepseek_max_tokens_per_request": Limit(200000, "tokens", TRUNCATE, True, "deepseek.UsageLedger",
+        "第三方 DeepSeek 单请求 token 已达上限，后续模型调用已中止"),
     # ---------- 素材与页面（可配置） ----------
     "max_embedded_images": Limit(settings.MAX_EMBEDDED_IMAGES, "count", TRUNCATE, True,
         "docx._save_embedded_images / pdf._save_embedded_images / pptx.extract_pptx",
         "内嵌图超过 {value} 张，其余未送模型识读"),
     "rendered_page_max": Limit(settings.RENDERED_PAGE_MAX, "count", TRUNCATE, True, "pdf.extract_pdf",
         "扫描件超过 {value} 页，其余未渲染送模型"),
-    "asr_max_audio_seconds": Limit(settings.ASR_MAX_AUDIO_SECONDS, "seconds", TRUNCATE, True, "media.enhance_media",
-        "音轨超过 {value} 秒，超出部分未转写"),
+    "asr_max_audio_seconds": Limit(settings.ASR_MAX_AUDIO_SECONDS, "seconds", TRUNCATE, True,
+        "media.extract_media / media.enhance_media",
+        "音轨超过 {value} 秒，未抽完整音轨或未转写"),
     # ---------- 各格式的读取上限（写死在本文件） ----------
     "max_entries": Limit(MAX_ENTRIES, "count", TRUNCATE, False, "archive.entries_to_content",
         "容器内条目超过 {value} 条，清单已截断"),
@@ -128,8 +145,21 @@ LIMITS: Dict[str, Limit] = {
         "隐藏行列的连续段超过 {value} 段，只登记前 {value} 段（内容照抽，不影响正文）"),
     "max_text_bytes": Limit(MAX_TEXT_BYTES, "bytes", TRUNCATE, False, "textfile.read_text_file",
         "文本超过 {value} 字节，超出部分未读取"),
+    "max_zip_uncompressed_bytes": Limit(MAX_ZIP_UNCOMPRESSED_BYTES, "bytes", TRUNCATE, False,
+        "zip_read.read_member / epub.extract_epub / ofd.extract_ofd / odf.extract_odf",
+        "容器解压总量超过 {value} 字节，超出部分未读取"),
     "max_long_edge": Limit(MAX_LONG_EDGE, "count", CLAMP, False, "images.encode_image",
         "图片长边缩到 {value} 像素后再编码"),
+    "max_pdf_pages": Limit(MAX_PDF_PAGES, "count", TRUNCATE, False, "pdf.extract_pdf",
+        "PDF 超过 {value} 页，其余页未抽取"),
+    "max_pdf_page_pixels": Limit(MAX_PDF_PAGE_PIXELS, "count", TRUNCATE, False,
+        "pdf.render_pages / pdf._save_embedded_images",
+        "单页渲染像素超过 {value}，该页未渲染或未导出内嵌图"),
+    "max_image_pixels": Limit(MAX_IMAGE_PIXELS, "count", ERROR, False,
+        "image.extract_image / images.open_image / paddle_ocr.recognize",
+        "图片像素超过 {value}，已拒绝解码"),
+    "max_ocr_slices": Limit(MAX_OCR_SLICES, "count", TRUNCATE, False, "paddle_ocr._recognize_long_image",
+        "长图切片超过 {value} 片，其余未送 OCR"),
 }
 
 # 名字白名单：meta.limits_hit 里出现表外的名字就是漂移

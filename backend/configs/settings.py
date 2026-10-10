@@ -34,6 +34,9 @@ DOWNLOAD_BUDGET_SEC = float(os.getenv("DOWNLOAD_BUDGET_SEC", "20"))
 # 并发：文档/表格等快池；独立图片与音视频慢池（满员时路由返回 429）。
 CONCURRENCY_FAST = int(os.getenv("CONCURRENCY_FAST", "32"))
 CONCURRENCY_MEDIA = int(os.getenv("CONCURRENCY_MEDIA", "8"))
+# DeepSeek 出口同时在途调用上限（进程内信号量）。默认很宽：本机自用几乎碰不到；
+# 只有部署到极大请求量时才需要调低。OCR/ASR 是本机辅服务，只复用 httpx、不加紧闸。
+EGRESS_LLM_CONCURRENCY = int(os.getenv("EGRESS_LLM_CONCURRENCY", "64"))
 
 # ---------- 下载层 ----------
 CONNECT_TIMEOUT_SEC = float(os.getenv("CONNECT_TIMEOUT_SEC", "10"))
@@ -115,18 +118,4 @@ except Exception:
 # 打开后把中间产物（下载原文件、渲染出的页面图）落到 backend/data/debug/。默认关闭。
 DEBUG_ARTIFACTS = os.getenv("DEBUG_ARTIFACTS", "false").strip().lower() in ("1", "true", "yes", "on")
 
-# ---------- 计价 ----------
-# DeepSeek 单价（人民币 / 百万 token），区分缓存命中与峰谷时段。
-# 高峰时段 = 北京时间周一至周五 09:00-12:00、14:00-18:00，其余为空闲。
-# 来源：https://api-docs.deepseek.com/zh-cn/quick_start/pricing （2026-09-11 核对）
-PRICE_TABLE = {
-    "deepseek-flash": {
-        "effective_from": "2026-09-10",
-        "currency": "CNY",
-        "per_million": {
-            "cache_hit": {"peak": 0.04, "offpeak": 0.02},
-            "cache_miss": {"peak": 2.0, "offpeak": 1.0},
-            "output": {"peak": 8.0, "offpeak": 4.0},
-        },
-    },
-}
+# DeepSeek 单价表与第三方成本闸在 models/deepseek.py（一种模型一个文件）。

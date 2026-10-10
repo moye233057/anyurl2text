@@ -15,19 +15,16 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional, Tuple
 
-from PIL import Image, ImageFile
+from PIL import Image
 
 from configs.log_config import logger
 from configs.settings import PROMPTS_DIR
 from models import paddle_ocr
 from models.deepseek import DeepSeekClient, parse_json_object
-from models.images import encode_image
+from models.images import ImagePixelLimitError, encode_image, open_image
 from utils.processor_schema import EnhanceOutcome, ExtractResult, PreparedSource
 from utils.processor_schema import ImageMeta
 from utils.textfile import read_text_file
-
-# 允许读取被截断的 JPEG（下载中断的图也能报出尺寸而不是直接失败）
-ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # HEIC 支持是可选依赖：装不上只是读不了 iPhone 原图，不该让整个服务起不来
 try:
@@ -117,7 +114,7 @@ def extract_image(path: Path, ext: str) -> ExtractResult:
         return result
 
     try:
-        with Image.open(path) as image:
+        with open_image(path) as image:
             image.load()
             frames = getattr(image, "n_frames", 1)
             dpi = image.info.get("dpi")
@@ -143,6 +140,16 @@ def extract_image(path: Path, ext: str) -> ExtractResult:
             result = ExtractResult(content="", engines=["Pillow"], notes=notes)
             result.image_meta = meta
             return result
+    except ImagePixelLimitError as exc:
+        result = ExtractResult(
+            content="",
+            engines=["Pillow"],
+            degraded=True,
+            degrade_reason=str(exc),
+            degrade_code="image_decode_failed",
+            limits_hit=["max_image_pixels"],
+        )
+        return result
     except Exception as exc:
         result = ExtractResult(
             content="",
@@ -167,12 +174,17 @@ def _ocr_outcome(prepared: PreparedSource) -> EnhanceOutcome:
     输出：EnhanceOutcome：读到文字填 ocr_text，没读到就只在 notes 里说明。
     异常：LlmError — OCR 失败，由调用方转成 notes。
     """
-    text = paddle_ocr.recognize(prepared.path).strip()
+    text, ocr_hits = paddle_ocr.recognize(prepared.path)
+    text = text.strip()
     if not text:
-        return EnhanceOutcome(notes=["判为文字图片，本机 Paddle OCR 没有读出文字"])
+        return EnhanceOutcome(
+            notes=["判为文字图片，本机 Paddle OCR 没有读出文字"],
+            limits_hit=ocr_hits,
+        )
     return EnhanceOutcome(
         ocr_text=text,
         notes=[f"判为文字图片，已交本机 Paddle OCR 读出 {len(text)} 字"],
+        limits_hit=ocr_hits,
     )
 
 def enhance_image(client: DeepSeekClient, prepared: PreparedSource) -> EnhanceOutcome:
@@ -187,7 +199,7 @@ def enhance_image(client: DeepSeekClient, prepared: PreparedSource) -> EnhanceOu
     输出：EnhanceOutcome：语义图片给 description，文字图片给 ocr_text，分支说明进 notes。
     异常：LlmError — 判型调用或 OCR 失败。
     """
-    data_url = encode_image(prepared.path)
+    data_url, encode_hits = encode_image(prepared.path)
     messages = [
         {"role": "system", "content": (PROMPTS_DIR / "classify_image.txt").read_text(encoding="utf-8").strip()},
         {
@@ -203,13 +215,16 @@ def enhance_image(client: DeepSeekClient, prepared: PreparedSource) -> EnhanceOu
 
     if kind != SEMANTIC_KIND:
         logger.info(f"独立图片判型：按文字图片处理（kind={kind or '判型输出无法解析'}）")
-        return _ocr_outcome(prepared)
+        outcome = _ocr_outcome(prepared)
+        outcome.limits_hit.extend(encode_hits)
+        return outcome
 
     description = str(parsed.get("description", "") or "").strip()
     logger.info(f"独立图片判型：语义图片，描述 {len(description)} 字")
     if not description:
-        return EnhanceOutcome(notes=["判为语义图片，但模型没有给出描述"])
+        return EnhanceOutcome(notes=["判为语义图片，但模型没有给出描述"], limits_hit=encode_hits)
     return EnhanceOutcome(
         description=description,
         notes=["判为语义图片，只给客观描述、不做 OCR"],
+        limits_hit=encode_hits,
     )

@@ -13,7 +13,7 @@ from typing import Optional
 
 from fastapi import APIRouter, File, Form, Response, UploadFile
 
-from configs.log_config import logger
+from configs.log_config import logger, redact_url_for_log
 from pipelines.extract import ExtractPipeline
 from pipelines.understand import UnderstandPipeline
 from routers.convert.router_helpers import run_with_limits
@@ -33,7 +33,9 @@ understand_pipeline = UnderstandPipeline()
 )
 def extract_from_url(body: ConvertUrlBody, response: Response) -> ConvertResponse:
     """URL 入口的确定性抽取。"""
-    logger.info(f"extract 收到请求 url={body.url} has_query={bool(body.query)}")
+    logger.info(
+        f"extract 收到请求 url={redact_url_for_log(body.url)} has_query={bool(body.query)}"
+    )
     result = run_with_limits(
         pool_for_url(body.url),
         body.url,
@@ -76,7 +78,9 @@ def extract_from_file(
 )
 def understand_from_url(body: ConvertUrlBody, response: Response) -> ConvertResponse:
     """URL 入口的模型增强。"""
-    logger.info(f"understand 收到请求 url={body.url} has_query={bool(body.query)}")
+    logger.info(
+        f"understand 收到请求 url={redact_url_for_log(body.url)} has_query={bool(body.query)}"
+    )
     result = run_with_limits(
         pool_for_url(body.url),
         body.url,

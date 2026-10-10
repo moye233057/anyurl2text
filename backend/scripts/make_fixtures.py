@@ -1012,7 +1012,7 @@ def step20_make_table_edge_cases() -> None:
 
     # merged.ods 用 odfpy 写：pyexcel-ods 走的是 odfpy 的解析器，手工拼的 XML 它读不动
     # （实测 AttributeError: 'Text' object has no attribute 'getElementsByType'），而 odfpy
-    # 本来就是运行时依赖（requirements.txt），写出来的包与真实产出方同构。
+    # 本来就是运行时依赖（pyproject.toml / uv），写出来的包与真实产出方同构。
     from odf.opendocument import OpenDocumentSpreadsheet
     from odf.table import CoveredTableCell, Table, TableRow
 

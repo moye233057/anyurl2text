@@ -19,6 +19,8 @@
 - 压缩包只列条目，不解压、不递归。
 - 老版 Office（doc / ppt / wps）不做深度解析，只降级（ADR-0003）。
 - 不为「提高成功率」放松下载层四条安全基线（ADR-0005）。
+- 不附带生产托管脚手架（Dockerfile / systemd / 反代整套）；对外部署由下载者按 [RUNBOOK](./RUNBOOK.md)「对外部署」自配（ADR-0012）。
+- 后端环境不交给「任意 conda/pip」：只认本仓 uv `.venv`（ADR-0013）。
 
 ## 2. 现行约束：四条铁律
 
@@ -36,7 +38,7 @@
 | 模块 | 落点 | 状态 |
 |---|---|---|
 | 服务入口：加载 `.env`、装配路由与中间件、请求体早拒 | `backend/app.py` | 已实现 |
-| 运行配置、单价表、日志格式 | `backend/configs/settings.py`、`configs/log_config.py` | 已实现 |
+| 运行配置、单价表、日志（JSON + request id + 落盘轮转） | `backend/configs/settings.py`、`configs/log_config.py`；请求进出在 `app.py` | 已实现 |
 | 静态格式清单：扩展名集合 / Content-Type → 扩展名反查表 / 魔数表 / ZIP 指纹 / 降级分类 | `backend/configs/formats.py` | 已实现 |
 | 对比接口契约（ConvertResponse） | `backend/routers/convert/schema.py` | 已实现 |
 | HTTP 层：收参与状态码 | `backend/routers/convert/router.py`、`routers/probe/router.py` | 已实现 |
@@ -55,10 +57,13 @@
 | 限额的单一定义处：值 + 命中行为 + 强制点 + 命中文案模板 | `backend/configs/limits.py` | 已实现 |
 | 稳定错误码表（机器名白名单：硬失败 / 降级 / 模型三组） | `backend/configs/errors.py` | 已实现（三组全覆盖） |
 | 模型出口（一模型一文件）+ 图片编码 + 提示词模板 | `backend/models/deepseek.py`、`paddle_ocr.py`、`qwen3_asr.py`、`images.py`、`prompts/` | 已实现 |
-| 通用件：文本解码与文件头、`LlmError`、计价记账、抽音轨 | `backend/utils/textfile.py`、`errors.py`、`usage.py`、`ffmpeg.py` | 已实现 |
+| 通用件：文本解码与文件头、`LlmError`、抽音轨、出站复用 | `backend/utils/textfile.py`、`errors.py`、`ffmpeg.py`、`egress.py` | 已实现 |
+| DeepSeek 出口 + 第三方计价与成本闸 | `backend/models/deepseek.py` | 已实现 |
+| 资源防护公共件：ZIP 解压预算（声明预检 + 流式封顶 + 跨成员累计） | `backend/utils/zip_read.py`（EPUB / OFD / ODT·ODP 共用；原理见 [PIPELINES.md](./PIPELINES.md) §4.1） | 已实现 |
+| 资源防护公共件：请求体早拒（声明预检 + 边收边数） | `backend/utils/body_limit.py`（`app.reject_oversized_body` 调用；反代上限见 RUNBOOK） | 已实现 |
 | 样例生成与测试缝 | `backend/scripts/make_fixtures.py`；`backend/tests/`（含 pytest 配置 `backend/pytest.ini`） | 已实现 |
 | 单页对比界面（三栏、两栏各有运行按钮） | `frontend/src/`（表见 `App.tsx` / `ResultPanel.tsx`）；预设样例数据源 `frontend/public/presets.config.js` | 已实现 |
-| 一键拉起前后端两个进程 | `start.py`（项目根） | 已实现 |
+| 一键拉起前后端两个进程（须本仓 uv `.venv`） | `start.py`（项目根）；依赖清单 `pyproject.toml` | 已实现 |
 | 术语表 | `CONTEXT.md` | 已实现 |
 
 ## 4. 依赖方向
@@ -104,6 +109,6 @@ app → routers → pipelines → { models , utils } → configs
 已完成的闭环里还剩这些，不是待办清单，是已知边界与下一步的入口：
 
 - **老版 Office（doc / ppt / wps）没有解析路径**：要补就得引 LibreOffice 转换器或自己解析 OLE 流，两者都超出「纯 Python 库能否做到」这条线（ADR-0003）。
-- **下载层仍有 DNS 二次解析的时间窗**：SSRF 校验用的是 `socket.getaddrinfo` 的结果，`httpx` 建立连接时会再解析一次，理论上存在 DNS rebinding 的 TOCTOU 窗口；本机自用可接受，对外暴露前要补「解析一次、按 IP 连接」。
+- **下载层 SSRF 已钉 IP**：连接按解析结果建连（Host/SNI 仍用原主机名）；https→http 降级跳转拒绝。其余入口暴露面（鉴权 / CORS）见 [review-remainder.md](./review-remainder.md) / 根目录选做清单。
 - **正文对比规则由 `tests/` 覆盖**：`test_understand_stubbed.py`（免费）与 `test_understand_contract.py`（贵缝）按 ADR-0011 区分「纯代码相同」与「understand 合并模型转写」；新增格式要自己补用例。
 - **ADR-0010 布局已落地**：`processors/` 只留格式族文件；表格公共与 `odf_table_rows` 在 `utils/excel/`；契约与 `reading` 在既定落点。RAG 独立契约已下线（见 HISTORY）。

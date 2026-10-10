@@ -157,8 +157,13 @@ def test_https_still_passes_when_http_is_switched_off(monkeypatch):
     """
     monkeypatch.setattr(step1_download.settings, "ALLOW_HTTP_SOURCE", False)
     visited = []
-    monkeypatch.setattr(step1_download, "_assert_public_host", lambda host: visited.append(host))
-    step1_download._assert_safe_url("https://example.com/x")
+
+    def _fake_public(host: str) -> str:
+        visited.append(host)
+        return "93.184.216.34"
+
+    monkeypatch.setattr(step1_download, "_assert_public_host", _fake_public)
+    assert step1_download._assert_safe_url("https://example.com/x") == "93.184.216.34"
     assert visited == ["example.com"]
 
 
@@ -172,8 +177,13 @@ def test_http_is_allowed_by_default(monkeypatch):
     """
     assert step1_download.settings.ALLOW_HTTP_SOURCE is True, "默认必须是 true"
     visited = []
-    monkeypatch.setattr(step1_download, "_assert_public_host", lambda host: visited.append(host))
-    step1_download._assert_safe_url("http://example.com/x")
+
+    def _fake_public(host: str) -> str:
+        visited.append(host)
+        return "93.184.216.34"
+
+    monkeypatch.setattr(step1_download, "_assert_public_host", _fake_public)
+    assert step1_download._assert_safe_url("http://example.com/x") == "93.184.216.34"
     assert visited == ["example.com"]
 
 

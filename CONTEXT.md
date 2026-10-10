@@ -79,6 +79,14 @@ _Avoid_: 文档图片、插图
 下限，命中它不产生截断。全部上界登记在 `configs/limits.py`，命中后名字进 `meta.limits_hit`。
 _Avoid_: 限制、门限、上限值
 
+**资源防护公共件**：
+一类不解析具体格式、只在「资源被吃光之前挡住」的 `utils/` 模块。上界的**值与文案**仍只在
+`configs/limits.py`；这类模块负责**怎么强制**（预检、流式封顶、跨成员累计），并把「是否命中」交回
+调用方上报。现例：`utils/zip_read.py`（ZIP 解压预算）、`utils/body_limit.py`（请求体声明预检 + 边收边数）、
+`utils/textfile.read_text_file`（文本字节封顶）、下载层流式计数（外壳体积）。与「一格式族一文件」的处理器、
+表格公共件（`utils/excel/`）并列，是第三种常见落点。
+_Avoid_: 防护器、安全中间件、limit helper
+
 **用量**（`usage`）：
 本次调用真实的模型 token 与折算成本，按模型分别记账。不存在用内容长度冒充 token 的字段。
 _Avoid_: inputTokens / outputTokens

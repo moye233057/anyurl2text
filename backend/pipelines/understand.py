@@ -84,6 +84,7 @@ class UnderstandPipeline:
                     # ── 模型增强：按格式显式分派（见 `_run_model_enhance`）
                     outcome = _run_model_enhance(prepared, result, client)
                     result.notes.extend(outcome.notes)
+                    result.limits_hit.extend(outcome.limits_hit)
                     ocr_text = outcome.ocr_text
                     asr_text = outcome.asr_text
                     description = outcome.description
@@ -106,6 +107,7 @@ class UnderstandPipeline:
                 if summary is None and not model_failed:
                     result.notes.append("模型阶段没有产出摘要：这份内容里既没有可加工的文本，也没有读出可用的图像信息")
                 result.limits_hit.extend(model_hits)
+                result.limits_hit.extend(client.ledger.limits_hit)
             else:
                 result.notes.append("没有可供模型处理的内容，understand 跳过模型调用")
 
@@ -188,6 +190,7 @@ class UnderstandPipeline:
                     request_budget.assert_request_budget("understand.model")
                     outcome = _run_model_enhance(prepared, result, client)
                     result.notes.extend(outcome.notes)
+                    result.limits_hit.extend(outcome.limits_hit)
                     ocr_text = outcome.ocr_text
                     asr_text = outcome.asr_text
                     description = outcome.description
@@ -209,6 +212,7 @@ class UnderstandPipeline:
                 if summary is None and not model_failed:
                     result.notes.append("模型阶段没有产出摘要：这份内容里既没有可加工的文本，也没有读出可用的图像信息")
                 result.limits_hit.extend(model_hits)
+                result.limits_hit.extend(client.ledger.limits_hit)
             else:
                 result.notes.append("没有可供模型处理的内容，understand 跳过模型调用")
 

@@ -2,9 +2,10 @@
 """
 步骤 1：把 URL 下载到临时目录里的一个文件（两条路共用的第一步）。
 
-安全基线（ADR 0005，三条都不可协商）：
+安全基线（ADR 0005，不可协商）：
 1. 拒绝回环 / 内网 / 链路本地 / 保留地址；重定向**逐跳**重新校验目标，
-   否则外部域名可以 302 到内网。
+   否则外部域名可以 302 到内网。解析一次并把连接钉到该 IP（关 DNS rebinding 时间窗）；
+   解析结果无法识别即拒（fail-closed）。https 跳到 http 逐跳禁止。
 2. 流式写盘时累计字节数，超限立刻中断——不在下载完成之后才检查。
 3. TLS 校验不降级：证书问题直接失败并说明原因，绝不静默 verify=False。
 
@@ -21,23 +22,25 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
-from urllib.parse import unquote, urljoin, urlsplit
+from typing import Optional, Tuple
+from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
 
 import httpx
 
 import configs.errors as errors
 import configs.settings as settings
-from configs.log_config import logger
+from configs.log_config import logger, redact_url_for_log
 from utils import request_budget
 
 REDIRECT_STATUS = (301, 302, 303, 307, 308)
 # 受限地址段的判定字段：内网 / 回环 / 链路本地 / 保留 / 组播 / 未指定，任一命中即拒绝
 RESTRICTED_IP_FLAGS = ("is_private", "is_loopback", "is_link_local", "is_reserved", "is_multicast", "is_unspecified")
 
+
 def _is_restricted(ip) -> bool:
     """这个地址是不是受限段。清单见 `RESTRICTED_IP_FLAGS`（ADR 0005 的第一条）。"""
     return any(getattr(ip, flag) for flag in RESTRICTED_IP_FLAGS)
+
 
 class FetchError(Exception):
     """
@@ -59,6 +62,7 @@ class FetchError(Exception):
         self.code = code
         self.param = param
 
+
 @dataclass
 class FetchedFile:
     """下载结果。path 落在调用方给的临时目录下，由调用方负责清理。"""
@@ -69,32 +73,55 @@ class FetchedFile:
     content_type: Optional[str]
     file_name: str
 
-def _assert_public_host(host: str) -> None:
-    """
-    解析主机名并拒绝内网 / 回环 / 链路本地 / 保留地址。
 
-    功能：对 DNS 返回的每一个地址都做判定，任一命中即拒绝。
+def _assert_public_host(host: str) -> str:
+    """
+    解析主机名、拒绝受限地址，并返回用于建连的公网 IP（钉死，避免二次 DNS）。
+
+    功能：对 DNS 返回的每一个地址都做判定，任一命中受限段即拒绝；任一地址无法识别
+          也拒绝（fail-closed）。通过后优先选 IPv4，否则取第一个合法地址。
     应用场景：每次真正发起连接之前调用；重定向后的新地址也要再过一次。
     输入：host — URL 里的主机名。
+    输出：要连接的 IP 字符串（无括号）。
     异常：FetchError — 解析失败（502）或命中受限地址段（422）。
     """
-    if settings.ALLOW_PRIVATE_HOSTS:
-        return
     try:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror as exc:
         raise FetchError(f"域名解析失败: {host}", 502, "download_dns_failed", "url") from exc
+    if not infos:
+        raise FetchError(f"域名解析失败: {host}（无地址）", 502, "download_dns_failed", "url")
 
+    candidates = []
     for info in infos:
+        raw = info[4][0]
         try:
-            ip = ipaddress.ip_address(info[4][0])
-        except ValueError:
+            ip = ipaddress.ip_address(raw)
+        except ValueError as exc:
+            raise FetchError(
+                f"域名解析返回无法识别的地址: {host} -> {raw!r}",
+                502,
+                "download_dns_failed",
+                "url",
+            ) from exc
+        if settings.ALLOW_PRIVATE_HOSTS:
+            candidates.append(ip)
             continue
         if _is_restricted(ip):
             raise FetchError(f"拒绝访问内网或保留地址: {host} -> {ip}", 422, "download_private_host", "url")
+        candidates.append(ip)
 
-def _assert_safe_url(url: str) -> None:
-    """校验协议、http 开关与主机，供每一跳复用。"""
+    if not candidates:
+        raise FetchError(f"域名解析失败: {host}（无可用地址）", 502, "download_dns_failed", "url")
+
+    for ip in candidates:
+        if isinstance(ip, ipaddress.IPv4Address):
+            return str(ip)
+    return str(candidates[0])
+
+
+def _assert_safe_url(url: str) -> str:
+    """校验协议、http 开关与主机，返回钉死建连用的 IP；供每一跳复用。"""
     parsed = urlsplit(url)
     if parsed.scheme not in ("http", "https"):
         raise FetchError(f"只支持 http/https，收到: {parsed.scheme or '(空)'}", 422, "download_scheme_unsupported", "url")
@@ -102,7 +129,38 @@ def _assert_safe_url(url: str) -> None:
         raise FetchError("URL 缺少主机名", 422, "download_host_missing", "url")
     if parsed.scheme == "http" and not settings.ALLOW_HTTP_SOURCE:
         raise FetchError("只允许 https；如需放开 http 请设 ALLOW_HTTP_SOURCE=true", 422, "download_http_not_allowed", "url")
-    _assert_public_host(parsed.hostname)
+    return _assert_public_host(parsed.hostname)
+
+
+def _host_header(parsed) -> str:
+    """给钉 IP 后的请求补回原来的 Host（含非默认端口）。"""
+    host = parsed.hostname or ""
+    if parsed.port is None:
+        return host
+    return f"{host}:{parsed.port}"
+
+
+def _pinned_url(url: str, connect_ip: str) -> Tuple[str, str, str]:
+    """
+    把 URL 的主机换成已校验的 IP，保留 path/query；返回 (钉死 URL, Host 头, SNI 主机名)。
+
+    TLS 仍按原主机名做 SNI / 证书校验（extensions.sni_hostname），连接只走钉死的 IP。
+    """
+    parsed = urlsplit(url)
+    host = parsed.hostname or ""
+    try:
+        ip_obj = ipaddress.ip_address(connect_ip)
+    except ValueError as exc:
+        raise FetchError(f"内部错误：无效的钉死地址 {connect_ip!r}", 500, "internal") from exc
+    if isinstance(ip_obj, ipaddress.IPv6Address):
+        netloc = f"[{connect_ip}]"
+    else:
+        netloc = connect_ip
+    if parsed.port is not None:
+        netloc = f"{netloc}:{parsed.port}"
+    pinned = urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+    return pinned, _host_header(parsed), host
+
 
 def _budgeted_timeout(deadline: float) -> httpx.Timeout:
     """按剩余预算收紧超时，避免「连接与读取各自用满」把总时间冲爆。"""
@@ -110,6 +168,7 @@ def _budgeted_timeout(deadline: float) -> httpx.Timeout:
     connect = min(settings.CONNECT_TIMEOUT_SEC, remaining)
     read = min(settings.READ_TIMEOUT_SEC, remaining)
     return httpx.Timeout(connect=connect, read=read, write=connect, pool=connect)
+
 
 def _filename_from_disposition(header: Optional[str]) -> str:
     """从 Content-Disposition 里取原始文件名，取不到返回空串。"""
@@ -119,6 +178,7 @@ def _filename_from_disposition(header: Optional[str]) -> str:
     if index < 0:
         return ""
     return unquote(header[index + len("filename=") :].strip().strip('";\' '))
+
 
 def _stream_to_file(
     response: httpx.Response,
@@ -178,12 +238,13 @@ def _stream_to_file(
         file_name=file_name,
     )
 
+
 def download(url: str, dest_dir: Path) -> FetchedFile:
     """
     下载 URL 到临时目录，返回落盘结果。
 
-    功能：手工跟随重定向（每一跳重做地址与协议校验），流式写盘并限大小；
-          TLS 校验始终开启，不用任何理由降级。
+    功能：手工跟随重定向（每一跳重做地址与协议校验，钉 IP 建连），流式写盘并限大小；
+          TLS 校验始终开启；https → http 的降级跳转直接拒绝。
     应用场景：extract / understand 两个接口的 URL 入口，共用的第一步。
     输入：url — 用户提供的地址；dest_dir — 临时目录。
     输出：FetchedFile（含最终 URL、字节数、Content-Type 与原始文件名）。
@@ -202,8 +263,18 @@ def download(url: str, dest_dir: Path) -> FetchedFile:
     try:
         with httpx.Client(follow_redirects=False, verify=True, headers=headers) as client:
             for _ in range(settings.MAX_REDIRECTS + 1):
-                _assert_safe_url(current)
-                with client.stream("GET", current, timeout=_budgeted_timeout(deadline)) as response:
+                previous_scheme = urlsplit(current).scheme
+                connect_ip = _assert_safe_url(current)
+                pinned, host_header, sni_host = _pinned_url(current, connect_ip)
+                request_headers = {**headers, "Host": host_header}
+                extensions = {"sni_hostname": sni_host} if previous_scheme == "https" else {}
+                with client.stream(
+                    "GET",
+                    pinned,
+                    headers=request_headers,
+                    timeout=_budgeted_timeout(deadline),
+                    extensions=extensions,
+                ) as response:
                     if response.status_code in REDIRECT_STATUS:
                         location = response.headers.get("location")
                         if not location:
@@ -212,8 +283,17 @@ def download(url: str, dest_dir: Path) -> FetchedFile:
                                 502,
                                 "download_redirect_missing_location",
                             )
-                        current = urljoin(current, location)
-                        logger.info(f"fetch 重定向 -> {current}")
+                        next_url = urljoin(current, location)
+                        next_scheme = urlsplit(next_url).scheme
+                        if previous_scheme == "https" and next_scheme == "http":
+                            raise FetchError(
+                                "拒绝 https 重定向到 http（协议降级）",
+                                422,
+                                "download_redirect_insecure",
+                                "url",
+                            )
+                        current = next_url
+                        logger.info(f"fetch 重定向 -> {redact_url_for_log(current)}")
                         continue
                     if response.status_code >= 400:
                         raise FetchError(f"下载失败，HTTP {response.status_code}", 502, "download_http_error")

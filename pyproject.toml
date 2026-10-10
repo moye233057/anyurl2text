@@ -1,0 +1,56 @@
+# 后端依赖与解释器由 uv 管（ADR-0013）。本文件是唯一清单；不要再维护 pip -r。
+# 前端仍用 frontend/ 下的 npm，不在此列。
+
+[project]
+name = "anyurl2text"
+version = "0.1.0"
+description = "把任意 URL 或本地文件转成尽可能保留原始信息的文本（extract / understand 双路）"
+requires-python = ">=3.12"
+dependencies = [
+    # 服务与契约
+    "fastapi",
+    "uvicorn[standard]",
+    "python-dotenv",
+    # FastAPI 的 File/Form 路由启动时会 import；清理依赖时不要因为它「没人直接 import」就删
+    "python-multipart",
+    "pydantic",
+    "httpx",
+    "openai",
+    # Windows 上 ZoneInfo("Asia/Shanghai") 需要（deepseek 高峰计价）；uv 托管 CPython 不自带
+    "tzdata",
+
+    # 文档与网页
+    "pymupdf",
+    "python-docx",
+    "python-pptx",
+    "openpyxl",
+    "xlrd",
+    "pyexcel-ods",
+    "beautifulsoup4",
+    "chardet",
+    # 显式列出：被上游依赖但本仓会用到；漏装会导致环境装不出可运行版本
+    "odfpy",
+    "lxml",
+
+    # 图片
+    "pillow",
+    "pillow-heif",
+
+    # 音视频（可选能力：缺了只降级这一类，见 start.py BACKEND_REQUIRED 不含它们）
+    "soundfile",
+    "imageio-ffmpeg",
+
+    # 压缩包
+    "py7zr",
+    "rarfile",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[tool.uv]
+# 后端是 cwd=backend/ 的脚本树，不是可安装包；uv 只负责 .venv + 依赖。
+package = false
+default-groups = ["dev"]

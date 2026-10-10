@@ -115,7 +115,7 @@ def _sheet_grid(rows: list, merges: list) -> tuple:
 
 def _read_xlsx(path: Path) -> tuple:
     """
-    用 openpyxl 读 xlsx/xlsm；read_only 失败时退回常规模式（部分文件的样式表会让只读模式报错）。
+    用 openpyxl 只读模式读 xlsx/xlsm；失败则抛给 `extract_excel` 降级，不回退整本加载。
 
     功能：整表逐行读出，另交一份隐藏状态（工作表 / 行列）供 `notes` 登记。
     应用场景：`extract_excel` 读 xlsx / xlsm 时调用。
@@ -124,13 +124,11 @@ def _read_xlsx(path: Path) -> tuple:
           visibility 形态见 `read_xlsx_visibility`（本路径经 `_xlsx_package_meta` 一次解包拿到）。
     说明：**隐藏工作表照读**（隐藏只是界面上没显示，不是没内容；用户 2026-10-04 拍板）。
           实测只读模式同样会吐出隐藏行、隐藏列的值，所以这条读取路径不必改。
+          只读失败若回退 `data_only=True` 整本加载，行数上限形同虚设，可被畸形 xlsx 打爆内存。
     """
     import openpyxl
 
-    try:
-        workbook = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
-    except Exception:
-        workbook = openpyxl.load_workbook(str(path), data_only=True)
+    workbook = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
     try:
         # 合并区与隐藏状态共用一次 Zip 打开（不再各开一次）
         merges, visibility = _xlsx_package_meta(path)
