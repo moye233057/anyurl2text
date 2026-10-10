@@ -24,9 +24,9 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = PROJECT_DIR / "backend"
 FRONTEND_DIR = PROJECT_DIR / "frontend"
-OPTIONAL_OCR = PROJECT_DIR / "backend" / "extensions" / "ocr" / "main.py"
-OPTIONAL_ASR = PROJECT_DIR / "backend" / "extensions" / "asr" / "main.py"
-EXTENSIONS_MODELS = PROJECT_DIR / "backend" / "extensions" / "models"
+# 默认选用的第三方服务实现（专栏下可换其它实现，并改端口 / API_URL）
+SERVICE_OCR = PROJECT_DIR / "services" / "ocr" / "paddle-ocr"
+SERVICE_ASR = PROJECT_DIR / "services" / "asr" / "qwen3-asr"
 
 
 def _venv_python() -> Path:
@@ -86,8 +86,10 @@ BACKEND_PORT = int(os.getenv("ANYURL2TEXT_PORT", "8020"))
 FRONTEND_PORT = int(os.getenv("FRONTEND_PORT", "5173"))
 OCR_PORT = int(os.getenv("OCR_PORT", "8021"))
 ASR_PORT = int(os.getenv("ASR_PORT", "8022"))
-# 为 true 且 backend/extensions/{ocr,asr}/main.py 存在、权重目录非空时，尝试一并拉起扩展子进程
-START_EXTENSIONS = os.getenv("START_EXTENSIONS", "true").strip().lower() in ("1", "true", "yes", "on")
+# 为 true 且默认 services 实现存在、其 models/ 有权重时，尝试一并拉起子进程
+START_SERVICES = os.getenv("START_SERVICES", os.getenv("START_EXTENSIONS", "true")).strip().lower() in (
+    "1", "true", "yes", "on",
+)
 HEALTH_URL = f"http://127.0.0.1:{BACKEND_PORT}/probe/health"
 DOCS_URL = f"http://127.0.0.1:{BACKEND_PORT}/docs"
 FRONTEND_URL = f"http://localhost:{FRONTEND_PORT}/"
@@ -139,25 +141,32 @@ def step3_check_ports() -> bool:
     return True
 
 
-def _weights_present() -> bool:
-    """扩展权重目录存在且非空（使用者自备）。"""
-    return EXTENSIONS_MODELS.is_dir() and any(EXTENSIONS_MODELS.iterdir())
+def _service_weights_ready(service_dir: Path) -> bool:
+    """服务自己的 models/ 下除 README 外还有文件，才视为已备权重。"""
+    models_dir = service_dir / "models"
+    if not models_dir.is_dir():
+        return False
+    for path in models_dir.rglob("*"):
+        if path.is_file() and path.name.lower() != "readme.md":
+            return True
+    return False
 
 
-def _start_optional(label: str, main_py: Path, port: int) -> subprocess.Popen | None:
-    """条件满足时拉起 optional 子进程；已在听端口则跳过。"""
+def _start_service(label: str, service_dir: Path, port: int) -> subprocess.Popen | None:
+    """条件满足时拉起 services 下某实现的子进程；已在听端口则跳过。"""
+    main_py = service_dir / "main.py"
     if not main_py.is_file():
-        print(f"跳过 {label}：尚未收编（缺少 {main_py.relative_to(PROJECT_DIR)}）")
+        print(f"跳过 {label}：缺少 {main_py.relative_to(PROJECT_DIR)}")
         return None
-    if not _weights_present():
-        print(f"跳过 {label}：{EXTENSIONS_MODELS} 无权重（见 backend/extensions/models/README.md）")
+    if not _service_weights_ready(service_dir):
+        print(f"跳过 {label}：{service_dir.relative_to(PROJECT_DIR) / 'models'} 无权重（见该服务 README）")
         return None
     if _port_in_use(port):
         print(f"{label} 端口 {port} 已在听，复用现有进程")
         return None
-    print(f"启动 {label}（子进程，cwd={main_py.parent}）…")
-    # 扩展自带环境：此处用「能 import 的 python」仅作占位；收编后应改读 optional 专用解释器
-    return subprocess.Popen([sys.executable, str(main_py.name)], cwd=str(main_py.parent))
+    print(f"启动 {label}（子进程，cwd={service_dir.relative_to(PROJECT_DIR)}）…")
+    # 服务自带环境：此处仅作占位；生产应改用该服务专用解释器
+    return subprocess.Popen([sys.executable, "main.py"], cwd=str(service_dir))
 
 
 def step4_start_backend() -> subprocess.Popen:
@@ -214,11 +223,11 @@ def run() -> int:
     ocr_proc = None
     asr_proc = None
     try:
-        if START_EXTENSIONS:
-            ocr_proc = _start_optional("OCR 扩展", OPTIONAL_OCR, OCR_PORT)
-            asr_proc = _start_optional("ASR 扩展", OPTIONAL_ASR, ASR_PORT)
+        if START_SERVICES:
+            ocr_proc = _start_service("OCR (paddle-ocr)", SERVICE_OCR, OCR_PORT)
+            asr_proc = _start_service("ASR (qwen3-asr)", SERVICE_ASR, ASR_PORT)
         else:
-            print("START_EXTENSIONS=false：不自动拉起 optional 扩展（可按 backend/extensions/{ocr,asr}/README 手动起）")
+            print("START_SERVICES=false：不自动拉起 services（可按 services/*/README 手动起）")
         backend = step4_start_backend()
         frontend = step5_start_frontend()
         if not step6_wait_ready(backend, frontend):

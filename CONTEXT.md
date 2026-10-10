@@ -20,13 +20,17 @@ _Avoid_: 模型服务（作总称时）、插件、sidecar（作产品名时）
 请求（或等价配置）上分别控制是否启用 OCR、ASR、LLM。只有「开关开」且「扩展可用」时才真正调用。
 _Avoid_: mode、understand 标志、增强开关（单布尔）
 
-**扩展模块**：
-落在本仓 `backend/extensions/ocr/` 与 `backend/extensions/asr/`、由本仓拉起的 OCR / ASR 服务（代码与进程归属本仓，不依赖使用者另起外部 ModelServer）。
-_Avoid_: 外部 ModelServer、辅服务仓、第三方进程（作默认部署名时）
+**第三方服务**（`services/`）：
+仓库根下独立进程的模型服务树：`services/<专栏>/<实现名>/`（专栏如 `ocr`、`asr`）。同一专栏可挂多套实现；**一套实现一个端口**。不进核心 `uv` 环境。
+_Avoid_: optional/、ModelServer（作本仓默认路径时）、sidecar 仓
 
-**扩展权重目录**：
-第三方模型文件的本机落点：`backend/extensions/models/`。远程仓库不收录权重；该目录勿放 Python 包。
-_Avoid_: backup/extensions、ModelScope 缓存路径（作本仓约定时）
+**扩展出口**（`backend/extensions/`）：
+核心侧调用第三方服务或远程 API 的客户端（DeepSeek / OCR·ASR HTTP 等）。**不含**服务进程与权重。
+_Avoid_: models/（作包名时）、把服务代码放进 extensions
+
+**服务权重目录**：
+每个第三方服务实现自己的 `models/`（如 `services/asr/qwen3-asr/models/`）。远程仓不收录权重。
+_Avoid_: backend/extensions/models、共享权重总目录
 
 **交付文本**（`content`）：
 对外主正文。文档类含纯代码抽取段；开启且可用的 OCR/ASR/视觉转写按规则并入，并双写 `meta.ocr_text` / `meta.asr_text`。图片与音视频在对应扩展未启用时只有基础文件信息，`content` 可为空。摘要进 `summary`，不替换 `content`。

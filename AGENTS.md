@@ -2,7 +2,7 @@
 
 本仓（anyurl2text）的例外与禁令。这里只放**本仓特有、且从代码与文档里查不到**的部分。
 
-事实源指针：跑法 [docs/RUNBOOK.md](docs/RUNBOOK.md) ｜ 叫法 [CONTEXT.md](CONTEXT.md) ｜ 目标态 [docs/architecture.md](docs/architecture.md) ｜ 为什么 [docs/adr.md](docs/adr.md) ｜ 计划与选做 [TODO.md](TODO.md)（计划可开工；选做勿默认逐项）｜ 评审余项 [docs/review-remainder.md](docs/review-remainder.md) ｜ 进展 [docs/plan-completed.md](docs/plan-completed.md)
+事实源指针：跑法 [docs/RUNBOOK.md](docs/RUNBOOK.md) ｜ 叫法 [CONTEXT.md](CONTEXT.md) ｜ 目标态 [docs/architecture.md](docs/architecture.md) ｜ 为什么 [docs/adr.md](docs/adr.md) ｜ 计划与选做 [docs/TODO.md](docs/TODO.md)（选做勿默认逐项）｜ 评审余项 [docs/review-remainder.md](docs/review-remainder.md) ｜ 进展 [docs/plan-completed.md](docs/plan-completed.md)
 
 ## 环境：用 uv，不用随便哪个 conda/pip
 

@@ -1,8 +1,0 @@
-# Ignore compiled files
-*.idea
-*.pyc
-static
-logs
-__pycache__
-temp
-models

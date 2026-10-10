@@ -127,7 +127,7 @@ frontend/src/ResultPanel.tsx 界面渲染
 
 **已接好的 Paddle OCR**：出口在 `backend/extensions/paddle_ocr.py`（本机 `POST /ocr-b64`，纵向超长图在本地切片并发识别；地址与超时见 `.env` 的 `OCR_API_URL` / `OCR_TIMEOUT_SEC`）；编排在 `pipelines/processors/image.py` 的 `enhance_image()`——独立图片先用视觉模型判型（提示词 `extensions/prompts/classify_image.txt`）：判为语义图片就用那次调用给出的描述，判为文字图片就交 Paddle OCR 读字；判型输出解析不出来时按文字图片处理。
 
-**已接好的 Qwen3-ASR（音视频）**：出口在 `backend/extensions/qwen3_asr.py`（本机 `POST /asr-b64`，自己抽音轨后传字节，不用服务的 `/asr-url`；地址与超时见 `.env` 的 `ASR_API_URL` / `ASR_TIMEOUT_SEC`）；编排在 `pipelines/processors/media.py`：`extract_media()` 取到音轨（音频直接读，视频与容器音频用 `utils/ffmpeg.py` 抽）并报出 `meta.audio`，音轨同时登记进 `result.assets`（`kind="audio_track"`），`enhance_media()` 拿它转写，文字进 `meta.asr_text`。抽音轨靠 `imageio-ffmpeg`，缺它或抽不出音轨时退回降级（`meta.degraded` 为 `true`）并在 `meta.notes` 里说明；ASR 服务没起只是转写失败，原因同样写进 `meta.notes`，`meta.degraded` 仍为 `false`。
+**已接好的 Qwen3-ASR（音视频）**：出口在 `backend/extensions/qwen3_asr.py`（本机 `POST /asr-b64`，自己抽音轨后传字节；地址与超时见 `.env` 的 `ASR_API_URL` / `ASR_TIMEOUT_SEC`）；编排在 `pipelines/processors/media.py`：`extract_media()` 取到音轨（音频直接读，视频与容器音频用 `utils/ffmpeg.py` 抽）并报出 `meta.audio`，音轨同时登记进 `result.assets`（`kind="audio_track"`），`enhance_media()` 拿它转写，文字进 `meta.asr_text`。抽音轨靠 `imageio-ffmpeg`，缺它或抽不出音轨时退回降级（`meta.degraded` 为 `true`）并在 `meta.notes` 里说明；ASR 服务没起只是转写失败，原因同样写进 `meta.notes`，`meta.degraded` 仍为 `false`。
 
 **完成标准**：
 

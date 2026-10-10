@@ -5,15 +5,11 @@
 # 而 README 让使用者复制它——不放行的话 clone 下来没有可复制的样本。
 !.env.example
 
-# 扩展权重（使用者自备；远程仓不收录；保留说明文件）
-backend/extensions/models/**
-!backend/extensions/models/README.md
-
-# 扩展服务运行时产物
-backend/extensions/ocr/logs/
-backend/extensions/ocr/temp/
-backend/extensions/asr/logs/
-backend/extensions/asr/temp/
+# 第三方服务权重与运行时产物（保留各服务 models/README.md）
+services/**/models/**
+!services/**/models/README.md
+services/**/logs/
+services/**/temp/
 
 # 运行产物（都在 backend/data/ 下）
 backend/data/debug/
@@ -25,12 +21,25 @@ backend/data/logs/
 # feed.xml / page.html / sample.rtf / notes.md）不是脚本生成的，只有仓库里有。
 backend/data/scanned.pdf
 
-# Python
-__pycache__/
-*.py[cod]
-.pytest_cache/
+# Python 环境与缓存（任意深度；核心 uv 与 services 各自 venv 都不入库）
 .venv/
 venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.uv/
 
 # 前端
 frontend/node_modules/
@@ -42,3 +51,5 @@ frontend/.vite/
 .vscode/
 .DS_Store
 Thumbs.db
+*.swp
+*~

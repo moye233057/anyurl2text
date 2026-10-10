@@ -20,8 +20,8 @@
 
 - 不做鉴权、多租户、限流、平台计费——本机自用；`ALLOW_PRIVATE_HOSTS=false` 只防 SSRF。
 - 不把 URL 交给任何上游代下载：图片自己下载后传字节/base64，音频自己抽音轨后传字节。
-- 远程仓**不收录** OCR/ASR（及同类）权重与大模型目录；使用者自行下载到扩展权重目录。
-- 不把「另起外部 ModelServer 仓」当作默认部署；OCR/ASR **要起就在本仓**以扩展模块拉起（ADR-0014）。
+- 远程仓**不收录** OCR/ASR（及同类）权重；使用者下载到各服务自己的 `models/`。
+- 不把「另起外部 ModelServer 仓」当作默认部署；OCR/ASR **要起就在本仓** `services/` 拉起（ADR-0014）。
 - 不静默截断：截断、跳过、降级须在 `meta.truncated` / `meta.notes` / `meta.degrade_reason` 声明。
 - 压缩包只列条目，不解压、不递归。
 - 老版 Office（doc / ppt / wps）不做深度解析，只降级（ADR-0003）。
@@ -60,10 +60,10 @@
 | 限额 / 错误码 | `backend/configs/limits.py`、`errors.py` | 已实现 |
 | 资源防护：ZIP / 请求体 | `backend/utils/zip_read.py`、`body_limit.py` | 已实现 |
 | 出站复用 | `backend/utils/egress.py` | 已实现 |
-| **OCR 扩展模块** | `backend/extensions/ocr/`（自 ModelServer/paddle-ocr；独立进程） | 已实现（权重自备） |
-| **ASR 扩展模块** | `backend/extensions/asr/`（自 ModelServer/qwen3-asr；独立进程） | 已实现（权重自备） |
-| **扩展权重** | `backend/extensions/models/`（gitignore；使用者自备） | 已实现（目录约定 + ignore） |
-| **扩展安装与启动说明** | `backend/extensions/{ocr,asr}/README` + `backend/extensions/models/README` | 内联（RUNBOOK 细则未完） |
+| **OCR 扩展模块** | `services/ocr/paddle-ocr/`（自 ModelServer/paddle-ocr；独立进程） | 已实现（权重自备） |
+| **ASR 扩展模块** | `services/asr/qwen3-asr/`（自 ModelServer/qwen3-asr；独立进程） | 已实现（权重自备） |
+| **扩展权重** | `各服务自己的 models/`（gitignore；使用者自备） | 已实现（目录约定 + ignore） |
+| **扩展安装与启动说明** | `services/{ocr,asr}/<实现名>/README` + `各服务自己的 models/README` | 内联（RUNBOOK 细则未完） |
 | **能力门闩**（开关 × 健康 × 模态） | `pipelines/convert.py` | 已实现（开关×模态；健康探测未扩） |
 | LLM 扩展出口 | `backend/extensions/deepseek.py`（远程 DeepSeek 或本机 OpenAI 兼容，换 `BASE_URL`） | 已实现（远程；本机端点验收未做） |
 | 样例与测试 | `backend/scripts/make_fixtures.py`；`backend/tests/` | 已实现（开关矩阵；HTTP 缝须后端在跑） |
@@ -80,7 +80,7 @@ app → routers → pipelines → { extensions , utils } → configs
          └───────────────→ utils
 ```
 
-`backend/extensions/ocr`、`backend/extensions/asr` 是**可独立进程**的扩展，不加入上述 import 图；核心只通过配置的 URL（默认本机端口）用 HTTP/字节协议调用。扩展自带依赖与（可选）独立虚拟环境，由启动器与文档约定，不强制打进核心 `.venv`。
+`services/` 下各实现是**独立进程**，不加入上述 import 图；核心只通过配置的 URL（默认本机端口）用 HTTP/字节协议调用。服务自带依赖与独立环境，由启动器与文档约定，不强制打进核心 `.venv`。
 
 ## 5. 一次请求怎么走（落点视角）
 
@@ -97,7 +97,7 @@ app → routers → pipelines → { extensions , utils } → configs
 
 ## 6. 现状缺口
 
-- OCR/ASR 已收编到 `backend/extensions/{ocr,asr}`；须自备权重并在独立环境装依赖后才能真正起服务。
+- OCR/ASR 已收编到 `services/{ocr,asr}/<实现名>`；须自备权重并在独立环境装依赖后才能真正起服务。
 - 老版 Office 无解析路径（ADR-0003）。
 - 下载层 SSRF 已钉 IP；鉴权 / CORS 见选做清单。
-- 剩余计划项见 [TODO.md](../TODO.md)。
+- 选做与明确不做见 [TODO.md](./TODO.md)。

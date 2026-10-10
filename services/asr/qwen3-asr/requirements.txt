@@ -1,0 +1,6 @@
+# 独立环境，建议 Python 3.12。有 GPU 时先装 CUDA torch，再装本文件。
+# 例：pip install torch --index-url https://download.pytorch.org/whl/cu124
+fastapi
+uvicorn
+qwen-asr
+modelscope

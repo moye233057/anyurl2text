@@ -1,9 +1,0 @@
-# Ignore compiled files
-*.idea
-*.pyc
-*.jpg
-*.png
-static
-logs
-__pycache__
-temp

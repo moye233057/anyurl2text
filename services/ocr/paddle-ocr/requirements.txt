@@ -1,0 +1,19 @@
+# 独立 venv；勿装进仓库根 .venv。
+# 先：pip install --no-deps mineru==3.2.3
+# 再：pip install -r requirements.txt
+fastapi
+uvicorn
+python-multipart
+modelscope
+numpy
+opencv-python
+pillow
+PyYAML
+loguru
+tqdm
+six
+shapely
+pyclipper
+torchvision==0.20.1
+torchaudio==2.5.1
+huggingface_hub

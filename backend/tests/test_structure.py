@@ -47,25 +47,13 @@ ALLOWED: Dict[str, Set[str]] = {
 
 # ---------- 读代码 ----------
 
-def _is_extension_server_or_weights(parts: tuple) -> bool:
-    """extensions/ocr|asr|models 是独立进程或权重树，不进核心依赖门禁。"""
-    return (
-        len(parts) >= 2
-        and parts[0] == "extensions"
-        and parts[1] in {"ocr", "asr", "models"}
-    )
-
-
 def production_modules() -> List[Path]:
     """backend/ 下参与结构判据的全部 .py。"""
     found = []
     for path in sorted(BACKEND.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
-        parts = path.relative_to(BACKEND).parts
-        if parts[0] in NON_PRODUCTION:
-            continue
-        if _is_extension_server_or_weights(parts):
+        if path.relative_to(BACKEND).parts[0] in NON_PRODUCTION:
             continue
         found.append(path)
     return found

@@ -17,7 +17,7 @@
 - 各格式链路见 [docs/PIPELINES.md](docs/PIPELINES.md)
 - 配置、验收与对外部署见 [docs/RUNBOOK.md](docs/RUNBOOK.md)
 - 扩展入口见 [docs/EXTENDING.md](docs/EXTENDING.md)
-- 计划与选做见 [TODO.md](TODO.md)
+- 计划与选做见 [docs/TODO.md](docs/TODO.md)
 - 本仓给 AI 的规矩见 [AGENTS.md](AGENTS.md)
 
 ## 生产信息
@@ -88,7 +88,7 @@ cp .env.example .env
 ```
 
 用编辑器打开仓库根目录的 `.env`，按需填写 LLM 相关项（如 `DEEPSEEK_API_KEY`）。  
-OCR / ASR 为目标态仓内扩展（`backend/extensions/ocr|asr/` + `backend/extensions/models/` 自备权重）；迁移完成前仍可能需本机 `8021` / `8022`。详见 [TODO.md](TODO.md) 与 RUNBOOK。
+OCR / ASR 为本仓第三方服务（`services/{ocr,asr}/<实现>/` + 各实现自己的 `models/` 自备权重）；`start.py` 默认可一并拉起（`8021` / `8022`）。详见 [services/README.md](services/README.md) 与 RUNBOOK。
 
 ## 后端
 
@@ -144,8 +144,8 @@ Ctrl+C 一起停止。对外部署见 [RUNBOOK](docs/RUNBOOK.md#对外部署下�
 |---|---|---|
 | 确定性抽取 | `uv sync` 安装的解析库 | 对应格式降级或起不来 |
 | LLM 扩展 | 配置的 API Key 或本地兼容端点 | 无摘要 / 无视觉相关增强；确定性段不受影响 |
-| OCR 扩展 | 本仓 `backend/extensions/ocr` + 自备权重 | 图片读字不可用；文档确定性正文仍在 |
-| ASR 扩展 | 本仓 `backend/extensions/asr` + 自备权重 + `imageio-ffmpeg` | 音视频无转写，仅结构信息 |
+| OCR 扩展 | `services/ocr/paddle-ocr` + 自备权重 | 图片读字不可用；文档确定性正文仍在 |
+| ASR 扩展 | `services/asr/qwen3-asr` + 自备权重 + `imageio-ffmpeg` | 音视频无转写，仅结构信息 |
 
 扩展名与分派表见 [PIPELINES §2.3](docs/PIPELINES.md)。
 
@@ -153,15 +153,16 @@ Ctrl+C 一起停止。对外部署见 [RUNBOOK](docs/RUNBOOK.md#对外部署下�
 
 ```text
 pyproject.toml / uv.lock     核心后端依赖
-start.py                     一键拉起（目标含扩展进程）
+start.py                     一键拉起（可含 services 子进程）
 .env.example                 配置模板 → 复制为根目录 .env
-optional/                    OCR / ASR 服务进程（目标态）
+services/                    第三方模型服务（ocr/asr 专栏 → 各实现）
+  ocr/paddle-ocr/            OCR 实现（自带 models/ 权重目录）
+  asr/qwen3-asr/             ASR 实现（自带 models/ 权重目录）
 backend/app.py               FastAPI 入口
 backend/configs/             设置、格式表、限额、错误码、日志
 backend/routers/             /convert · /probe
 backend/pipelines/           convert 编排 + steps + processors
-backend/extensions/          扩展出口客户端（DeepSeek / OCR / ASR / 读图）
-backend/extensions/models/   扩展权重（不入库，使用者自备）
+backend/extensions/          出口客户端（只调第三方 / 远程 API）
 backend/utils/               契约、表格公共件、出站复用等
 backend/tests/               自检缝
 backend/scripts/             make_fixtures.py 等
@@ -173,7 +174,7 @@ docs/                        架构、ADR、API、RUNBOOK、管线
 app → routers → pipelines → { extensions , utils } → configs
 ```
 
-`backend/extensions/{ocr,asr}` 不进入上图 import 链；核心经本机 URL 调用。
+`services/{ocr,asr}/<实现名>` 不进入上图 import 链；核心经本机 URL 调用。
 
 ## 使用说明
 

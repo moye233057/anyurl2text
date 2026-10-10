@@ -21,15 +21,14 @@
 | 变量 | 默认 | 作用 | 什么时候改 |
 |---|---|---|---|
 | `DEEPSEEK_MODEL` | `deepseek-flash` | 模型名 | 换模型时。用一个模型同时处理文本与图片 |
-| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | 模型端点 | 换供应商 |
-| `THINKING_ENABLED` | `false` | 思考模式 | 想让摘要质量更高时打开。**默认关闭是刻意的**：思维链按输出侧计费，输出价约为输入未命中价的 4 倍 |
+| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | 模型端点 | 换供应商，或指向本机 OpenAI 兼容服务（见下方「本机 LLM」） || `THINKING_ENABLED` | `false` | 思考模式 | 想让摘要质量更高时打开。**默认关闭是刻意的**：思维链按输出侧计费，输出价约为输入未命中价的 4 倍 |
 | `THINKING_EFFORT` | `high` | 思考模式的推理力度（随请求发成 `reasoning_effort`） | 只在 `THINKING_ENABLED` 打开时才发出去：想更快更省就调低，想更深就调高 |
 | `ANYURL2TEXT_PORT` | `8020` | 后端端口 | `start.py` 与 `vite.config.ts` 同读项目根 `.env`，改完重启即可。本机连号：本服务 8020、OCR 8021、ASR 8022 |
 | `FRONTEND_PORT` | `5173` | 前端 dev server 端口 | 与后端端口一样读同一份 `.env`；Vite 开了 `strictPort`，被占用会直接失败而不是换端口 |
 | `ALLOW_PRIVATE_HOSTS` | `false` | 允许下载内网 / 回环地址 | 仅在本机串本地文件服务调试时打开；对外可访问的部署保持 `false` |
 | `ALLOW_HTTP_SOURCE` | `true` | 是否接受 `http://` 源。`false` 时只收 https，`http://` 在发起连接之前就被 422 拒掉（`download_http_not_allowed`）。**默认 `true` 就是既有行为** | 想让传输一律走加密时设 `false`；本机串内网的 HTTP 服务保持 `true` |
-| `OCR_API_URL` | `http://127.0.0.1:8021/ocr-b64` | 本仓 OCR 扩展地址（目标由 `backend/extensions/ocr` 拉起） | 换端口或部署位置时 |
-| `ASR_API_URL` | `http://127.0.0.1:8022/asr-b64` | 本仓 ASR 扩展地址（目标由 `backend/extensions/asr` 拉起） | 换端口或部署位置时 |
+| `OCR_API_URL` | `http://127.0.0.1:8021/ocr-b64` | 当前选用的 OCR 服务（默认 `services/ocr/paddle-ocr`） | 换实现或端口时 |
+| `ASR_API_URL` | `http://127.0.0.1:8022/asr-b64` | 当前选用的 ASR 服务（默认 `services/asr/qwen3-asr`） | 换实现或端口时 |
 | `ASR_MAX_AUDIO_SECONDS` | 600 | 送转写的音轨时长上限；超过则跳过转写（视频/容器音频会先探时长，超限不抽完整 wav；抽取时仍带 `-t` 封顶）。命中写进 `limits_hit` / `meta.notes` | 想转写更长录音时。**先把 ASR 服务的 `max_new_tokens` 调大**，否则上游会把尾部静默丢掉 |
 
 ### 成本相关
@@ -70,6 +69,19 @@
 | `OCR_TIMEOUT_SEC` | 60 | 单次 Paddle OCR 请求超时（纵向长图会切片并发，按片计时） |
 | `ASR_TIMEOUT_SEC` | 300 | 单次语音转写请求超时；长音轨转写慢，所以比 OCR 宽 |
 | `FFMPEG_TIMEOUT_SEC` | 120 | 抽音轨超时（本地 CPU 转码，与模型超时分开计） |
+| `START_SERVICES` | `true` | `start.py` 是否尝试拉起默认 OCR/ASR（权重目录非空才起） | 只要核心时设 `false`，再按 `services/` README 手动起 |
+
+### 本机 LLM（OpenAI 兼容端点）
+
+出口仍是 `backend/extensions/deepseek.py`：把三件套指到本机即可，不必改代码。示例（本机 [Ollama](https://ollama.com/) 开了 OpenAI 兼容口，模型名按你 `ollama list` 的为准）：
+
+```env
+DEEPSEEK_BASE_URL=http://127.0.0.1:11434/v1
+DEEPSEEK_MODEL=qwen2.5:7b
+DEEPSEEK_API_KEY=ollama
+```
+
+改完重启后端。单价表仍按 DeepSeek 官方 Flash 记；本机端点的 `usage.cost_cny` 仅作形状占位，不要当真账。其它兼容服务（vLLM、LM Studio 等）同理：换 `BASE_URL` / `MODEL` / `API_KEY`。
 
 ### 模块内常量（不是 `.env` 变量）
 
@@ -141,8 +153,7 @@ cd backend
 uv run python scripts/make_fixtures.py
 ```
 
-输出到 `backend/data/`，与随仓库提供的文本类样例同级：`plain.txt`、`table.csv`、`sample.json`、`feed.xml`、`page.html`、`sample.rtf`、`notes.md` 这 7 个是**仓库自带的手写样例**，脚本既不生成也不覆盖它们（`notes.md` 还是 `/extract` 验收用例的必需样例）。需要后端依赖已安装（脚本用到 python-docx / python-pptx / openpyxl / pymupdf / pillow）。
-
+输出到 `backend/data/`，与随仓库提供的文本类样例同级：`plain.txt`、`table.csv`、`sample.json`、`feed.xml`、`page.html`、`sample.rtf`、`notes.md` 这 7 个是**仓库自带的手写样例**，脚本既不生成也不覆盖它们（`notes.md` 还是 `/convert` 验收用例的必需样例）。需要后端依赖已安装（脚本用到 python-docx / python-pptx / openpyxl / pymupdf / pillow）。
 生成的东西：带表格与内嵌图的 docx、含空单元格的 xlsx、六页 pptx、**含合并单元格的 docx / xlsx / pptx（`merged.*`，横向与纵向各一处）**、**表格边界形状（阶段 20：`merged_tail.docx` 行尾缺格；`merged.ods` / `merged.xls` 横纵合并各一处，各带一张只有尾部合并的表）**、**隐藏工作表与隐藏行列（阶段 21：`hidden.xlsx` 隐藏第 2、4-5 行与 B 列 + hidden / veryHidden 各一张表；`hidden.xls` 同形状走 BOUNDSHEET；`hidden.ods` 的隐藏表走样式 `table:display="false"`）**、**源标表头（阶段 22：`header.docx` 首行带 `w:tblHeader`；`header.odt` 首行在 `table:table-header-rows` 行组里）**、**同一张图被引 3 次的 docx / pptx / pdf（`repeated.*`，另有一张只引 1 次）**、**带合并表格与两级列表的 `structured.odt`**、**含超链接的 `hyperlink.docx`（同一地址写两次 + 一条没有文字的链接，验证链接去重与截断）**、**三章的 `sample.epub`（spine 顺序与 manifest / zip 顺序都故意不同，另带跨章与章内引用、样式表）**、十页有文字层的 PDF、**三页无文字层的扫描件**、odt、odp、**两页的 `sample.ofd`（页序取自文档根、zip 写入顺序相反，第 2 页带一个图像对象）**、**制表符分隔的 `sample.tsv`（一格含逗号与分号）**、压缩包、APK 结构样本、老版 `.doc` 头样本、16kHz 单声道 wav、由它封装的 mp4。
 
 `.apk` 与 `.doc` 只是**结构样本**，用来验证类型识别与降级分支，不是真的安装包与 Word 文档。
@@ -151,19 +162,17 @@ mp4 那一份需要 `imageio-ffmpeg`（可选依赖），没装时脚本跳过�
 
 ## 4. 界面怎么用
 
-打开前端后是三栏：
+打开前端后是**单路**：左侧选源与能力开关，右侧看结果。
 
-- **左栏**：输入。切「远程 URL / 本地文件」，可点预设样例：本仓样例走本地上传，远程条目填入 URL（并尝试复制到剪贴板）。
+- **输入**：切「远程 URL / 本地文件」，可点预设样例：本仓样例走本地上传，远程条目填入 URL（并尝试复制到剪贴板）。
+- **能力开关**：`OCR` / `ASR` / `LLM`（默认全关）。看图支路要 OCR 与 LLM 同时开；音视频转写只开 ASR；摘要只开 LLM。矩阵见 [API.md](./API.md) §1.1。
+- **运行**：一次请求打 `POST /convert`（或 `/convert/file`），开关随请求带上。
 
 预设样例由 `frontend/public/presets.config.js` 配置：一个带注释的顶层文件，页面启动时按 URL 取回来，
 所以**改它不用改前端代码**：dev 下刷新页面即生效，跑构建产物时要重新 build（或直接改 `dist/` 里那份副本）。
 条目字段是 `kind`（标题）/ `desc`（描述）/ `file` 或 `url`（二选一），顺序即界面顺序；字段缺失、类型不对、
 同时写了两者、或 url / file 不合法的条目会被跳过，界面在列表下方列出原因。配置取不回来（被删、语法错）时同样出提示，不会白屏。
 本仓样例文件在 `frontend/public/samples/`。
-- **中栏**：纯代码解析。右上角「运行」只跑这一条。
-- **右栏**：模型增强解析。有自己的「运行」按钮、摘要与用量区块。
-
-两条管线**互不牵动**：点哪栏的运行就只跑哪栏，另一栏保持原状。所以可以先用纯代码那一路确认文件本身没问题，再单独跑模型那一路。
 
 ## 5. 验收清单
 
@@ -188,7 +197,7 @@ pytest 的缓存是关掉的（`backend/pytest.ini` 里的 `-p no:cacheprovider`
 |---|---|---|---|
 | 自检缝 | 处理器产出、判型、通用件、结构判据、错误码 | 无（几秒） | `cd backend` → `uv run python -m pytest tests --ignore=tests/test_extract_contract.py` |
 | HTTP 缝 | 真实服务上的代表格式 + 契约形状（13 条） | **后端在 8020 应答** | `cd backend` → `uv run python -m pytest tests/test_extract_contract.py -v` |
-| 贵缝 | `/understand` 两条路一致、模型增强、音视频转写 | 真模型 + 本机 8021/8022 | `cd backend` → `uv run python -m pytest tests -m model` |
+| 贵缝 | `/convert` 开关矩阵、模型增强、音视频转写 | 真模型 + 本机 8021/8022 | `cd backend` → `uv run python -m pytest tests -m model` |
 
 **按能力域看**（跑完的汇总就照这个口径给，别再只数条数）：
 
@@ -207,7 +216,7 @@ pytest 的缓存是关掉的（`backend/pytest.ini` 里的 `-p no:cacheprovider`
 | `capability_http` | 13 | 真实服务上的代表格式 + 契约形状（**只抽查代表，不重复进程内矩阵**） |
 | `capability_utils` | 34 | 解码顺序、峰谷计价、账本累计、第三方成本闸 |
 | `capability_structure` | 7 | 依赖方向、扩展名覆盖、`__init__` 无逻辑、上界值只准写一处、前端契约镜像（另含 2 条自检；行数门禁已废） |
-| `capability_understand` | 16 | 进程内 + 假客户端：ADR-0011 正文对比、合并 OCR、记账、模型失败通道、跳过模型 |
+| `capability_understand` | 16 | 进程内 + 假客户端：`/convert` 开关矩阵、合并 OCR、记账、模型失败通道、跳过扩展 |
 
 ```powershell
 cd backend
@@ -230,17 +239,15 @@ uv run python -m pytest tests -m "capability_table or capability_limits" -v
 | # | 做什么 | 判据 |
 |---|---|---|
 | 1 | 访问 `/probe/health` | `model_key_configured` 为 `true`；启动日志里配置文件路径指向项目根目录的 `.env` |
-| 2 | `/extract` 一个纯文本样例 | `type` 为 `document`，`content` 非空，`usage` 为 `null` |
-| 3 | `/understand` 一张含文字的图（如 `screenshot.png`，需先起 Paddle OCR 服务） | `meta.ocr_text` 非空，`meta.notes` 里说明判为文字图片；`usage` 非 `null` 且 `cost_cny` 大于 0 |
-| 3b | `/understand` 一张没有文字的图（如 `photo.png`） | `meta.ocr_text` 为 `null`、`summary` 是图像的客观描述，`meta.notes` 里说明判为语义图片 |
-| 4 | 同一个文档分别调两个接口 | 两次的 `content` **逐字节相同**（字符数一致是最低要求） |
-| 5 | `/extract` 扫描件 PDF | `content` 为空，`meta.notes` 里说明「没有文字层」 |
-| 6 | `/understand` 同一个扫描件 | `meta.ocr_text` 非空，`meta.notes` 里出现「整页渲染已覆盖页面上的图，不再单独抽内嵌图」 |
-| 7 | `/extract` 一段 wav 或 mp4 | `type` 为 `audio` / `video`，`content` 为空，`meta.audio` 有时长与采样率，`meta.degraded` 为 `false`，`usage` 为 `null` |
-| 7b | `/understand` 同一份音频（需先起 Qwen3-ASR 服务） | `meta.asr_text` 有值，或 `meta.notes` 说明「音轨里没有说话声」；`timings.model_ms` 大于 0；`content` 与第 7 条的逐字节相同 |
-| 8 | 界面上点一个预设样例 | 本仓样例切到「本地文件」并选中文件（或远程条目填入 URL）、该预设高亮；点中栏「运行」后右栏仍显示未运行 |
-
-验收条目中带 `/extract`·`/understand` 的，在代码迁移完成前仍可用来摸底；目标态不变量改为「开关 × 模态」矩阵（见 [TODO.md](../TODO.md) 计划），不再要求双路对比。
+| 2 | `/convert` 纯文本样例，三开关全关 | `type` 为 `document`，`content` 非空，`usage` 为 `null` |
+| 3 | `/convert` 含文字图（如 `screenshot.png`），`ocr`+`llm` 开（需 `services/ocr/paddle-ocr`） | `meta.ocr_text` 非空，`meta.notes` 说明判为文字图片；`usage` 非 `null` |
+| 3b | `/convert` 无文字图（如 `photo.png`），`ocr`+`llm` 开 | `meta.ocr_text` 为 `null`、`summary` 是图像客观描述，`meta.notes` 说明判为语义图片 |
+| 4 | 同一文档：全关再跑一次，再只开 `llm` | 两次确定性 `content` 一致；开 `llm` 时才可能有非空 `summary` |
+| 5 | `/convert` 扫描件 PDF，三开关全关 | `content` 为空，`meta.notes` 说明「没有文字层」 |
+| 6 | 同一扫描件，`ocr`+`llm` 开 | `meta.ocr_text` 非空，`meta.notes` 出现「整页渲染已覆盖页面上的图，不再单独抽内嵌图」 |
+| 7 | `/convert` wav/mp4，三开关全关 | `type` 为 `audio` / `video`，`content` 为空，`meta.audio` 有时长与采样率，`meta.degraded` 为 `false`，`usage` 为 `null` |
+| 7b | 同一音频，只开 `asr`（需 `services/asr/qwen3-asr`） | `meta.asr_text` 有值，或 `meta.notes` 说明「音轨里没有说话声」；`content` 可含转写 |
+| 8 | 界面点预设样例并「运行」 | 源填好、预设高亮；结果区出现本次响应（开关状态与请求一致） |
 
 ## 6. 故障处置
 
@@ -275,15 +282,15 @@ uv run python -m pytest tests -m "capability_table or capability_limits" -v
 
 ### 含文字的图报「Paddle OCR 服务不可达」
 
-独立图片判型为文字图片后要调本机 OCR 服务（`OCR_API_URL`，默认 `http://127.0.0.1:8021/ocr-b64`）。
-契约见 `backend/extensions/paddle_ocr.py`：先确认服务已起且 `GET /health` 返回 `"code": "200"`；
+独立图片判型为文字图片后要调本机 OCR 服务（`OCR_API_URL`，默认 `http://127.0.0.1:8021/ocr-b64`，实现见 `services/ocr/paddle-ocr`）。
+客户端契约见 `backend/extensions/paddle_ocr.py`：先确认服务已起且 `GET /health` 返回 `"code": "200"`；
 端口不同就改 `.env` 的 `OCR_API_URL`。服务没起不会让请求 500——那一张图的模型增强失败，
 原因写进 `meta.notes`，`summary` 相应缺失。
 
 ### 音频/视频报「Qwen3-ASR 服务不可达」
 
-音频与视频的音轨要交给本机 ASR 服务（`ASR_API_URL`，默认 `http://127.0.0.1:8022/asr-b64`）。
-契约见 `backend/extensions/qwen3_asr.py`：先确认服务已起（模型加载可能要十几秒）且 `GET /health` 返回 `"code": "200"`；
+音频与视频的音轨要交给本机 ASR 服务（`ASR_API_URL`，默认 `http://127.0.0.1:8022/asr-b64`，实现见 `services/asr/qwen3-asr`）。
+客户端契约见 `backend/extensions/qwen3_asr.py`：先确认服务已起（模型加载可能要十几秒）且 `GET /health` 返回 `"code": "200"`；
 端口不同就改 `.env` 的 `ASR_API_URL`。服务没起不会让请求 500——这一类源的转写失败，原因写进 `meta.notes`，
 `summary` 相应缺失，`meta.audio` 仍然有值（音轨参数是纯代码读出来的，不依赖服务）。
 
