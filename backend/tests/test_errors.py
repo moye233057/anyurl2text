@@ -202,7 +202,7 @@ def test_model_failure_lands_in_meta_model_error(fixture_copy, monkeypatch):
     只验这条通道的接线；真调模型的贵缝在 `-m model` 那一组里。
     """
     from pipelines import understand
-    from pipelines.processors.schema import PreparedSource
+    from utils.processor_schema import PreparedSource
     from routers.convert.schema import Detector
     from utils.errors import LlmError
 
@@ -244,7 +244,7 @@ def test_model_failure_lands_in_meta_model_error(fixture_copy, monkeypatch):
 
 def _prepared_from(fixture_copy, name: str = "plain.txt"):
     """把一个样例包成 PreparedSource：不下载、不识别，直接进抽取阶段。"""
-    from pipelines.processors.schema import PreparedSource
+    from utils.processor_schema import PreparedSource
     from routers.convert.schema import Detector
 
     path, ext = fixture_copy(name)

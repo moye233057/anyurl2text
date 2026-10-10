@@ -61,7 +61,8 @@ def read_header_hex(path: Path) -> str:
     输出：十六进制串（大写、单空格分隔）。
     """
     try:
-        head = path.read_bytes()[:HEADER_PREVIEW_BYTES]
+        with path.open("rb") as handle:
+            head = handle.read(HEADER_PREVIEW_BYTES)
     except OSError:
         return ""
     return " ".join(f"{byte:02X}" for byte in head)

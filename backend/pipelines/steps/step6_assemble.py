@@ -13,8 +13,9 @@ import configs.limits as limits
 import configs.settings as settings
 from configs.log_config import logger
 from pipelines.steps.step2_detect import modality_from_extension
-from pipelines.processors.schema import ExtractResult, PreparedSource
-from routers.convert.schema import ConvertResponse, ErrorInfo, Meta, Modality, Timings, truncate_content
+from utils.processor_schema import ExtractResult, PreparedSource
+from utils.convert_contract import ConvertResponse, Meta, Modality, Timings, truncate_content
+from utils.processor_schema import ErrorInfo
 
 class PipelineResult(NamedTuple):
     """
@@ -40,6 +41,7 @@ def build_response(
     asr_text: Optional[str] = None,
     usage: Any = None,
     error: Optional[str] = None,
+    delivery_content: Optional[str] = None,
 ) -> ConvertResponse:
     """
     把抽取结果组装成响应契约。
@@ -50,7 +52,8 @@ def build_response(
           summary / ocr_text / asr_text / usage / error。
     输出：ConvertResponse。
     """
-    content, truncated = truncate_content(result.content, settings.MAX_CONTENT_CHARS)
+    raw_content = result.content if delivery_content is None else delivery_content
+    content, truncated = truncate_content(raw_content, settings.MAX_CONTENT_CHARS)
     modality = modality_from_extension(prepared.ext)
     if error:
         modality = Modality.ERROR

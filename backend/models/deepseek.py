@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 import configs.settings as settings
 from configs.log_config import logger
 from utils.errors import LlmError
+from utils import request_budget
 from utils.usage import UsageLedger
 
 class DeepSeekClient:
@@ -95,13 +96,19 @@ class DeepSeekClient:
 
         last_error = ""
         for attempt in range(1, settings.LLM_MAX_RETRIES + 1):
+            timeout = request_budget.call_timeout(settings.LLM_TIMEOUT_SEC, stage="llm")
             started = time.monotonic()
             try:
-                response = client.chat.completions.create(**payload)
+                response = client.with_options(timeout=timeout).chat.completions.create(**payload)
+            except TimeoutError:
+                raise
             except Exception as exc:
                 last_error = str(exc)
                 logger.error(f"llm 调用失败 attempt={attempt}: {exc}")
-                time.sleep(min(2 ** attempt, 8))
+                remaining = request_budget.remaining_sec()
+                if remaining is not None and remaining <= 0:
+                    raise TimeoutError("llm 调用耗尽单请求总时间预算") from exc
+                _sleep_within_budget(min(2 ** attempt, 8))
                 continue
 
             self._record_usage(response)
@@ -114,7 +121,7 @@ class DeepSeekClient:
             if text:
                 return text
             last_error = "模型返回空内容"
-            time.sleep(min(2 ** attempt, 8))
+            _sleep_within_budget(min(2 ** attempt, 8))
 
         raise LlmError(f"模型调用失败（已重试 {settings.LLM_MAX_RETRIES} 次）: {last_error}", "llm_call_failed")
 
@@ -132,6 +139,17 @@ class DeepSeekClient:
         except AttributeError:
             data = dict(usage)
         self.ledger.add(data)
+
+
+def _sleep_within_budget(seconds: float) -> None:
+    """重试等待：剩余预算不够就立刻按超时退出，不再空等。"""
+    remaining = request_budget.remaining_sec()
+    if remaining is not None and remaining <= 0:
+        raise TimeoutError("llm 重试前已超出单请求总时间预算")
+    wait = seconds if remaining is None else min(seconds, remaining)
+    if wait > 0:
+        time.sleep(wait)
+
 
 def parse_json_object(text: str) -> Any:
     """

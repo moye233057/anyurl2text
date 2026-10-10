@@ -8,7 +8,7 @@
 运行方式：在项目根目录执行 `python start.py`（无参数；路径与开关都硬编码在下面）。
 使用前注意：
 - 后端依赖必须装在你**运行本脚本的那个 Python 环境**里——脚本用 sys.executable 起后端，
-  所以请用装了 fastapi / uvicorn 的环境来跑它（本机是 conda 的 multimodal 环境）。
+  所以请用装了 fastapi / uvicorn 的环境来跑它。
 - 前端需要 `frontend/node_modules`（缺了先 cd frontend && npm install）。
 """
 import importlib.util
@@ -41,7 +41,7 @@ POLL_INTERVAL_SEC = 0.5
 BACKEND_REQUIRED = (
     "fastapi", "uvicorn", "httpx", "openai",
     "docx", "pptx", "openpyxl", "xlrd", "pyexcel_ods",
-    "pymupdf", "pymupdf4llm", "PIL", "bs4", "chardet",
+    "pymupdf", "PIL", "bs4", "chardet",
 )
 
 def step1_check_python() -> bool:

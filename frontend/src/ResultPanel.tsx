@@ -145,8 +145,12 @@ export default function ResultPanel({
 }: Props) {
   const showError = Boolean(result?.error)
   const hasParsedText = Boolean(result && (result.content || result.meta.ocr_text || result.meta.asr_text))
-  // 有模型文本时 content 才不会孤零零一块，给它一个「代码抽取」的分段标签
-  const hasModelText = Boolean(result?.meta.ocr_text || result?.meta.asr_text)
+  const showMetaCopy =
+    pipeline === 'understand' &&
+    Boolean(
+      result?.meta.ocr_text &&
+        result.content.includes(result.meta.ocr_text.slice(0, Math.min(20, result.meta.ocr_text.length))),
+    )
 
   return (
     <section className="region">
@@ -233,22 +237,22 @@ export default function ResultPanel({
           <Block title="解析内容">
             {result.content && (
               <>
-                {hasModelText && <div className="sub-label first">content · 代码抽取</div>}
+                <div className="sub-label first">
+                  content · {pipeline === 'understand' ? '正文（含模型转写）' : '纯代码抽取'}
+                </div>
                 <pre className="fill">{result.content}</pre>
               </>
             )}
-            {result.meta.ocr_text && (
+            {showMetaCopy && result.meta.ocr_text && (
               <>
-                <div className={result.content ? 'sub-label' : 'sub-label first'}>
-                  meta.ocr_text · 模型识别出的文字
-                </div>
+                <div className="sub-label">meta.ocr_text · 识别副本</div>
                 <pre className="fill">{result.meta.ocr_text}</pre>
               </>
             )}
-            {result.meta.asr_text && (
+            {pipeline === 'understand' && result.meta.asr_text && (
               <>
-                <div className={result.content || result.meta.ocr_text ? 'sub-label' : 'sub-label first'}>
-                  meta.asr_text · 语音转写出的文字
+                <div className={result.content ? 'sub-label' : 'sub-label first'}>
+                  meta.asr_text · 转写副本
                 </div>
                 <pre className="fill">{result.meta.asr_text}</pre>
               </>

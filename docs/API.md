@@ -15,7 +15,6 @@
 | POST | `/understand` | JSON `{url, query?}` | 模型增强解析 |
 | POST | `/understand/file` | multipart：`file`、`query?` | 同上，改成上传文件 |
 | GET | `/probe/health` | — | 自身配置自检，不探测上游 |
-| POST | `/rag/extract/file` | multipart：`file` | 检索入库用。契约见 §11，不进 ConvertResponse |
 
 `/extract` 与 `/extract/file` 除了入参方式**完全等价**，`/understand` 同理。
 
@@ -57,9 +56,9 @@
 
 ## 4. `content`：交付文本
 
-从源抽取出的文本本身。**任何接口、任何参数下都不被覆盖，也不追加实现细节前缀。**
+对外主正文。`/extract` 只含**纯代码**抽取段；`/understand` 在同一段之上合并 OCR/ASR/页面识别/语义描述等模型转写（见 [adr.md](./adr.md) ADR-0011），且 `meta.ocr_text` / `meta.asr_text` 仍保留副本。
 
-这条约束是可验证的：同一个源分别调 `/extract` 与 `/understand`，两次的 `content` 逐字节相同。图片、音视频这类没有文本的源，`content` 就是空串。
+纯代码即可完整交付的类型（如 plain/csv/xlsx 正文），两路 `content` **逐字节相同**。需要模型转写的类型（独立图片、含内嵌图/扫描页的文档等），understand 的 `content` 更长；extract 对图片/音视频常为空串。摘要进 `summary`，不替换 `content`。
 
 **表格的格内换行写成 `<br>`**：表格按「一行一行、列用制表符」交付，一个格位只能占一行一列，所以格里的换行（Word 的一个格里敲两次回车、PowerPoint 的多段、网页的 `<br>`、电子表格单元格里的 `\n`）统一写成 `<br>` 记号——段落边界保住，列位与行数都不受影响。规则只有一处定义：`backend/pipelines/processors/cell_text.py`。注意源里本来就写着字面 `<br>` 的文本与之不可区分（照 anydoc，不做转义）。
 
@@ -88,15 +87,15 @@
 | `truncated` | 总是 | `content` 是否被字符上限截断。等价于 `limits_hit` 里含 `max_content_chars` |
 | `limits_hit` | 总是 | 本次命中的上界名，取自 `configs/limits.py` 的 `LIMIT_NAMES`（如 `max_links`、`max_rows_per_sheet`、`max_embedded_images`）；同一句命中说明按表里的模板进 `notes` |
 | `pages` / `pages_used` | 文档类 | 总页数与实际处理页数；扫描件超出渲染上限时两者不等 |
-| `unprocessed_pages` | 文档类 | **没处理到的页码**（1 基，升序）。今天只有扫描件超出整页渲染上限时非空，命中原因名在 `limits_hit`（`rendered_page_max`）——「哪几页没处理」是机器读得出的事实，不再只活在 `notes` 的一句中文里 |
+| `unprocessed_pages` | 文档类 | **没处理到的页码**（1 基，升序）= `pages_used+1 … pages`。今天只在扫描件超整页渲染上限时非空，命中原因名在 `limits_hit`（`rendered_page_max`）——「哪几页没处理」是机器读得出的事实，不再只活在 `notes` 的一句中文里 |
 | `images` / `images_used` | 文档类 | 内嵌图**引用次数**与实际落盘处理数；同一张图被引多次只处理一次（按来源部件去重），所以源里有重复引用时两者会不等 |
 | `image` | 源本身是图片 | 尺寸 / 格式 / 色彩模式 / 帧数 / 常用 EXIF |
 | `audio` | 源是音频或视频 | 音轨参数：时长 / 采样率 / 声道 / 音轨格式。视频也填这一块——容器里能确定性读到的只有音轨 |
 | `entry_count` | 压缩包、安装包 | 容器内条目数 |
 | `table_header_rows` | 网页、EPUB、docx、odt / odp | **源自己标出**的表头行数（网页 / EPUB 的 `<th>` 与 `<thead>`、docx 的 `w:trPr/w:tblHeader`、ODF 的 `table:table-header-rows` 行组）。交付文本里唯一一张表时给值；没有表、有多张表、或该格式的源不标表头时是 `null`——与 `0` 区别开：`0` 表示查过、源明确没标。不做「首行即表头」这类启发式（猜错会吃掉一行数据） |
 | `table_kind` | 有表格的格式 | 交付文本里唯一一张表的类型：`data` 或 `layout`。口径照 anydoc 的 `TableKind`——**1×1 的单格表算 `layout`**（文本框里当容器用的排版壳），其余算 `data`；没有表或多张表时是 `null`。**不做**「数据表 vs 印刷目录表」这类推断（猜错会误导按它分支的调用方） |
-| `ocr_text` | 模型读出了文字 | 识别出的文字：独立图片由本机 Paddle OCR 读出，文档内嵌图与扫描页由视觉模型读出；**与 `content` 分开存放** |
-| `asr_text` | 转写出了文字 | 本机 Qwen3-ASR 从音频/视频音轨转写出的文字，只在 `/understand` 那一路有值；同理**与 `content` 分开存放** |
+| `ocr_text` | 模型读出了文字 | 识别出的文字：独立图片由本机 Paddle OCR 读出，文档内嵌图与扫描页由视觉模型读出；understand 路**同时**并进 `content` |
+| `asr_text` | 转写出了文字 | 本机 Qwen3-ASR 从音频/视频音轨转写出的文字，只在 `/understand` 那一路有值；understand 路**同时**并进 `content` |
 | `engine` | 总是 | 实际用到的解析器或模型 |
 | `notes` | 有需要说明时 | 现场说明：截断、跳过、降级、空白页等 |
 
@@ -129,8 +128,9 @@
 | 413 | 请求体或下载内容超过上限 |
 | 422 | 入参问题：URL 为空、协议不是 http(s)、缺主机名、命中内网或保留地址 |
 | 502 | 上游失败：HTTP 错误码、域名解析失败、重定向异常、网络错误 |
-| 504 | 下载超时 |
-| 500 | 未预期异常：`internal` 的兜底分支（convert 两个接口的入口阶段与 `/rag/extract/file` 都有）；此时 `error.code` 恒为 `internal` |
+| 429 | 快/慢并发池已满 |
+| 504 | 下载或全链路时间预算用尽 |
+| 500 | 未预期异常：`internal` 的兜底分支（convert 两个接口的入口阶段）；此时 `error.code` 恒为 `internal` |
 
 **响应体始终带 `error` 字段**，所以「只看状态码」和「只看 body」两种消费方式都能用。失败时它是
 `{code, message, param}`：`code` 是**稳定机器名**（见 `configs/errors.py` 的码表），按它分组统计、
@@ -141,13 +141,13 @@
 
 ### 图片（模型增强解析）
 
-图片类是最能看出两条路差别的一类：纯代码那一路 `content` 为空。模型那一路先判型——下面这张赛事海报文字密集，判为**文字图片**，`meta.ocr_text` 是本机 Paddle OCR 读出的全文（实测 185 字），`summary` 据它生成；照片、插画那类判为**语义图片**，产出是模型给的客观描述、`meta.ocr_text` 为 `null`。（这张海报就在界面左栏的预设样例里，点一下即可复现。）
+图片类是最能看出两条路差别的一类：纯代码那一路 `content` 为空。模型那一路先判型——下面这张赛事海报文字密集，判为**文字图片**，`meta.ocr_text` 与 `content` 均为本机 Paddle OCR 读出的全文（实测 185 字），`summary` 据它生成；照片、插画那类判为**语义图片**，客观描述进 `content` 与 `summary`、`meta.ocr_text` 为 `null`。
 
 ```jsonc
 // POST /understand  { "url": "https://…/poster.jpg" }
 {
   "type": "image",
-  "content": "",                     // 图片没有可抽取的文本
+  "content": "中国商学院高级工商管理硕士（EMBA）足球联合会\n…（与 ocr_text 相同）",
   "summary": "2026 年 5 月 14—17 日举行的中国商学院 EMBA 足球联合会第六届全国邀请赛宣传海报……",
   "meta": {
     "source": "https://…/poster.jpg",
@@ -171,7 +171,7 @@
 
 同一份源调 `/extract` 会得到结构完全一样的响应，但 `summary` 为 `null`、`usage` 为 `null`、`timings.model_ms` 为 0，`content` 同样是空串。
 
-音频与视频那份响应的形状与图片同理，差别只有三处：`type` 是 `audio` / `video`，结构信息在 `meta.audio`，转写文字在 `meta.asr_text`（`content` 同样为空串）。
+音频与视频：extract 的 `content` 为空；understand 有转写时 `content` 与 `meta.asr_text` 一致。
 
 ### 表格（两条路的 `content` 相同）
 
@@ -185,25 +185,3 @@
 ```
 
 纯代码那一路 `usage` 为 `null`；模型那一路给出摘要与用量（实测：模型耗时 3030 ms、缓存命中后成本约 ¥0.0032）。
-
-## 11. RAG 抽取（独立契约）
-
-`POST /rag/extract/file` 给检索入库用，**不**走 ConvertResponse 的 7 字段。见 [adr.md](./adr.md) 的 ADR-0009。
-
-```jsonc
-{
-  "kind": "pdf",                 // pdf / 扩展名 / error
-  "pages": [{ "page": 1, "text": "…" }],
-  "text": null,                  // 无印刷目录时才有值
-  "catalogue_ranges": [{ "title": "…", "start_page": 14, "end_page": 20 }],
-  "limits_hit": [],              // 恒存在：命中的上界名（如 preview_first_pages，目录只在前 15 页里找）
-  "error": null                  // 恒存在；成功为 null
-}
-```
-
-`limits_hit` 与 ConvertResponse 的 `meta.limits_hit` 用同一套名字（`configs/limits.py` 的 `LIMIT_NAMES`）：
-**这一口也要机器读得出「少读了哪一段」**，只是它没有 `meta`，所以放在顶层。
-
-PDF 抽出印刷目录：`kind=pdf`，带 `pages` 与 `catalogue_ranges`。否则：`kind` 为扩展名，带 `text`（extract 内核的交付文本，不截断、不调模型）。失败时 `kind=error` 或仍带扩展名，`error` 非空。
-
-**这里的 `error` 是一句字符串，与 convert 的 `{code, message, param}` 有意不同**（见 ADR-0009 的 2026-10-04 补记）：已知消费方只判它真假、不解析内容；统一成对象要先让这份契约不再是叶子模块。等出现按 `error.code` 判分支的消费方时再一起改。

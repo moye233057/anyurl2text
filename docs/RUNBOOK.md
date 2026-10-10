@@ -50,7 +50,9 @@
 |---|---|---|
 | `ANYURL2TEXT_HOST` | `127.0.0.1` | 监听地址；要让局域网访问改成 `0.0.0.0` |
 | `RELOAD` | `true` | 自动重载：改 `backend/` 下的 `.py` 立即生效。`python app.py` 与 `start.py` 起的后端都认这个开关 | 不想多一个监督进程就设 `false`（那时改完要手动重启）。注意它只监视 `.py`：改 `.env` 仍要重启 |
-| `REQUEST_BUDGET_SEC` | 120 | 单请求总时间预算 |
+| `REQUEST_BUDGET_SEC` | 120 | 单请求全链路时间预算（下载+解析+模型） |
+| `DOWNLOAD_BUDGET_SEC` | 20 | 下载层单独上限（不超过全链路剩余） |
+| `CONCURRENCY_FAST` / `CONCURRENCY_MEDIA` | 32 / 8 | 文档类等快池与图片/音视频慢池并发；满员 HTTP 429 |
 | `CONNECT_TIMEOUT_SEC` / `READ_TIMEOUT_SEC` | 10 / 30 | 连接与读取超时（秒） |
 | `MAX_DOWNLOAD_BYTES` | 209715200（200 MB） | 下载与上传的内容上限 |
 | `MAX_REDIRECTS` | 5 | 重定向跟随上限 |
@@ -83,8 +85,7 @@
 | `MAX_VISIBILITY_RANGES` | 24 | `backend/configs/limits.py` | 隐藏行列的**登记段数**上限：只钳 `notes` 篇幅，隐藏工作表与隐藏行列的内容一律照抽 |
 | `MAX_TEXT_BYTES` | 20971520（20 MB） | `backend/configs/limits.py` | 文本类文件的体积上限，超过则只读头部，避免超级大的日志整份进内存 |
 | `MAX_LONG_EDGE` | 1600 | `backend/configs/limits.py` | 送模型前图片长边缩到多少像素 |
-| `PREVIEW_FIRST_PAGES` | 15 | `backend/configs/limits.py` | RAG 预览取前几页 |
-| `TEXT_LAYER_MIN_CHARS` | 30 | `backend/pipelines/processors/pdf.py` | **阈值不是上界**：判定「这份 PDF 没有文字层」的字符数下限，低于它走页面渲染 |
+| `TEXT_LAYER_MIN_CHARS` | 30 | 名字见 `limits.py` 的 `NON_LIMIT_THRESHOLDS`；**值**在 `backend/pipelines/processors/pdf.py` | **判定阈值，不是上界**：上界值只在 `limits.py`；阈值只登记名字，数值仍在各自模块 |
 
 ## 2. 启动服务
 
@@ -117,12 +118,13 @@ mp4 那一份需要 `imageio-ffmpeg`（可选依赖），没装时脚本跳过�
 
 打开前端后是三栏：
 
-- **左栏**：输入。切「远程 URL / 本地文件」，可点预设样例一键填入 URL（同时复制到剪贴板）。
+- **左栏**：输入。切「远程 URL / 本地文件」，可点预设样例：本仓样例走本地上传，远程条目填入 URL（并尝试复制到剪贴板）。
 
 预设样例由 `frontend/public/presets.config.js` 配置：一个带注释的顶层文件，页面启动时按 URL 取回来，
 所以**改它不用改前端代码**：dev 下刷新页面即生效，跑构建产物时要重新 build（或直接改 `dist/` 里那份副本）。
-条目字段是 `kind`（标题）/ `desc`（描述）/ `url`（链接），顺序即界面顺序；字段缺失、类型不对或 url 不是 http(s)
-的条目会被跳过，界面在列表下方列出原因。文件取不回来（被删、语法错）时同样出提示，不会白屏。
+条目字段是 `kind`（标题）/ `desc`（描述）/ `file` 或 `url`（二选一），顺序即界面顺序；字段缺失、类型不对、
+同时写了两者、或 url / file 不合法的条目会被跳过，界面在列表下方列出原因。配置取不回来（被删、语法错）时同样出提示，不会白屏。
+本仓样例文件在 `frontend/public/samples/`。
 - **中栏**：纯代码解析。右上角「运行」只跑这一条。
 - **右栏**：模型增强解析。有自己的「运行」按钮、摘要与用量区块。
 
@@ -134,8 +136,8 @@ mp4 那一份需要 `imageio-ffmpeg`（可选依赖），没装时脚本跳过�
 
 | # | 做什么 | 判据 |
 |---|---|---|
-| 0a | 后端在跑时 `cd backend && python -m pytest tests -q` | 自检缝全过：五条结构判据（`tests/test_structure.py`）+ 各格式抽取 + 判型 + 通用件（不联网下载、不调模型、不花钱）。**这一条里有 13 条 HTTP 用例（`tests/test_extract_contract.py`），所以后端必须在跑** |
-| 0b | 起服务后 `cd backend && python -m pytest tests -m model -q` | 贵缝全过：两条路 `content` 逐字节一致、模型增强产出、独立图片判型分流、音视频转写（真调模型，且本机 OCR（8021）/ ASR（8022）在跑） |
+| 0a | 后端在跑时 `cd backend && python -m pytest tests -q` | 自检缝全过：**5 条结构判据 + 2 条自检 = 7 项**（`tests/test_structure.py`；单文件行数门禁已按 ADR-0010 废除）+ 各格式抽取 + 判型 + 通用件（不联网下载、不调模型、不花钱）。**这一条里有 13 条 HTTP 用例（`tests/test_extract_contract.py`），所以后端必须在跑**；只要进程内自检、不起服务时加 `--ignore=tests/test_extract_contract.py` |
+| 0b | 起服务后 `cd backend && python -m pytest tests -m model -q` | 贵缝全过：ADR-0011 正文对比、模型增强产出、独立图片判型分流、音视频转写（真调模型，且本机 OCR（8021）/ ASR（8022）在跑） |
 
 **别为了跑测试另起一个后端**：端口只有一个，第二个起不来（`10048`）或者两个互相抢端口。改完后端代码时，开着自动重载的那个服务会自己加载新代码（见第 6 节），直接在它上面跑 0a/0b 就行；服务没开就先按第 2 节起一个，再跑。
 
@@ -149,7 +151,7 @@ pytest 的缓存是关掉的（`backend/pytest.ini` 里的 `-p no:cacheprovider`
 
 | 缝 | 覆盖什么 | 前置 | 命令（cwd=`backend/`） |
 |---|---|---|---|
-| 自检缝 | 处理器产出、判型、通用件、结构判据、错误码、RAG 口 | 无（几秒） | `python -m pytest tests --ignore=tests/test_extract_contract.py` |
+| 自检缝 | 处理器产出、判型、通用件、结构判据、错误码 | 无（几秒） | `python -m pytest tests --ignore=tests/test_extract_contract.py` |
 | HTTP 缝 | 真实服务上的代表格式 + 契约形状（13 条） | **后端在 8020 应答** | `python -m pytest tests/test_extract_contract.py -v` |
 | 贵缝 | `/understand` 两条路一致、模型增强、音视频转写 | 真模型 + 本机 8021/8022 | `python -m pytest tests -m model` |
 
@@ -169,13 +171,12 @@ pytest 的缓存是关掉的（`backend/pytest.ini` 里的 `-p no:cacheprovider`
 | `capability_errors` | 14 | 码表白名单、`error` 对象、模型失败通道、`internal` 兜底 |
 | `capability_http` | 13 | 真实服务上的代表格式 + 契约形状（**只抽查代表，不重复进程内矩阵**） |
 | `capability_utils` | 25 | 解码顺序、峰谷计价、账本累计 |
-| `capability_structure` | 9 | 依赖方向、单文件预算、扩展名覆盖、上界值、前端契约镜像 |
-| `capability_rag` | 2 | RAG 口自己的 `limits_hit` |
-| `capability_understand` | 16 | 进程内 + 假客户端：两条路 `content` 逐字节一致（11 种文档格式逐格式）、模型产出只进 `summary`/`meta`、记账、模型失败通道、跳过模型 |
+| `capability_structure` | 7 | 依赖方向、扩展名覆盖、`__init__` 无逻辑、上界值只准写一处、前端契约镜像（另含 2 条自检；行数门禁已废） |
+| `capability_understand` | 16 | 进程内 + 假客户端：ADR-0011 正文对比、合并 OCR、记账、模型失败通道、跳过模型 |
 
 ```powershell
-E:\miniconda\envs\multimodal\python.exe -m pytest tests -m capability_epub -v          # 只跑 EPUB 这一个能力域
-E:\miniconda\envs\multimodal\python.exe -m pytest tests -m "capability_table or capability_limits" -v
+python -m pytest tests -m capability_epub -v          # 只跑 EPUB 这一个能力域
+python -m pytest tests -m "capability_table or capability_limits" -v
 ```
 
 **别只报条数**：15 种格式各一条是**清单驱动的覆盖**，它算 1 个能力点里的 15 个覆盖项。汇报与验收按「**能力域 × 覆盖项**」说（跑完的汇总就是按域给的）。加能力域要同时登记进 `backend/pytest.ini` 的 `markers`，否则 `--strict-markers` 会挡下。
@@ -201,7 +202,7 @@ E:\miniconda\envs\multimodal\python.exe -m pytest tests -m "capability_table or 
 | 6 | `/understand` 同一个扫描件 | `meta.ocr_text` 非空，`meta.notes` 里出现「整页渲染已覆盖页面上的图，不再单独抽内嵌图」 |
 | 7 | `/extract` 一段 wav 或 mp4 | `type` 为 `audio` / `video`，`content` 为空，`meta.audio` 有时长与采样率，`meta.degraded` 为 `false`，`usage` 为 `null` |
 | 7b | `/understand` 同一份音频（需先起 Qwen3-ASR 服务） | `meta.asr_text` 有值，或 `meta.notes` 说明「音轨里没有说话声」；`timings.model_ms` 大于 0；`content` 与第 7 条的逐字节相同 |
-| 8 | 界面上点一个预设样例 | URL 被填入输入框、该预设高亮；点中栏「运行」后右栏仍显示未运行 |
+| 8 | 界面上点一个预设样例 | 本仓样例切到「本地文件」并选中文件（或远程条目填入 URL）、该预设高亮；点中栏「运行」后右栏仍显示未运行 |
 
 第 4 条是本项目最核心的不变量：它一旦不成立，「两条路可对比」这个前提就没了。
 
@@ -226,11 +227,11 @@ E:\miniconda\envs\multimodal\python.exe -m pytest tests -m "capability_table or 
 
 ### 结构自查报「文件超预算」或「依赖方向不对」
 
-结构判据在 `backend/tests/test_structure.py`；依赖方向与单文件预算（总行数 ≤ 500、代码行 ≤ 300，2026-10-04 从 250/150 抬起）的理由见 [architecture.md](./architecture.md) 第 4 节，单文件预算**不适用于** `backend/scripts/`（一次性生成脚本，`make_fixtures.py` 近 500 行）与 `backend/tests/`。加东西前先想清楚它属于哪一层，别往 `pipelines/` 里塞格式实现。
+结构判据在 `backend/tests/test_structure.py`；依赖方向见 [architecture.md](./architecture.md) 第 4 节。单文件行数门禁已废除（ADR-0010）：`processors/` 按「一格式族一文件」收拢，不为过门禁拆文件。加东西前先想清楚它属于哪一层，别往 `pipelines/` 里塞跨格式公共逻辑（表格公共进 `utils/excel/`，模型侧进 `models/`）。
 
 ### 改了前端代码，页面行为还是旧的
 
-看 `self-react` 的 `references/troubleshooting.md`：那里的流程是「先确认 dev server 到底给的是新版还是旧版（直接取模块源码看一眼）→ 更新文件 mtime 触发重编译 → 才考虑重启」，比重启更快定位。改完记得硬刷新（Ctrl+Shift+R）。
+先确认 dev server 到底给的是新版还是旧版（浏览器里直接打开对应模块源码看一眼）→ 更新文件 mtime 触发重编译 → 仍不对再重启。改完记得硬刷新（Ctrl+Shift+R）。
 
 ### 模型增强解析报「未配置 DEEPSEEK_API_KEY」
 
@@ -239,14 +240,14 @@ E:\miniconda\envs\multimodal\python.exe -m pytest tests -m "capability_table or 
 ### 含文字的图报「Paddle OCR 服务不可达」
 
 独立图片判型为文字图片后要调本机 OCR 服务（`OCR_API_URL`，默认 `http://127.0.0.1:8021/ocr-b64`）。
-先确认它起着：`Individual/paddle-ocr` 下 `python main.py`，`GET /health` 应返回 `"code": "200"`；
+契约见 `backend/models/paddle_ocr.py`：先确认服务已起且 `GET /health` 返回 `"code": "200"`；
 端口不同就改 `.env` 的 `OCR_API_URL`。服务没起不会让请求 500——那一张图的模型增强失败，
 原因写进 `meta.notes`，`summary` 相应缺失。
 
 ### 音频/视频报「Qwen3-ASR 服务不可达」
 
 音频与视频的音轨要交给本机 ASR 服务（`ASR_API_URL`，默认 `http://127.0.0.1:8022/asr-b64`）。
-先确认它起着：`Individual/qwen3-asr` 下 `python main.py`（模型加载要十几秒），`GET /health` 应返回 `"code": "200"`；
+契约见 `backend/models/qwen3_asr.py`：先确认服务已起（模型加载可能要十几秒）且 `GET /health` 返回 `"code": "200"`；
 端口不同就改 `.env` 的 `ASR_API_URL`。服务没起不会让请求 500——这一类源的转写失败，原因写进 `meta.notes`，
 `summary` 相应缺失，`meta.audio` 仍然有值（音轨参数是纯代码读出来的，不依赖服务）。
 

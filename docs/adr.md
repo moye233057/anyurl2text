@@ -14,11 +14,11 @@
 
 ## ADR-0002 · 2026-09-12 · understand 复用 extract 的抽取内核，只做增量
 
-两个接口共用同一段下载、识别、解析代码，差异被限制在「是否调用模型」这一件事上。不共用就会出现两条各自演进的解析实现——同一份 PDF 在两条路下抽出不同文本，而「两条路可对比」正是本项目存在的理由。代价落成两条不可破的规矩：`extract_*` 不调模型、也不感知调用方是谁；`enhance_*` 只能在抽取产出之上追加，**不得改动 `content`**（由结构判据守着，见 [architecture.md](./architecture.md) 第 4 节）。否掉「单一接口 + `mode` 参数」（调用方从 URL 上看不出代价量级，两条路也无法各自限流与超时）与「understand 独立实现端到端」。
+两个接口共用同一段下载、识别、解析代码，差异被限制在「是否调用模型」这一件事上。不共用就会出现两条各自演进的解析实现——同一份 PDF 在两条路下抽出不同文本，而「两条路可对比」正是本项目存在的理由。`extract_*` 不调模型、也不感知调用方是谁。**understand 的正文语义**（何时与 extract 相同、何时合并模型转写）见 [ADR-0011](#adr-0011--2026-10-10--understand-正文可含模型转写双池并发与全链路预算)。否掉「单一接口 + `mode` 参数」（调用方从 URL 上看不出代价量级，两条路也无法各自限流与超时）与「understand 独立实现端到端」。
 
 ## ADR-0003 · 2026-10-04 · 覆盖范围以「纯 Python 库能否做到」划线
 
-纯 Python 库能解析的一律完整实现；做不到的不报错，而是**降级**为基础文件信息（文件类型 / 大小 / 扩展名 / 文件头），HTTP 仍是 200，`meta.degraded` 与 `degrade_reason` 说明缺的是什么——降级是**能力边界**而不是故障，混进 `error` 会让监控把已知边界当成事故。容器格式必须往里看一层，否则「完整解析」是空头承诺：OLE 头读复合文档目录里的**流名**分家族——`WordDocument` → doc、`Workbook` / `Book` → xls、`PowerPoint Document` → ppt（读法见 `pipelines/steps/ole_directory.py`）；目录读不出、或没有一个流名认识时才退回扩展名与 Content-Type，所以扩展名与 Content-Type 依旧撒谎不起作用。ZIP 头读中央目录指纹定 docx / xlsx（带 `xl/vbaProject.bin` 则 xlsm）/ pptx / odt / ods / odp / apk / ipa，认不出才维持「这是个 ZIP」。今天真正缺**不可替代**依赖的只剩老版 Office（doc / ppt / wps，缺 LibreOffice 转换器）——音视频已按 ADR-0008 接上本机 ASR，但 `soundfile` / `imageio-ffmpeg` 是可选依赖，缺它们或音轨抽不出时同样降级。否掉「不支持的类型直接报错」：诚实但不可用，且逼迫调用方自己做类型预判。
+纯 Python 库能解析的一律完整实现；做不到的不报错，而是**降级**为基础文件信息（文件类型 / 大小 / 扩展名 / 文件头），HTTP 仍是 200，`meta.degraded` 与 `degrade_reason` 说明缺的是什么——降级是**能力边界**而不是故障，混进 `error` 会让监控把已知边界当成事故。容器格式必须往里看一层，否则「完整解析」是空头承诺：OLE 头读复合文档目录里的**流名**分家族——`WordDocument` → doc、`Workbook` / `Book` → xls、`PowerPoint Document` → ppt（读法见 `pipelines/steps/ole_directory.py`）；目录读不出、或没有一个流名认识时才退回扩展名与 Content-Type，所以扩展名与 Content-Type 依旧撒谎不起作用。ZIP 头读中央目录指纹定 docx / xlsx（带 `xl/vbaProject.bin` 则 xlsm）/ pptx / odt / ods / odp / epub / ofd / apk / ipa，认不出才维持「这是个 ZIP」。今天真正缺**不可替代**依赖的只剩老版 Office（doc / ppt / wps，缺 LibreOffice 转换器）——音视频已按 ADR-0008 接上本机 ASR，但 `soundfile` / `imageio-ffmpeg` 是可选依赖，缺它们或音轨抽不出时同样降级。否掉「不支持的类型直接报错」：诚实但不可用，且逼迫调用方自己做类型预判。
 
 ## ADR-0004 · 2026-09-11 · extract 对图片只给结构信息，不内置本地 OCR
 
@@ -35,7 +35,7 @@
 
 ## ADR-0006 · 2026-09-11 · 扫描件 PDF 在 understand 里走页面渲染，但要设上限
 
-`/extract` 遇到没有文字层的 PDF 只声明「无文字层」并给出空正文；`/understand` 把页面渲染成位图交给视觉模型（PyMuPDF，纯 Python，不需要系统工具），**默认最多 10 页**、由 `.env` 开关控制，超出部分在 `meta.notes` 里显式声明。上限不是性能优化而是成本护栏（逐页一次视觉调用，成本与页数线性相关）。两条降本手段都是确定性的、先于模型调用：**空白页用 64×64 灰度图的亮度极差判掉**——空白页返回的短文本还会连带触发两次切半重试，一次白跑变三次；**清晰度走自适应**，整页识别为空或明显过短才切上下两半，只有合计更长才采用。否掉「不设上限」与「每页固定切两张」（那会让所有扫描件的成本翻倍）。
+`/extract` 遇到没有文字层的 PDF 只声明「无文字层」并给出空正文；`/understand` 把页面渲染成位图交给视觉模型（PyMuPDF，纯 Python，不需要系统工具）。是否启用由 `.env` 的 `RENDERED_PAGE_OCR_ENABLED` 控制，页数上限由独立的 `RENDERED_PAGE_MAX`（默认 10）控制——**开关与上限是两项**，超出部分在 `meta.notes` 里显式声明。上限不是性能优化而是成本护栏（逐页一次视觉调用，成本与页数线性相关）。两条降本手段都是确定性的、先于模型调用：**空白页用 64×64 灰度图的亮度极差判掉**——空白页返回的短文本还会连带触发两次切半重试，一次白跑变三次；**清晰度走自适应**，整页识别为空或明显过短才切上下两半，只有合计更长才采用。否掉「不设上限」与「每页固定切两张」（那会让所有扫描件的成本翻倍）。
 
 ## ADR-0007 · 2026-10-02 · 后端按「流程步骤 + 功能域」分包
 
@@ -45,8 +45,30 @@
 
 把音视频划进退化的两条理由都不成立了：本机起了 Qwen3-ASR 服务（第二条「所用模型没有语音识别能力」失效），转码用 pip 装得上的 `imageio-ffmpeg`（自带静态 ffmpeg 二进制）就能绕开（第一条「缺系统级转码工具」失效）。所以 `/extract` 报音轨参数（时长 / 采样率 / 声道 / 音轨格式；视频报的是**它音轨**的参数，容器里没有可确定性抽取的文本），`content` 为空；`/understand` 把音轨交给 `models/qwen3_asr.py`，转写文字进 `meta.asr_text`，**不进 `content`**——否则 ADR-0002 的逐字节可对比立刻不成立。音轨取自一处：音频文件本身就是音轨，视频与 m4a / aac / wma 先抽一条 16kHz 单声道 wav，抽出的音轨登记进 `result.assets`（`kind="audio_track"`）供增强阶段复用，**一次请求只转码一次**。送音频走 `/asr-b64` 传字节，不把 URL 交给上游代下载（上游没有本项目的超时、体积与 SSRF 基线）。加 `ASR_MAX_AUDIO_SECONDS`（默认 600 秒）上限：ASR 单次输出有 token 上限，长音轨尾部会被静默丢掉，而本项目不静默截断。否掉「只为音频接 ASR、视频继续降级」（视频恰恰最需要转写）与「转写文字复用 `meta.ocr_text`」（`ocr_text` 的定义是「模型从图像读出的文字」，塞进语音会让术语边界糊掉）。
 
-## ADR-0009 · 2026-09-28 · RAG 抽取用独立契约，不进 ConvertResponse
+## ADR-0010 · 2026-10-10 · 废除单文件行数门禁；processors 一格式族一文件；共享按是否调模型分流
 
-检索入库需要页列表与目录区间，而 ConvertResponse 的 `content` 必须在 extract / understand 下逐字节一致、不能为 RAG 改形状，所以新增 `POST /rag/extract/file`，响应 `{kind, pages?, text?, catalogue_ranges?, error}`、`error` 恒存在、**不调用模型**。PDF 先统一走 pymupdf4llm 分页（`extract_pdf_pages()`），再只看前 `PREVIEW_FIRST_PAGES`（15 页）找印刷目录：抽出则加上目录区间返回，抽不出才复用 extract 内核的交付文本。实现落点：路由 `routers/rag/`，编排 `pipelines/rag_extract.py`，目录规则 `processors/catalogue.py`，分页 `processors/pdf_pages.py`，契约 `routers/rag/schema.py`。代价是多一份契约与一条管线，对比界面不渲染此口。
+为贴「总行 ≤500 / 代码行 ≤300」把本属同一格式族的实现拆成 `odf.py` + `ods_merges.py` + `ods_visibility.py` 等碎片，并让 `reading.py` 这类跨格式模型逻辑挤进 `processors/`，直接违背 ADR-0007「一格式一文件、调试只开一个文件」。决定：**废除**结构判据 2（全仓不再查单文件行数）；`pipelines/processors/` **只保留格式族文件**（族粒度与今日 `dispatch` 一致，如 `excel.py` 覆盖表格族），为预算拆出的兄弟模块并回所属族文件。共享落点：
 
-**2026-10-04 补：这一口的 `error` 保持字符串，与 convert 的 `{code, message, param}` 有意不同**（决定已拍板，别再当漏改）。两个理由：① 已知消费方 `Individual/self-rag` 的 `offline/extract/methods/anyurl.py` 只判 `error` 真假（`if error: raise RuntimeError(f"...: {error}")`）、不解析内容，改成对象它照旧能跑但报错文案会变成字典字面量，收益为零；② `routers/rag/schema.py` 是**叶子模块**（`tests/test_structure.py` 的判据 1 与 `test_leaf_modules_include_the_contracts` 都靠它），复用 `routers/convert/schema.py` 的 `ErrorInfo` 会让它不再是叶子，而 `pipelines/rag_extract.py` 正靠「叶子任何层都能用」才能 import 它。触发条件：出现第一个按 `error.code` 判分支的消费方时，连同「把 `ErrorInfo` 提成独立叶子模块」一起改。
+- 多格式表格公共件 → `utils/excel/`（`grid` / `cell_text` / `index_runs` / `table_kind` / `html_tables` 等）
+- 原 `processors/schema.py` → `utils/processor_schema.py`（含 Detector 等碎片）；HTTP 主体 → `utils/convert_contract.py`；`routers/convert/schema.py` 再导出
+- 模型侧公共（原 `reading.py`）→ `models/reading.py`
+- 表格公共 → `utils/excel/`
+- 预算碎片并回：`xlsx_*`/`ods_*` → `excel.py`；`docx_links` → `docx.py`；`rtf_tables` → `rtf.py`
+- `odf_table_rows` → `utils/excel/odf_table_rows.py`（`odf` 正文与 `excel` 的 ODS 路径共用；不并进单一格式族文件）
+
+否掉「只对 processors 豁免」「抬高上限仍留门禁」「新建 `pipelines/shared/`」。
+现状：行数门禁已删；公共件与契约已迁出；预算碎片已并回（2026-10-10）；原 `utils/rag/` 与 RAG 口已下线（见 HISTORY）。
+
+## ADR-0011 · 2026-10-10 · understand 正文可含模型转写；双池并发与全链路预算
+
+**正文（`content`）**：`/extract` 只含纯代码抽取段。`/understand` 在同一段之上，把 OCR/ASR/页面识别/语义描述等**模型转写**并进 `content`（`utils/delivery_content.merge_understand_delivery`）；同一转写仍写入 `meta.ocr_text` / `meta.asr_text` 供溯源。若某类源纯代码即可完整交付（如 plain/csv/xlsx 正文），两条路 `content` **仍逐字节相同**。模型不可用时不伪造正文，走降级与 `meta.notes`（ADR-0003）。
+
+**对比产品目标**：前端固定展示文件基础信息；**比正文**看有无模型时的差异；**摘要仅 understand** 产出。
+
+**编排**：模型增强分派在 `pipelines/understand.py` 的 `_run_model_enhance()`，不在 `step4_extract` 做自动发现。
+
+**请求生命周期**：`REQUEST_BUDGET_SEC`（默认 120）为**全链路**单调时钟预算，任一步超时终止；`DOWNLOAD_BUDGET_SEC`（默认 20）仅约束下载层且不超过剩余全链路时间。路由入口设预算（`utils/request_budget.py`）；LLM / OCR / ASR / ffmpeg 单次调用超时取 `min(配置上限, 剩余预算)`（`call_timeout`）。客户端断开取消在途调用不在首版范围。
+
+**并发**：扩展名在图片/音视频集合内走 **media 慢池**（`CONCURRENCY_MEDIA`），其余走 **fast 快池**（`CONCURRENCY_FAST`）；池满 HTTP **429**（`request_concurrency_limit`）。实现见 `utils/concurrency.py`。
+
+否掉「两路 content 永远逐字节相同且模型字只进 meta」（2026-10-10 前文案）与「单一全局 Semaphore」。

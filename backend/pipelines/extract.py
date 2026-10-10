@@ -12,7 +12,7 @@
 import time
 from typing import BinaryIO, Optional
 
-from pipelines.processors.schema import ExtractResult
+from utils.processor_schema import ExtractResult
 from pipelines.steps import step1_download, step3_prepare, step4_extract, step6_assemble
 from pipelines.steps.step6_assemble import PipelineResult
 

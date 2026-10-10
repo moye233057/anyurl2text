@@ -29,6 +29,7 @@ import httpx
 import configs.errors as errors
 import configs.settings as settings
 from configs.log_config import logger
+from utils import request_budget
 
 REDIRECT_STATUS = (301, 302, 303, 307, 308)
 # 受限地址段的判定字段：内网 / 回环 / 链路本地 / 保留 / 组播 / 未指定，任一命中即拒绝
@@ -188,7 +189,10 @@ def download(url: str, dest_dir: Path) -> FetchedFile:
     输出：FetchedFile（含最终 URL、字节数、Content-Type 与原始文件名）。
     异常：FetchError — 地址非法、命中受限地址、HTTP 错误、超时、超限。
     """
-    deadline = time.monotonic() + settings.REQUEST_BUDGET_SEC
+    if request_budget.request_deadline() is not None:
+        deadline = request_budget.download_deadline()
+    else:
+        deadline = time.monotonic() + min(settings.DOWNLOAD_BUDGET_SEC, settings.REQUEST_BUDGET_SEC)
     current = (url or "").strip()
     if not current:
         raise FetchError("URL 不能为空", 422, "download_url_empty", "url")

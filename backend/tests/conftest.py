@@ -9,9 +9,9 @@ r"""
 用例之间不靠换目录隔离，靠每条用例前后清空这个目录。
 
 跑法（在 `backend/` 下，用项目自己的环境）：
-    E:\miniconda\envs\multimodal\python.exe -m pytest tests -q                 # 全套（HTTP 缝要后端在跑）
-    E:\miniconda\envs\multimodal\python.exe -m pytest tests --ignore=tests/test_extract_contract.py -q   # 只跑免费的自检缝
-    E:\miniconda\envs\multimodal\python.exe -m pytest tests -m model -q       # 贵缝（要真模型 + 8021/8022）
+    python -m pytest tests -q                 # 全套（HTTP 缝要后端在跑）
+    python -m pytest tests --ignore=tests/test_extract_contract.py -q   # 只跑免费的自检缝
+    python -m pytest tests -m model -q       # 贵缝（要真模型 + 8021/8022）
 
 **最后那两个 hook 是给人看的**：`-q` 只给一行行点和最后一行数字，人无法据此判断
 「哪条在测什么、慢在哪、为什么红」。所以每跑一次都会：
@@ -134,9 +134,9 @@ def pytest_runtest_logreport(report):
 def pytest_report_header(config):
     """开头就告诉人：这套测试分几缝、各自要什么前置、结果会写到哪。"""
     return [
-        "两缝：自检缝（免费、几秒；处理器 / 判型 / 通用件 / 结构判据 / 错误码）"
-        " · HTTP 缝（tests/test_extract_contract.py，**要后端在 8020 上应答**）",
-        "贵缝另点名：python -m pytest tests -m model -q（要真模型 + 本机 8021/8022）",
+        "三缝：自检缝（免费、几秒；处理器 / 判型 / 通用件 / 结构判据 / 错误码）"
+        " · HTTP 缝（tests/test_extract_contract.py，**要后端在 8020 上应答**）"
+        " · 贵缝另点名：python -m pytest tests -m model -q（要真模型 + 本机 8021/8022）",
         f"跑完的完整清单（每条在测什么 + 用时）写到：{REPORT_PATH}",
     ]
 

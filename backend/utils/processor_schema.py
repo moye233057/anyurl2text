@@ -1,20 +1,73 @@
 # -*- coding: utf-8 -*-
 """
-处理器层的输入与产出契约。
+处理器层的输入与产出契约（ADR-0010：落在 `utils/`，与路由契约 `routers/convert/schema.py` 区分开）。
+
+也放 Detector / ImageMeta / AudioMeta / ErrorInfo：它们既是 HTTP meta 碎片，也被处理器产出引用；
+放在 utils 才能让本文件不依赖 routers（依赖单向：routers → utils，不是反过来）。
 
 输入：`PreparedSource`——已落盘、类型已知的源（步骤 1-3 的产出，见 `pipelines/steps/`）。
 产出：`extract_*` 返回 `ExtractResult`（交付文本 + 素材清单），`enhance_*` 返回 `EnhanceOutcome`。
 
 - `ExtractResult.content` 是**唯一来源**：不调模型、也不感知调用方是不是 understand
   （ADR 0002/0007：同一格式的确定性产出只有这一份实现）。
-- `EnhanceOutcome` 的三项只能追加：模型产出**永远不碰 `content`**——这是「两条路逐字节可对比」
-  的前提，`tests/test_structure.py` 会查。
+- `EnhanceOutcome` 供 understand 模型阶段使用；并进响应 `content` 由 `merge_understand_delivery()` 在组装前完成（ADR-0011）。
 """
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import List, Optional, Union
 
-from routers.convert.schema import AudioMeta, Detector, ErrorInfo, ImageMeta
+from pydantic import BaseModel, Field
+
+
+class Detector(str, Enum):
+    """扩展名 / Content-Type / 文件头，以及都没认出来。"""
+
+    EXTENSION = "extension"
+    CONTENT_TYPE = "content_type"
+    MAGIC = "magic"
+    UNKNOWN = "unknown"
+
+
+class ImageMeta(BaseModel):
+    """图片自身的结构信息。extract 对图片的全部产出就是这些（ADR 0004）。"""
+
+    width: Optional[int] = None
+    height: Optional[int] = None
+    mode: Optional[str] = None
+    format: Optional[str] = None
+    frames: Optional[int] = Field(None, description="动图帧数；静态图为 None")
+    dpi: Optional[str] = None
+    exif: dict = Field(default_factory=dict, description="只挑常用拍摄参数，不整包倾倒")
+
+
+class AudioMeta(BaseModel):
+    """
+    音轨自身的结构信息：音频源的全部确定性产出就是这些，视频则报它音轨的参数。
+
+    视频容器里没有可确定性抽取的东西，时长与语音都在音轨上，所以视频也填这一块
+    （见 ADR 0008）：`format` 是音轨的实际容器格式，未必等于源文件的扩展名。
+    """
+
+    duration_seconds: Optional[float] = None
+    sample_rate: Optional[int] = None
+    channels: Optional[int] = None
+    format: Optional[str] = Field(None, description="音轨容器格式，如 WAV / MP3")
+
+
+class ErrorInfo(BaseModel):
+    """
+    一次失败或降级的结构化说明。
+
+    `code` 是**稳定机器名**（`configs/errors.py` 的码表），给程序看、不许改；
+    `message` 是给使用者看的文案，会改。`param` 指出哪个入参或字段出错（`url` / `upload`），
+    没有明确归属时为 null。
+    """
+
+    code: str = Field(..., description="稳定错误码，见 configs/errors.py；是契约的一部分，不随文案改")
+    message: str = Field(..., description="面向使用者的说明，可能随时改措辞")
+    param: Optional[str] = Field(None, description="出错的是哪个入参或字段；无明确归属时为 null")
+
 
 @dataclass
 class PreparedSource:
@@ -139,6 +192,6 @@ class CoveredSlot:
     origin_row: int
     origin_col: int
 
-# 一个格位要么是 origin 要么是被覆盖者；一张表就是一个格位矩阵（构造与渲染见 `processors/grid.py`）
+# 一个格位要么是 origin 要么是被覆盖者；一张表就是一个格位矩阵（构造与渲染见 `utils/excel/grid.py`）
 CellSlot = Union[GridSpan, CoveredSlot]
 TableGrid = List[List[CellSlot]]

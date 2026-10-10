@@ -3,8 +3,7 @@
 表格族的处理器：xlsx / xlsm / xls / ods / csv。
 
 文件名按「一看就懂」取成 excel：这一族在本项目里统一按行列渲染成制表符表格，所以放在同一个文件里；
-ODS 与 CSV / TSV 也在这里，不必为了名字精确把它再拆开。合并区的读取按容器分家：OOXML 在
-`xlsx_merges.py`、ODF 在 `ods_merges.py`，两者都归到同一份格位网格。
+ODS 与 CSV / TSV 也在这里，不必为了名字精确把它再拆开。合并区 / 可见性按容器分家读（本文件后半：OOXML 与 ODF 两套），都归到同一份格位网格。
 
 设计要点：
 - **只有一套表格方言**：`=== SHEET: 名 ===` 加制表符分隔的行。给不同容器各造一套标记
@@ -15,19 +14,19 @@ ODS 与 CSV / TSV 也在这里，不必为了名字精确把它再拆开。合�
 """
 import csv
 import io
+import re
+import xml.etree.ElementTree as ElementTree
+import zipfile
 from itertools import islice
 from pathlib import Path
+from typing import Dict, List, Tuple
 
 import configs.limits as limits
-from pipelines.processors import cell_text, table_kind
-from pipelines.processors.grid import GridBuilder, grid_notes, merge_rect, render_tsv
-from pipelines.processors.index_runs import column_letters, to_runs
-from pipelines.processors.ods_merges import align_values as align_ods_values
-from pipelines.processors.ods_merges import read_merge_rects as read_ods_merge_rects
-from pipelines.processors.ods_visibility import read_visibility as read_ods_visibility
-from pipelines.processors.schema import ExtractContext, ExtractResult, TableGrid
-from pipelines.processors.xlsx_merges import read_merge_rects
-from pipelines.processors.xlsx_visibility import read_visibility as read_xlsx_visibility
+from utils.excel import cell_text, table_kind
+from utils.excel.grid import GridBuilder, grid_notes, merge_rect, render_tsv
+from utils.excel.index_runs import column_letters, to_runs
+from utils.excel.odf_table_rows import table_rows
+from utils.processor_schema import ExtractContext, ExtractResult, TableGrid
 from utils.textfile import read_text_file
 
 # 老版 .xls 的 BOUNDSHEET 可见性编码（xlrd 的 `sheet.visibility`）
@@ -122,7 +121,7 @@ def _read_xlsx(path: Path) -> tuple:
     应用场景：`extract_excel` 读 xlsx / xlsm 时调用。
     输入：path — 文件路径。
     输出：(sheets, visibility)——sheets 为 [(表名, 行列表, 合并矩形), ...]，
-          visibility 见 `xlsx_visibility.read_visibility`。
+          visibility 形态见 `read_xlsx_visibility`（本路径经 `_xlsx_package_meta` 一次解包拿到）。
     说明：**隐藏工作表照读**（隐藏只是界面上没显示，不是没内容；用户 2026-10-04 拍板）。
           实测只读模式同样会吐出隐藏行、隐藏列的值，所以这条读取路径不必改。
     """
@@ -133,7 +132,8 @@ def _read_xlsx(path: Path) -> tuple:
     except Exception:
         workbook = openpyxl.load_workbook(str(path), data_only=True)
     try:
-        merges = read_merge_rects(path)
+        # 合并区与隐藏状态共用一次 Zip 打开（不再各开一次）
+        merges, visibility = _xlsx_package_meta(path)
         sheets = []
         for index, sheet in enumerate(workbook.worksheets):
             # 边读边停：整表先读进内存的话，几十万行的表会把内存打爆，
@@ -144,7 +144,7 @@ def _read_xlsx(path: Path) -> tuple:
                 if len(rows) >= limits.MAX_ROWS_TO_READ:
                     break
             sheets.append((sheet.title, rows, merges[index] if index < len(merges) else []))
-        return sheets, read_xlsx_visibility(path)
+        return sheets, visibility
     finally:
         workbook.close()
 
@@ -194,7 +194,7 @@ def _read_ods(path: Path) -> tuple:
     两步都不能省：该库丢跨度（合并区要自己解包读），而且它对 `covered-table-cell` 不产出值
     （含纵向合并的行会少项、后面的值整体左移，要按覆盖位插空对齐）。
 
-    隐藏表照读（实测 `table:display="false"` 的表也在返回里），可见性从包内样式读（`ods_visibility.py`）——
+    隐藏表照读（实测 `table:display="false"` 的表也在返回里），可见性从包内样式读（`read_ods_visibility`）——
     该库只给值矩阵，样式一概丢掉。输出 (sheets, visibility)。
     """
     from pyexcel_ods import get_data
@@ -274,7 +274,7 @@ def _visibility_notes(visibility: dict) -> tuple:
           （按连续段合并，如 `第 2-4、6 行`、`B-D 列`）。**只登记，不扣内容**——
           隐藏只是界面上没显示，不是没有内容（用户 2026-10-04 拍板）。
     应用场景：`extract_excel` 组装 notes 时调用。
-    输入：visibility — 见 `xlsx_visibility.read_visibility`；xls / ods / csv 的形态一致或为空。
+    输入：visibility — 见 `read_xlsx_visibility`；xls / ods / csv 的形态一致或为空。
     输出：(notes 列表, 命中的上界名列表)。
     """
     notes = []
@@ -349,3 +349,326 @@ def extract_excel(path: Path, ext: str, ctx: ExtractContext) -> ExtractResult:
         limits_hit=hits,
         table_kind=table_kind.classify(tables[0]) if len(tables) == 1 else None,
     )
+
+
+# ===== OOXML：合并区（原 xlsx_merges）=====
+# A1 记法的单元格引用：列字母 + 行号
+A1_PATTERN = re.compile(r"([A-Za-z]+)(\d+)")
+
+def column_index(letters: str) -> int:
+    """列号字母 → 0 基列号：A → 0、AA → 26。"""
+    value = 0
+    for char in letters.upper():
+        value = value * 26 + (ord(char) - ord("A") + 1)
+    return value - 1
+
+def cell_position(reference: str) -> Tuple[int, int]:
+    """A1 记法的单元格引用 → (0 基行, 0 基列)；解析不出时返回 (0, 0)。"""
+    match = A1_PATTERN.match(reference.strip())
+    if not match:
+        return (0, 0)
+    letters, digits = match.groups()
+    return (int(digits) - 1, column_index(letters))
+
+# ===== OOXML：合并区 + 可见性（一次解包）=====
+# 工作表可见性的取值（OOXML 的 `<sheet state="...">`）
+VISIBLE = "visible"
+HIDDEN = "hidden"
+VERY_HIDDEN = "veryHidden"
+OOXML_MAIN = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+OOXML_REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+
+def _xlsx_sheet_part(targets: dict, sheet, rel: str) -> str:
+    """从 workbook rels 解析工作表部件路径；相对路径补上 `xl/` 前缀。"""
+    part = targets.get(sheet.get(f"{rel}id"), "").lstrip("/")
+    if part and not part.startswith("xl/"):
+        part = f"xl/{part}"
+    return part
+
+def _merge_rects_from_root(root: ElementTree.Element, main: str) -> list:
+    """一个工作表 XML 根上的合并矩形；半开区间。"""
+    rects = []
+    for merge in root.iter(f"{main}mergeCell"):
+        start, _, end = (merge.get("ref") or "").partition(":")
+        if end:
+            row_start, col_start = cell_position(start)
+            row_end, col_end = cell_position(end)
+            rects.append((row_start, col_start, row_end + 1, col_end + 1))
+    return rects
+
+def _hidden_spans_from_root(root: ElementTree.Element, main: str) -> dict:
+    """一个工作表 XML 根上的隐藏行与隐藏列（0 基半开区间）。"""
+    hidden_rows = []
+    for position, row in enumerate(root.iter(f"{main}row"), start=1):
+        if _xlsx_is_hidden(row):
+            # `r` 是 1 基行号，缺省时按元素出现次序数（span 之类不写 r 的行）
+            hidden_rows.append(int(row.get("r") or position) - 1)
+    hidden_cols = []
+    for col in root.iter(f"{main}col"):
+        if not _xlsx_is_hidden(col):
+            continue
+        first = int(col.get("min") or 1)
+        last = max(first, int(col.get("max") or first))
+        hidden_cols.extend(range(first - 1, last))
+    return {"hidden_rows": to_runs(hidden_rows), "hidden_cols": to_runs(hidden_cols)}
+
+def _xlsx_is_hidden(node) -> bool:
+    """OOXML 的布尔属性：`1` / `true` 都算隐藏（Excel 两种都写）。"""
+    return (node.get("hidden") or "").strip().lower() in ("1", "true")
+
+def _load_sheet_root(package: zipfile.ZipFile, part: str):
+    """读并解析一张工作表 XML；部件缺失或解析不动时返回 None。"""
+    if not part:
+        return None
+    try:
+        return ElementTree.fromstring(package.read(part))
+    except Exception:
+        return None
+
+def _xlsx_package_meta(path: Path) -> Tuple[List[list], Dict[str, dict]]:
+    """
+    一次解包同时取出合并区与隐藏状态。
+
+    功能：打开 Zip 一次，读 `workbook.xml` / rels，再按表各读一次 sheet XML——
+          合并矩形与隐藏行列都从同一份根上算，避免原先 `read_merge_rects` 与
+          `read_xlsx_visibility` 各开一次包、每张表 XML 读两遍。
+    应用场景：`_read_xlsx` 主路径；对外的 `read_merge_rects` / `read_xlsx_visibility` 也走这里。
+    输入：path — xlsx / xlsm 路径。
+    输出：(merges, visibility)。merges 按 `<sheet>` 顺序；visibility 按表名。
+          包级读不动 → `([], {})`；单表部件坏了 → 该表合并为空、隐藏为空（不拖垮整簿）。
+    """
+    try:
+        with zipfile.ZipFile(path) as package:
+            workbook = ElementTree.fromstring(package.read("xl/workbook.xml"))
+            rels = ElementTree.fromstring(package.read("xl/_rels/workbook.xml.rels"))
+            targets = {node.get("Id"): (node.get("Target") or "") for node in rels}
+            merges = []
+            visibility = {}
+            for sheet in workbook.iter(f"{OOXML_MAIN}sheet"):
+                root = _load_sheet_root(package, _xlsx_sheet_part(targets, sheet, OOXML_REL))
+                merges.append(_merge_rects_from_root(root, OOXML_MAIN) if root is not None else [])
+                visibility[sheet.get("name") or ""] = {
+                    "state": sheet.get("state") or VISIBLE,
+                    **(
+                        _hidden_spans_from_root(root, OOXML_MAIN)
+                        if root is not None
+                        else {"hidden_rows": [], "hidden_cols": []}
+                    ),
+                }
+            return merges, visibility
+    except Exception:
+        return [], {}
+
+def read_merge_rects(path: Path) -> List[list]:
+    """
+    读每个工作表的合并区，返回按工作表顺序排列的半开矩形。
+
+    功能：解包读 `xl/workbook.xml` 与它的 rels 定位各表 XML，再把 `<mergeCell ref="A1:C1"/>`
+          换算成 (行起, 列起, 行止, 列止)——半开区间是本项目里合并矩形的唯一输入形态。
+    应用场景：需要单独拿合并区时调用；`_read_xlsx` 走 `_xlsx_package_meta` 一次拿齐。
+    输入：path — xlsx / xlsm 路径。
+    输出：[[矩形, ...], ...]，与工作簿里 `<sheet>` 的顺序一一对应；包读不动时返回空列表，
+          调用方按「没有合并区」处理。
+    """
+    merges, _ = _xlsx_package_meta(path)
+    return merges
+
+def read_xlsx_visibility(path: Path) -> Dict[str, dict]:
+    """
+    读每个工作表的隐藏状态与隐藏行列。
+
+    功能：解包读 `xl/workbook.xml` 拿 `<sheet state="hidden|veryHidden">`，按 rels 定位各表 XML，
+          再读 `<row hidden="1" r="N">` 与 `<col hidden="1" min max>`；行列一律换算成 0 基半开区间。
+    应用场景：需要单独拿可见性时调用；`_read_xlsx` 走 `_xlsx_package_meta` 一次拿齐。
+    输入：path — xlsx / xlsm 路径。
+    输出：{工作表名: {"state": ..., "hidden_rows": [(起, 止), ...], "hidden_cols": [...]}}；
+          包里读不动时返回空字典，调用方按「全部可见」处理（内容读取不受影响）。
+    """
+    _, visibility = _xlsx_package_meta(path)
+    return visibility
+
+# ===== ODF/ODS：合并区（原 ods_merges）=====
+TABLE_NS = "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}"
+
+def _repeat(element: ElementTree.Element, attribute: str) -> int:
+    """读一个「重复次数」属性：缺失或非法按 1，并钳到 `MAX_REPEATED_SLOTS`（与 odf.py 同口径）。"""
+    try:
+        value = int(element.get(TABLE_NS + attribute, "1"))
+    except (TypeError, ValueError):
+        return 1
+    return min(limits.MAX_REPEATED_SLOTS, max(1, value))
+
+def _table_rects(table: ElementTree.Element) -> List[Tuple[int, int, int, int]]:
+    """
+    一张表的合并区。
+
+    功能：按行展开 `number-rows-repeated`，按列展开 `number-columns-repeated`，把带跨度的单元格
+           换算成半开矩形；显式 `covered-table-cell` 只占列位、不产生矩形。
+    应用场景：`read_ods_merge_rects` 逐表调用。
+    输入：table — `table:table` 元素。
+    输出：半开矩形列表，顺序即文档顺序。
+    """
+    rects: List[Tuple[int, int, int, int]] = []
+    row_index = 0
+    rows, _ = table_rows(table, lambda row: _repeat(row, "number-rows-repeated"))
+    for row in rows:
+        cells: List[Tuple[str, int, int]] = []
+        for cell in row:
+            if cell.tag == TABLE_NS + "covered-table-cell":
+                cells.append(("covered", 1, 1))
+                continue
+            if cell.tag != TABLE_NS + "table-cell":
+                continue
+            col_span = _repeat(cell, "number-columns-spanned")
+            row_span = _repeat(cell, "number-rows-spanned")
+            for _ in range(_repeat(cell, "number-columns-repeated")):
+                cells.append(("cell", col_span, row_span))
+        for offset in range(_repeat(row, "number-rows-repeated")):
+            column = 0
+            for kind, col_span, row_span in cells:
+                if kind == "cell" and (col_span > 1 or row_span > 1):
+                    rects.append((row_index + offset, column, row_index + offset + row_span, column + col_span))
+                column += col_span
+            row_index += 1
+    return rects
+
+def align_ods_values(rows: list, rects: List[Tuple[int, int, int, int]]) -> list:
+    """
+    把「不给覆盖位留位置」的值行对齐到网格列序。
+
+    为什么需要这一步：`pyexcel-ods` 遇到 `covered-table-cell` **不产出任何值**，于是含纵向合并
+    的行比别的行少若干项；直接按列号落位会让后面的值整体左移（实测：`b3` 丢失、`c3` 挤到第 2 列）。
+    openpyxl 相反——被覆盖的格会给出 `None` 占位，所以只有 ODS 需要对齐。对齐之后两条读取路径
+    对同一形状给出相同的值矩阵，`excel._sheet_grid` 一份逻辑就够。
+
+    功能：按矩形算出覆盖位集合，逐行把值填到非覆盖列上，覆盖列插空串。
+    应用场景：`excel._read_ods` 读到值与合并矩形之后调用。
+    输入：rows — pyexcel-ods 给的值行；rects — 该表的半开矩形。
+    输出：对齐后的值行（覆盖位是空串，与 openpyxl 的 `None` 等价）。
+    """
+    covered = set()
+    for row_start, col_start, row_end, col_end in rects:
+        for row in range(row_start, row_end):
+            for col in range(col_start, col_end):
+                if (row, col) != (row_start, col_start):
+                    covered.add((row, col))
+    if not covered:
+        return rows
+    aligned = []
+    for row_index, row in enumerate(rows):
+        values = list(row)
+        fixed: list = []
+        value_index = 0
+        column = 0
+        while value_index < len(values) or (row_index, column) in covered:
+            if (row_index, column) in covered:
+                fixed.append("")
+            else:
+                fixed.append(values[value_index])
+                value_index += 1
+            column += 1
+        aligned.append(fixed)
+    return aligned
+
+def read_ods_merge_rects(path: Path) -> Dict[str, List[Tuple[int, int, int, int]]]:
+    """
+    读每个工作表的合并区，按**表名**索引。
+
+    功能：解包读 `content.xml`，逐 `table:table` 取 `table:name` 与它的合并矩形。
+    为什么按表名而不是按序号：`pyexcel-ods` 只回值字典，空表可能被它丢掉，序号对齐会错位；
+    表名是两边都有的稳定键（拿不到名字时返回空字典，调用方按「没有合并区」处理）。
+    应用场景：`excel.py` 读 ods 时调用一次，与行值一起交给格位网格。
+    输入：path — ods 路径。
+    输出：{表名: [半开矩形, ...]}；包读不动或解析失败时返回空字典。
+    """
+    try:
+        with zipfile.ZipFile(path) as package:
+            root = ElementTree.fromstring(package.read("content.xml"))
+    except Exception:
+        return {}
+    rects: Dict[str, List[Tuple[int, int, int, int]]] = {}
+    for table in root.iter(TABLE_NS + "table"):
+        name = table.get(TABLE_NS + "name") or ""
+        rects[name] = _table_rects(table)
+    return rects
+
+# ===== ODF/ODS：可见性（原 ods_visibility）=====
+OFFICE_NS = "{urn:oasis:names:tc:opendocument:xmlns:office:1.0}"
+STYLE_NS = "{urn:oasis:names:tc:opendocument:xmlns:style:1.0}"
+# 「不显示」的取值：表格是 `display="false"`、行列是 `visibility="collapse"`
+HIDDEN_VALUES = ("collapse", "false", "hidden")
+
+def _marked_hidden(element) -> bool:
+    """元素自己写没写隐藏：`table:visibility` 或 `table:display` 取了「不显示」的值。"""
+    return any(element.get(TABLE_NS + name) in HIDDEN_VALUES for name in ("visibility", "display"))
+
+def _style_names(root) -> Dict[str, bool]:
+    """
+    自动样式表 → {样式名: 是否隐藏}。
+
+    功能：逐个 `style:style` 看它的属性子元素里有没有「不显示」——`table:display="false"`
+            （整表不显示）与 `table:visibility="collapse"`（行列折叠）都算隐藏。
+    应用场景：`read_visibility` 解析表格 / 行列前调用一次。
+    输入：root — content.xml 根元素。
+    输出：{样式名: 是否隐藏}；没被样式表登记的名字查不到，按「可见」处理。
+    """
+    styles: Dict[str, bool] = {}
+    for style in root.iter(STYLE_NS + "style"):
+        name = style.get(STYLE_NS + "name") or ""
+        if name:
+            styles[name] = any(_marked_hidden(properties) for properties in style)
+    return styles
+
+def _ods_is_hidden(element, styles: Dict[str, bool]) -> bool:
+    """元素自身写了隐藏，或它引用的样式是隐藏样式。"""
+    return _marked_hidden(element) or bool(styles.get(element.get(TABLE_NS + "style-name") or ""))
+
+
+def _sheets(root) -> list:
+    """工作簿里的工作表：`office:spreadsheet` 的**直属** `table:table`（嵌套表不是工作表，且常常没有名字）。"""
+    spreadsheet = root.find(OFFICE_NS + "body/" + OFFICE_NS + "spreadsheet")
+    if spreadsheet is not None:
+        return [child for child in spreadsheet if child.tag == TABLE_NS + "table"]
+    return list(root.iter(TABLE_NS + "table"))
+
+def read_ods_visibility(path: Path) -> Dict[str, dict]:
+    """
+    读每个工作表的隐藏状态与隐藏行列。
+
+    功能：解包读 `content.xml`，先收自动样式表，再逐工作表按 `table:name` 建索引：
+           整表隐藏看表元素；行看 `table:table-row`（含表头行组与行组容器）并按 `number-rows-repeated`
+           展开行号；列看 `table:table-column` 并按 `number-columns-repeated` 展开列号。
+    应用场景：`excel.py` 读 ods 时调用一次，产出用于 `notes` 登记。
+    输入：path — ods 路径。
+    输出：{工作表名: {"state": "visible"|"hidden", "hidden_rows": [(起, 止)], "hidden_cols": [...]}}；
+           包读不动时返回空字典，调用方按「全部可见」处理（内容读取不受影响）。
+    """
+    try:
+        with zipfile.ZipFile(path) as package:
+            root = ElementTree.fromstring(package.read("content.xml"))
+    except Exception:
+        return {}
+    styles = _style_names(root)
+    visibility: Dict[str, dict] = {}
+    for table in _sheets(root):
+        rows, _ = table_rows(table, lambda row: _repeat(row, "number-rows-repeated"))
+        hidden_rows: List[int] = []
+        row_index = 0
+        for row in rows:
+            repeat = _repeat(row, "number-rows-repeated")
+            if _ods_is_hidden(row, styles):
+                hidden_rows.extend(range(row_index, row_index + repeat))
+            row_index += repeat
+        hidden_cols: List[int] = []
+        column_index = 0
+        for column in table.findall(TABLE_NS + "table-column"):
+            repeat = _repeat(column, "number-columns-repeated")
+            if _ods_is_hidden(column, styles):
+                hidden_cols.extend(range(column_index, column_index + repeat))
+            column_index += repeat
+        visibility[table.get(TABLE_NS + "name") or ""] = {
+            "state": HIDDEN if _ods_is_hidden(table, styles) else VISIBLE,
+            "hidden_rows": to_runs(hidden_rows),
+            "hidden_cols": to_runs(hidden_cols),
+        }
+    return visibility

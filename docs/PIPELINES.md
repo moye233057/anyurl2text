@@ -48,8 +48,6 @@ POST /extract | /extract/file | /understand | /understand/file
 
 失败不抛给调用方：入口阶段失败走 `step6_assemble.error_response()`（`type="error"`，带语义状态码），步骤 4 之后的失败转成 `meta.notes` 里的说明，HTTP 仍是 200。
 
-RAG 抽取不走上表。`POST /rag/extract/file` 由 `pipelines/rag_extract.py` 编排：准备与 extract 相同；PDF 先 pymupdf4llm 分页，只在**前 `PREVIEW_FIRST_PAGES`（15 页）**里找印刷目录，抽出则直接返回；否则复用步骤 4 的 `content` 作为 `text`。契约见 [API.md §11](./API.md)。
-
 ## 2. 通用模块
 
 任何类型都经过这五段。各类型的差别只在「步骤 4 的处理器」以及「步骤 4′ 拿什么素材给模型」。
@@ -128,7 +126,7 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 | 音频与视频 | 源是音视频 | `media.enhance_media()`：拿步骤 4 抽好的音轨送本机 ASR |
 | 其余 | 有素材清单的文档与网页 | `reading.enhance_assets()`：`kind="page"` 逐页识别，`kind="image"` 批量识读 |
 
-读素材的共用实现在 `processors/reading.py`：
+读素材的共用实现在 `models/reading.py`：
 
 - 页面图：先做**确定性空白页预检**（缩到 64x64 灰度看亮度极差，≤8 判空白，直接跳过、不花模型调用）→ 整页识别 → 结果短于 `RENDERED_PAGE_RETRY_MIN_CHARS`（20 字）时切上下两半各识别一次，只有合计更长才采用；空白页与重试页数写进 `notes`。
 - 内嵌图：一次请求带上全部图（受 `MAX_EMBEDDED_IMAGES` 限制），要求模型按 `index` 返回 JSON，**index 对不上的结果丢弃**，再按素材顺序拼回去。
@@ -229,19 +227,19 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 1. 按扩展名选解析器：`xlsx/xlsm` → openpyxl（先 `read_only=True, data_only=True`，失败退回常规模式）；`xls` → xlrd；`ods` → `pyexcel_ods.get_data`；`csv` → 先 `read_text_file` 探测编码解码，再嗅探分隔符后交给 `csv.reader`。解析异常直接降级。
 2. **隐藏工作表照读**——`sheet_state` 只管界面显示，不是「没有内容」（用户 2026-10-04 拍板：隐藏内容一律照抽，例外只有「会把系统打爆」与「解析超过 60 秒」）。逐行**边读边停**，读到 `MAX_ROWS_TO_READ=5001` 行即止（多读一行是为了让渲染层能区分「还有后续行」与「这就是最后一行」）。
 3. `_render_rows()` 统一渲染，四种格式只有这一套方言：`=== SHEET: 名 ===` 加制表符分隔的行；列宽从格位网格读（**合并区覆盖的空列也算列宽**，不会再被当空尾列裁掉）；跳过整行全空的行；单表超 `MAX_ROWS_PER_SHEET=5000` 行截断并说明。**行尾缺格补空**（OOXML 允许一行提前结束、pptx 生产者也常省略尾部续格，不补的话这一行的制表符个数与同表其他行不同、后面所有列位都错开）；**CSV / TSV 除外**——锯齿行是源文件里的真实形状，传 `pad_short_rows=False` 保真。格位网格另有**三条预算**——跨度展开 `max_grid_expansion`、格位数 `max_grid_slots`、文字量 `max_grid_text_chars`：命中时**不落该格**并把名字交回 `limits_hit`；四条表格路径（docx / odf / excel / pptx）都会上报（2026-10-04 修掉了 excel / pptx「只交网格、不交命中的名字」的静默）。
-4. 合并区按容器分家、都归到同一份格位网格：`xlsx / xlsm` 由 `xlsx_merges.py` 从包内 XML 读（`read_only=True` 的 worksheet 没有 `merged_cells`，只在常规模式读会让两条读取路径对同一文件给出不同 `content`，违反 ADR-0002）；`xls` 取 xlrd 的 `merged_cells`——**它只在 `formatting_info=True` 时才有值**，且坐标是开区间且行在前，要过 `grid.merge_rect` 换算；`ods` 由 `ods_merges.py` 从 `content.xml` 读（`pyexcel-ods` 丢跨度），并把「不给覆盖位留位置」的值行按覆盖位对齐（该库对 `covered-table-cell` 不产出值，不对齐则后面的值整体左移）。三家的收行都走 `odf_table_rows` / 直属 `w:tr` 那一层，**行组（表头行组、`table:table-rows`、`table:table-row-group`）会往里走一层**——只取直属行会让整组内容消失。
+4. 合并区按容器分家、都归到同一份格位网格：`xlsx / xlsm` 由 `excel.read_merge_rects` 从包内 XML 读（`read_only=True` 的 worksheet 没有 `merged_cells`，只在常规模式读会让两条读取路径对同一文件给出不同 `content`，违反 ADR-0002）；`xls` 取 xlrd 的 `merged_cells`——**它只在 `formatting_info=True` 时才有值**，且坐标是开区间且行在前，要过 `grid.merge_rect` 换算；`ods` 由 `excel.read_ods_merge_rects` 从 `content.xml` 读（`pyexcel-ods` 丢跨度），并把「不给覆盖位留位置」的值行按覆盖位对齐（该库对 `covered-table-cell` 不产出值，不对齐则后面的值整体左移）。ODF 行收集走 `utils/excel/odf_table_rows`，docx 走直属 `w:tr`；**行组（表头行组、`table:table-rows`、`table:table-row-group`）会往里走一层**——只取直属行会让整组内容消失。
 5. **表类型**（`meta.table_kind`）：交付文本只有一张表时给 `data` / `layout`，口径照 anydoc 的 `TableKind`——1×1 单格表算 `layout`（排版壳）。判据是**渲染好的行**（`table_kind.classify`），所以四条表格路径口径一致。
 6. 空单元格输出空串（openpyxl 的空单元格是 `None`，直接 `str()` 会写出字面量 `None` 污染整列）；**浮点**单元格按 15 位有效数字写（`f"{value:.15g}"`）——`str(0.1 + 0.2)` 会写出 `0.30000000000000004` 这种二进制误差长尾，而整数与字符串一律原样不动（整数因此不会平白多出小数点）。
 7. `pages / pages_used` 记工作表数（含隐藏表）；没有内容时写一条 `notes`。
-8. **隐藏状态另登记进 `notes`**（内容照抽，登记是为了不静默）：整表隐藏的工作表写明 `hidden` / `veryHidden`，隐藏行与隐藏列按连续段写，例如 `隐藏内容照抽：工作表「可见表」有隐藏行（第 2 行、第 4-5 行）、隐藏列（B 列）`。`xlsx / xlsm` 由 `xlsx_visibility.py` 从包内 XML 读——**`read_only=True` 的 worksheet 没有 `row_dimensions` / `column_dimensions`**（实测同一份文件常规模式给出 `hidden_rows=[2]`、只读模式是空的），而值必须走只读模式，所以隐藏状态自己解包；`xls` 取 xlrd 的 `visibility` / `rowinfo_map` / `colinfo_map`（BOUNDSHEET 编码：0 可见、1 隐藏、2 非常隐藏）；**`ods` 走 `ods_visibility.py`**（见下）。登记段数超过 `max_visibility_ranges=24` 时只登记前 24 段并报出该上界名——**钳的只是登记，正文一格不少**。
+8. **隐藏状态另登记进 `notes`**（内容照抽，登记是为了不静默）：整表隐藏的工作表写明 `hidden` / `veryHidden`，隐藏行与隐藏列按连续段写，例如 `隐藏内容照抽：工作表「可见表」有隐藏行（第 2 行、第 4-5 行）、隐藏列（B 列）`。`xlsx / xlsm` 由 `excel.read_xlsx_visibility` 从包内 XML 读——**`read_only=True` 的 worksheet 没有 `row_dimensions` / `column_dimensions`**（实测同一份文件常规模式给出 `hidden_rows=[2]`、只读模式是空的），而值必须走只读模式，所以隐藏状态自己解包；`xls` 取 xlrd 的 `visibility` / `rowinfo_map` / `colinfo_map`（BOUNDSHEET 编码：0 可见、1 隐藏、2 非常隐藏）；**`ods` 走 `excel.read_ods_visibility`**（见下）。登记段数超过 `max_visibility_ranges=24` 时只登记前 24 段并报出该上界名——**钳的只是登记，正文一格不少**。
 
-ODS 的隐藏是**样式**说了算（整表 `table:display="false"`、行列 `table:visibility="collapse"`），`pyexcel-ods` 照读不筛，所以 `hidden.ods` 的内容不少；**可见性由 `ods_visibility.py` 解 `content.xml` 的自动样式表读出来**（值那条路只给值，样式一概丢掉），行列按 `number-*-repeated` 展开后压成 0 基半开区间，与 xlsx / xls 的产出同形——三份容器对同一形状给出同一段正文与同一条登记（有用例钉住）。
+ODS 的隐藏是**样式**说了算（整表 `table:display="false"`、行列 `table:visibility="collapse"`），`pyexcel-ods` 照读不筛，所以 `hidden.ods` 的内容不少；**可见性由 `excel.read_ods_visibility` 解 `content.xml` 的自动样式表读出来**（值那条路只给值，样式一概丢掉），行列按 `number-*-repeated` 展开后压成 0 基半开区间，与 xlsx / xls 的产出同形——三份容器对同一形状给出同一段正文与同一条登记（有用例钉住）。
 
 ODS 与 CSV 也在这个文件里：这一族都按行列渲染成同一种文本表格，不必为了名字精确再拆开。
 
 CSV 的分隔符嗅探规则（确定性，实现只在 `excel._sniff_delimiter` 一处）：取前 20 行**非空**行当样本，对 `,` `;` `\t` `|` 四个候选各解一次，只考虑「确实把行列开了」的候选（样本里存在多于 1 列的行）；在其中选**列数最一致**的那个（与出现次数最多的列数相同的行最多），平局按候选顺序决定（逗号优先）；一个都不满足就退回逗号。字段里出现的制表符 / 分号 / 竖线因此只是普通字符，普通逗号 CSV 的产出逐字节不变。
 
-**格内文本的方言只有一处定义**：`processors/cell_text.py`。一个格位只能占交付文本的一行一列，所以格里的换行一律写成 `<br>`（anydoc 的 `render_cell` 口径：`src/render/markdown/table.rs:87-101`）、制表符一律换成空格——真制表符会凭空多出一列、真换行会把这一行 TSV 拆成两行；段内空白仍压成单空格，纯空白段丢掉。六条表格路径都走它：docx（`w:p` 之间、以及 `w:br` / `w:cr` 软换行）、pptx（`cell.text` 的 `\n` 与 `\v`）、excel（单元格值里的 `\n`）、odf（`text:p` 之间）、网页（格内 `<br>` 元素）、rtf（`\par` / `\line` 之后）。嵌套表在格内串成 `甲 / 乙`、行间也是 `<br>`。**源里本来就写着字面 `<br>` 的文本与之不可区分**（照 anydoc，不做转义）。
+**格内文本的方言只有一处定义**：`utils/excel/cell_text.py`。一个格位只能占交付文本的一行一列，所以格里的换行一律写成 `<br>`（anydoc 的 `render_cell` 口径：`src/render/markdown/table.rs:87-101`）、制表符一律换成空格——真制表符会凭空多出一列、真换行会把这一行 TSV 拆成两行；段内空白仍压成单空格，纯空白段丢掉。六条表格路径都走它：docx（`w:p` 之间、以及 `w:br` / `w:cr` 软换行）、pptx（`cell.text` 的 `\n` 与 `\v`）、excel（单元格值里的 `\n`）、odf（`text:p` 之间）、网页（格内 `<br>` 元素）、rtf（`\par` / `\line` 之后）。嵌套表在格内串成 `甲 / 乙`、行间也是 `<br>`。**源里本来就写着字面 `<br>` 的文本与之不可区分**（照 anydoc，不做转义）。
 
 **网格的两条登记**（`grid.grid_notes`，四条表格路径共用，文案只有一处）：
 - **孤儿覆盖位**：`covered()` 认领不到合并起点时（产出方把合并块首行删了 / 部分复制粘贴 / 导出器怪癖，或我们自己的预算裁掉了起点格的跨度），该位置退化成空格位并计数 → `有 N 个覆盖位没有对应的合并起点，已按空格处理（列位不受影响）`。它把「文件本来就没内容」与「我们没解析对」分开，是合并解析缺口的症状指标。
@@ -272,7 +270,7 @@ CSV 的分隔符嗅探规则（确定性，实现只在 `excel._sniff_delimiter`
 | txt / md / markdown | 原文直读。**Markdown 不做 HTML 转换**——标题层级、列表、表格、链接都是信息，再加工只会掉信息 |
 | json | `json.loads` 后 `indent=2` 美化；解析失败原样返回，不因格式问题丢内容 |
 | xml | `ET.fromstring` + `ET.indent` + `tostring` 缩进输出并**保留属性**；解析失败原样返回 |
-| rtf | `rtf.py` 逐字符解析控制字：处理 `\uN`（含负值 UTF-16 码位）——**按 `\ucN` 声明跳过 fallback 字符**（默认 1 个；问号、`\'hh` 转义、普通字符都算一个单位，只认 `?` 会让 `\uc1` 的参数漏成正文）——与 `\'hh` 十六进制转义（按 utf-8 → gbk → cp1252 → latin-1 解码），**整组跳过** `fonttbl` / `colortbl` / `stylesheet` / `pict` 等可忽略目的地（否则字体名会混进正文），`\par` / `\line` 还原成换行，最后折叠连续空行。**表格另走 `rtf_tables.build_lines`**：`\trowd` / `\cellx` / `\cell` / `\row` 按 anydoc 的边界聚类还原成网格列——右边界先归一化成严格递增，再把**全部行的右边界**贪心聚类成列（容差 10 twips，**与簇的种子比**，否则 `\cellx` 的 1-2 twips 抖动会把整行并成一簇），横向合并折成列跨度（文本首尾直拼）、纵向链按**精确列区间**相等匹配、无主的续格变回可见格；`\trhdr` 是源自己标的表头行（进 `meta.table_header_rows`）。列位由 `grid.py` 渲染，与 docx 同一份；`plaintext.py` 在读盘之前把 rtf 交给 `extract_rtf(path)`（表头行数与行数上限要随结果带回） |
+| rtf | `rtf.py` 逐字符解析控制字：处理 `\uN`（含负值 UTF-16 码位）——**按 `\ucN` 声明跳过 fallback 字符**（默认 1 个；问号、`\'hh` 转义、普通字符都算一个单位，只认 `?` 会让 `\uc1` 的参数漏成正文）——与 `\'hh` 十六进制转义（按 utf-8 → gbk → cp1252 → latin-1 解码），**整组跳过** `fonttbl` / `colortbl` / `stylesheet` / `pict` 等可忽略目的地（否则字体名会混进正文），`\par` / `\line` 还原成换行，最后折叠连续空行。**表格走同文件内的 `build_lines`**：`\trowd` / `\cellx` / `\cell` / `\row` 按 anydoc 的边界聚类还原成网格列——右边界先归一化成严格递增，再把**全部行的右边界**贪心聚类成列（容差 10 twips，**与簇的种子比**，否则 `\cellx` 的 1-2 twips 抖动会把整行并成一簇），横向合并折成列跨度（文本首尾直拼）、纵向链按**精确列区间**相等匹配、无主的续格变回可见格；`\trhdr` 是源自己标的表头行（进 `meta.table_header_rows`）。列位由 `grid.py` 渲染，与 docx 同一份；`plaintext.py` 在读盘之前把 rtf 交给 `extract_rtf(path)`（表头行数与行数上限要随结果带回） |
 
 `understand`：无素材，直接进摘要。
 
@@ -365,7 +363,7 @@ EPUB 也是 ZIP 容器，真实身份写在容器里：识别那一步读 `META-
 2. 解析 OPF：`manifest` 只用来建 `id → href` 表，**章节按 `spine` 的 `itemref` 顺序**取——manifest 的声明顺序与 zip 的写入顺序都不代表阅读顺序，按它们拼会把章节排错；不在 spine 里的项（封面、样式、目录页）一概不产出。href 相对 **OPF 所在目录**解析，所以 `OEBPS/content.opf` 里的 `ch1.xhtml` 指的是 `OEBPS/ch1.xhtml`。
 3. 每章是 XHTML，用 BeautifulSoup 取正文：`script` / `style` / `noscript` / `iframe` / `svg` 与 `<head>` 整块丢掉。**CSS 一律不进交付文本**——`<link rel="stylesheet">` 与内联 `<style>` 都不是这份文档的内容（`<title>` 已进了分章标记，留着会重复出现）。**表格走与网页同一条路**（`html_tables.py`）：先换哨兵行、清洗后回填，所以章内表格也是制表符块而不是被拉平。
 4. 章节块形如 `=== 章节 N: <标题> ===`；标题取该章 `<title>`，没有就退第一个 `h1`–`h6`，都没有只写章号。
-5. 链接：外部 `http(s)` 保留绝对地址；**内部引用提升成文档级目标**——EPUB 的 `#frag` 只在**单章内**有意义，跨章拼成一整篇之后不带上章路径，「这个锚点指向哪儿」就是歧义。所以章内自链 `#sec` → `ch2.xhtml#sec`，相对引用按该章所在目录解析（`../ch2.xhtml#sec2` → `ch2.xhtml#sec2`），`javascript` / `mailto` / `tel` 跳过。按目标去重后截到 `MAX_LINKS=100`（命中报 `max_links`），输出成末尾的 `## 链接` 段，与 `html.py` / `docx_links.py` 同形。
+5. 链接：外部 `http(s)` 保留绝对地址；**内部引用提升成文档级目标**——EPUB 的 `#frag` 只在**单章内**有意义，跨章拼成一整篇之后不带上章路径，「这个锚点指向哪儿」就是歧义。所以章内自链 `#sec` → `ch2.xhtml#sec`，相对引用按该章所在目录解析（`../ch2.xhtml#sec2` → `ch2.xhtml#sec2`），`javascript` / `mailto` / `tel` 跳过。按目标去重后截到 `MAX_LINKS=100`（命中报 `max_links`），输出成末尾的 `## 链接` 段，与 `html.py` / `docx.hyperlink_lines` 同形。
 6. 单章读不出来（容器截断、成员 CRC 坏、加密）**只跳过那一章**并在 `notes` 里点名章节与原因，其余章照常交付；一章都读不出来才整份降级。这里按 `except Exception` 接，因为 zipfile 对损坏数据抛的是 `zlib.error`、对加密成员抛 `RuntimeError`，都不在 `BadZipFile` 之下——按类型列举一定会漏（实测过）。spine 章数超过 `MAX_ENTRIES=500` 时只读前 500 章并报 `max_entries`。
 
 已知边界：只还原文字与链接，不还原样式与版式；`pages` 这一族不适用（为 `null`）。
@@ -398,8 +396,10 @@ OFD 也是 ZIP 容器，真实身份写在容器里：识别那一步读**根级
 
 ## 4. 相关上限一览
 
-**只有一个定义处**：`backend/configs/limits.py` 的 `LIMITS` 表。可配置的值读 `settings`（环境变量），
-写死的直接定义在那里——两个来源在同一个文件里汇合，不再有第三个。
+**上界值只有一个定义处**：`backend/configs/limits.py` 的 `LIMITS` 表。可配置的值读 `settings`（环境变量），
+写死的直接定义在那里——两个来源在同一个文件里汇合，上界值不再有第三个来源。
+
+**判定阈值不是上界**：只在 `NON_LIMIT_THRESHOLDS` 登记名字；数值仍在各自模块（如 `pdf.py` 的文字层下限、`reading.py` 的切半重试阈值、`settings` 里与判定相关的项）。不要把「阈值写在哪」与「上界值写在哪」混成一处。
 
 表里每条登记了值、单位、命中行为（`error` / `truncate` / `clamp`）、强制点（按函数名，不写行号——
 行号会随任何一次编辑腐烂）与命中文案模板。**处理器命中时只把名字记进 `result.limits_hit`**，
@@ -425,17 +425,14 @@ OFD 也是 ZIP 容器，真实身份写在容器里：识别那一步读**根级
 | `TEXT_LAYER_MIN_CHARS` | 30 字 | PDF 文字层判定**阈值**（不是上界） |
 | `MAX_TEXT_BYTES` | 20MB | 文本类读取上限 |
 | `MAX_LONG_EDGE` | 1600 | 送模型前图片长边缩放目标 |
-| `PREVIEW_FIRST_PAGES` | 15 页 | RAG 预览页数 |
 
-**哪些会出现在 `meta.limits_hit` 里**：行为是 `truncate` 的**大部分**——真的少读了用户的字节 / 行 / 页 / 张。
-`error` 类（下载体积、跳转数）本身就是失败响应，用户直接从 `error` 与状态码看到；`clamp` 类
-（图片等比缩放、ODF 补位次数）是常规归一化，命中不代表数据丢失，报出来只会变成噪声——
-它们登记在表里备查，但不报告。
+**哪些会出现在 `meta.limits_hit` 里**（按行为逐条，不要一刀切）：
 
-**这三个也都接上了**（2026-10-04，`NOT_REPORTED_YET` 这个名字随之删除）：`max_text_bytes` 由
-`textfile.read_text_file()` 与文本一起返回给处理器；`preview_first_pages` 报进 RAG 响应自己的
-`limits_hit`（`routers/rag/schema.py`）；`llm_max_tokens` 由账本的 `output_truncated`
-（模型的 `finish_reason == "length"`）标记、`understand` 报进 `meta.limits_hit`。
-**这一节现在可以读成已全覆盖**；加新上界时请照上面三条把报告链路一起接上。
+- **`error`**：下载体积、跳转数等——失败响应本身就说清楚了，不必再进 `limits_hit`。
+- **`truncate`**：少读了字节 / 行 / 页 / 张的，应上报（含 `max_text_bytes`、`llm_max_tokens` 等已接好的）。
+- **`clamp` 且上报**：`max_visibility_ranges`（只钳登记段数，正文不少）——命中会进 `limits_hit`。
+- **`clamp` 且当前不上报**：`max_repeated_slots`（ODF 补位次数）、`max_long_edge`（送模型前长边缩放，见 `models/images.py` 只缩放不回传命中名）。二者登记在表里备查；`max_long_edge` 的报告链路缺口见 `TODO.md` B-⑧。
+
+加新上界时：登记进 `LIMITS` 的同时接上报告链路（或在本名单里写明「故意不报告」）。
 
 `.env` 变量与全部取值见 [RUNBOOK.md](./RUNBOOK.md) 的配置项全表，写死的上界见紧随其后的模块内常量表，判定见 [adr.md](./adr.md)。

@@ -2,20 +2,21 @@
 r"""
 缝 S：结构判据（静态）。
 
-这里接替已删除的 `backend/scripts/check_structure.py`。那五条判据守的是**行为测不到的东西**——
-类与函数的摆放、依赖朝向、文件体积、`enhance_*` 有没有偷偷改 `content`。
+这里接替已删除的 `backend/scripts/check_structure.py`。这 **5 条判据**（另加 2 条自检，共 7 个覆盖项）守的是**行为测不到的东西**——
+类与函数的摆放、依赖朝向、上界值是否只写一处、前端契约是否缺字段。
 它们是 ADR-0002 与 ADR-0007 的核心不变量，所以从「一个没人跑的脚本」搬成「跟着测试一起跑的用例」。
+原「单文件行数」判据已按 ADR-0010 废除（为贴预算拆文件比巨石更糟）。
 
-判据（编号与 ADR-0007 对齐）：
+判据：
 
 1. **依赖单向**：每层只能 import 它下方的层；**叶子模块**（自己不 import 项目内任何东西）
    任何层都可以用——它们不可能造成循环。
-2. **单文件预算**：总行数 ≤ 500 且代码行（剥离 docstring、注释、空行）≤ 300。
-3. **扩展名覆盖**：`configs/formats.py` 声明的每个扩展名，在 `step4_extract.dispatch()` 里都有落点。
-4. **`__init__.py` 里不放逻辑**（只有模块 docstring 与 import）。
-5. **模型增强不碰 content**：`enhance_*` 函数体里不得对 `.content` 赋值或追加（ADR-0002）。
+2. **扩展名覆盖**：`configs/formats.py` 声明的每个扩展名，在 `step4_extract.dispatch()` 里都有落点。
+3. **`__init__.py` 里不放逻辑**（只有模块 docstring 与 import）。
+4. **上界的值只在注册表里写一次**：散落常量不得与 `limits.py` 撞车。
+5. **前端契约镜像不缺字段**：`frontend/src/types.ts` 与后端 schema 对齐。
 
-`backend/scripts/` 与 `backend/tests/` 不是生产模块，不参与判据 1、2、4：
+`backend/scripts/` 与 `backend/tests/` 不是生产模块，不参与判据 1、3：
 前者是一次性生成脚本，后者是测试自身。
 """
 import ast
@@ -26,8 +27,6 @@ from typing import Dict, List, Set, Tuple
 import pytest
 
 BACKEND = Path(__file__).resolve().parent.parent
-MAX_FILE_LINES = 500
-MAX_CODE_LINES = 300
 # `data` 也在这里：AGENTS.md 让 AI 把一次性探针写进 `data/debug/`，那些 .py 不是生产模块——
 # 不排除的话判据 1 会拿它当「data 层」去查依赖白名单，直接 KeyError（2026-10-04 踩到）。
 NON_PRODUCTION = {"scripts", "tests", "data"}
@@ -41,8 +40,8 @@ ALLOWED: Dict[str, Set[str]] = {
     "utils": {"configs"},
     "models": {"configs", "utils"},
     "pipelines": {"configs", "models", "utils"},
-    "routers": {"configs", "pipelines"},
-    "app": {"configs", "pipelines", "routers"},
+    "routers": {"configs", "pipelines", "utils"},
+    "app": {"configs", "pipelines", "routers", "utils"},
 }
 
 
@@ -100,33 +99,6 @@ def leaf_modules(modules: List[Path]) -> Set[str]:
     return {module_name(path) for path in modules if not project_imports(parse(path))}
 
 
-def docstring_lines(tree: ast.Module) -> Set[int]:
-    """所有 docstring 覆盖的行号。"""
-    lines: Set[int] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            continue
-        body = getattr(node, "body", [])
-        if not body:
-            continue
-        first = body[0]
-        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
-            lines.update(range(first.lineno, getattr(first, "end_lineno", first.lineno) + 1))
-    return lines
-
-
-def count_code_lines(path: Path, tree: ast.Module) -> int:
-    """代码行 = 总行数 − 空行 − 纯注释行 − docstring 行。"""
-    skip = docstring_lines(tree)
-    code = 0
-    for index, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        stripped = raw.strip()
-        if not stripped or stripped.startswith("#") or index in skip:
-            continue
-        code += 1
-    return code
-
-
 def relative(path: Path) -> str:
     return str(path.relative_to(BACKEND)).replace("\\", "/")
 
@@ -155,26 +127,7 @@ def test_dependencies_point_one_way():
     assert not problems, "依赖方向被破坏：\n" + "\n".join(problems)
 
 
-# ---------- 判据 2：单文件预算 ----------
-
-def test_no_module_exceeds_the_line_budget():
-    """
-    行为：单文件总行 ≤ 500 且代码行 ≤ 300。
-
-    来源：`architecture.md` 第 4 节。判据不适用于 `backend/scripts/`（一次性生成脚本，
-    `make_fixtures.py` 近 500 行）与 `backend/tests/`。
-    """
-    problems = []
-    for path in production_modules():
-        tree = parse(path)
-        total = len(path.read_text(encoding="utf-8").splitlines())
-        code = count_code_lines(path, tree)
-        if total > MAX_FILE_LINES or code > MAX_CODE_LINES:
-            problems.append(f"{relative(path)} 总行 {total}/{MAX_FILE_LINES} · 代码行 {code}/{MAX_CODE_LINES}")
-    assert not problems, "有文件超出预算：\n" + "\n".join(problems)
-
-
-# ---------- 判据 3：扩展名覆盖 ----------
+# ---------- 判据 2：扩展名覆盖 ----------
 
 def test_every_declared_extension_has_a_dispatch_branch():
     """
@@ -214,7 +167,7 @@ def test_every_declared_extension_has_a_dispatch_branch():
     assert not missing, "这些扩展名在 dispatch() 里没有落点：" + "、".join("." + ext for ext in missing)
 
 
-# ---------- 判据 4：__init__ 无逻辑 ----------
+# ---------- 判据 3：__init__ 无逻辑 ----------
 
 def test_init_files_hold_no_logic():
     """行为：`__init__.py` 只有模块 docstring 与 import，不放任何逻辑。来源：ADR-0007。"""
@@ -231,37 +184,7 @@ def test_init_files_hold_no_logic():
     assert not problems, "__init__.py 里放了逻辑：\n" + "\n".join(problems)
 
 
-# ---------- 判据 5：enhance 不碰 content ----------
-
-def test_enhance_functions_never_touch_content():
-    """
-    行为：`enhance_*` 不赋值、不追加 `content`。
-
-    来源：ADR-0002——模型产出只能进 `summary` / `meta.ocr_text` / `meta.asr_text` / `meta.notes`，
-    碰了 `content` 就等于「两条路逐字节可对比」不再成立，而那是本项目存在的理由。
-    """
-    problems = []
-    for path in production_modules():
-        for node in ast.walk(parse(path)):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or not node.name.startswith("enhance"):
-                continue
-            for inner in ast.walk(node):
-                touched = False
-                if isinstance(inner, (ast.Assign, ast.AugAssign)):
-                    targets = inner.targets if isinstance(inner, ast.Assign) else [inner.target]
-                    touched = any(isinstance(t, ast.Attribute) and t.attr == "content" for t in targets)
-                elif isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute):
-                    touched = (
-                        isinstance(inner.func.value, ast.Attribute)
-                        and inner.func.value.attr == "content"
-                        and inner.func.attr in ("append", "extend", "insert", "clear")
-                    )
-                if touched:
-                    problems.append(f"{relative(path)}:{inner.lineno} {node.name} 动了 content")
-    assert not problems, "模型增强改了 content：\n" + "\n".join(problems)
-
-
-# ---------- 判据 6：上界的值只在注册表里写一次 ----------
+# ---------- 判据 4：上界的值只在注册表里写一次 ----------
 
 def test_limit_values_live_only_in_the_registry():
     """
@@ -269,7 +192,7 @@ def test_limit_values_live_only_in_the_registry():
     或者又冒出一个 `MAX_*` 数字常量，就是第二处定义。
 
     来源：`configs/limits.py`「两个数值来源在这里汇合……**不再有第三个来源**」
-    + 借鉴设计 P5「防漂移门禁 `check_limit_registry()`」。值撞车比名字撞车更隐蔽：
+    + 防漂移门禁 `check_limit_registry()`。值撞车比名字撞车更隐蔽：
     改了一处、另一处留着旧值，两份代码都「看起来对」，而用户看到的行为已经不一致。
     `configs/`（唯一来源本身）不参与，`scripts/` 与 `tests/` 不是生产模块。
     """
@@ -299,7 +222,7 @@ def test_limit_values_live_only_in_the_registry():
     assert not problems, "上界的值只能在 configs/limits.py 里写：\n" + "\n".join(problems)
 
 
-# ---------- 判据 7：前端契约镜像不缺字段 ----------
+# ---------- 判据 5：前端契约镜像不缺字段 ----------
 
 FRONTEND_TYPES = BACKEND.parent / "frontend" / "src" / "types.ts"
 
@@ -342,7 +265,7 @@ def test_the_rules_are_looking_at_real_modules():
     """
     行为：结构判据确实扫到了预期的模块量。
 
-    没有这条，`production_modules()` 一旦因为路径写错返回空列表，上面五条会全绿——那是假绿。
+    没有这条，`production_modules()` 一旦因为路径写错返回空列表，上面各判据会全绿——那是假绿。
     """
     modules = production_modules()
     names = {module_name(path) for path in modules}
@@ -353,10 +276,8 @@ def test_the_rules_are_looking_at_real_modules():
         "configs.settings",
         "pipelines.extract",
         "pipelines.understand",
-        "pipelines.rag_extract",
         "pipelines.steps.step4_extract",
         "routers.convert.schema",
-        "routers.rag.schema",
         "utils.textfile",
         "utils.usage",
     ):
@@ -373,5 +294,10 @@ def test_leaf_modules_include_the_contracts():
     leaves = leaf_modules(production_modules())
     listing = "、".join(sorted(leaves))
     print(f"\n叶子模块（不 import 项目内任何东西，任何层都能用，共 {len(leaves)} 个）：{listing}")
-    for expected in ("routers.convert.schema", "routers.rag.schema", "configs.formats", "configs.settings"):
+    for expected in (
+        "utils.processor_schema",
+        "configs.formats",
+        "configs.settings",
+        "configs.errors",
+    ):
         assert expected in leaves, f"{expected} 不再是叶子模块，依赖方向需要重新审视"

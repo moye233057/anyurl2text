@@ -11,7 +11,7 @@ from pathlib import Path
 
 from utils.textfile import read_header_hex
 from pipelines.processors.archive import entries_to_content
-from pipelines.processors.schema import ExtractResult
+from utils.processor_schema import ExtractResult
 
 # APK / IPA 的结构指纹：命中哪些特征决定我们怎么描述它
 APK_MARKERS = (

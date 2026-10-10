@@ -22,8 +22,8 @@ from configs.settings import PROMPTS_DIR
 from models import paddle_ocr
 from models.deepseek import DeepSeekClient, parse_json_object
 from models.images import encode_image
-from pipelines.processors.schema import EnhanceOutcome, ExtractResult, PreparedSource
-from routers.convert.schema import ImageMeta
+from utils.processor_schema import EnhanceOutcome, ExtractResult, PreparedSource
+from utils.processor_schema import ImageMeta
 from utils.textfile import read_text_file
 
 # 允许读取被截断的 JPEG（下载中断的图也能报出尺寸而不是直接失败）
@@ -182,7 +182,7 @@ def enhance_image(client: DeepSeekClient, prepared: PreparedSource) -> EnhanceOu
     功能：一次视觉模型调用同时拿到判型与语义描述——判为语义图片时，这次调用给出的 description
           就是产出（不再 OCR）；判为文字图片时把图交给本机 Paddle OCR 读字。
           判型输出解析不出来时按文字图片处理：OCR 是本机服务、不花 token，漏掉整页文字代价更大。
-    应用场景：understand 遇到源本身就是图片时调用（`step4_extract.enhance()` 分派到这里）。
+    应用场景：understand 遇到源本身就是图片时调用（`understand._run_model_enhance()` 分派到这里）。
     输入：client — 模型客户端；prepared — 已落盘并识别过的图片。
     输出：EnhanceOutcome：语义图片给 description，文字图片给 ocr_text，分支说明进 notes。
     异常：LlmError — 判型调用或 OCR 失败。

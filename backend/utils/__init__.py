@@ -1,2 +1,8 @@
 # -*- coding: utf-8 -*-
-"""通用工具：文本解码与文件头预览（`textfile.py`）、统一异常（`errors.py`）、用量计价与记账（`usage.py`）。"""
+"""通用工具与跨格式公共件（ADR-0010）。
+
+- 原有：`textfile` / `errors` / `usage` / `ffmpeg`
+- 处理器契约：`processor_schema`
+- HTTP 契约主体：`convert_contract`（路由侧再导出）
+- 表格公共：`excel/`
+"""

@@ -11,6 +11,6 @@ step6_assemble  组装响应（两条路同一份形状）                两条
 ```
 
 两条管线各自只做「按顺序调这几步」：`pipelines/extract.py`、`pipelines/understand.py`。
-步骤之间通过 `PreparedSource` / `ExtractResult` / `EnhanceOutcome` 传递，类型都在 `pipelines/processors/schema.py`；
-各格式的实现也在 `pipelines/processors/` 下。
+步骤之间通过 `PreparedSource` / `ExtractResult` / `EnhanceOutcome` 传递，类型在 `utils/processor_schema.py`；
+各格式族实现在 `pipelines/processors/`，表格公共在 `utils/excel/`，读素材在 `models/reading.py`。
 """

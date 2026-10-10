@@ -15,7 +15,7 @@ from typing import List, Optional, Tuple
 import configs.settings as settings
 from configs.settings import PROMPTS_DIR
 from models.deepseek import DeepSeekClient
-from pipelines.processors.schema import PreparedSource
+from utils.processor_schema import PreparedSource
 
 def summarize(
     client: DeepSeekClient,

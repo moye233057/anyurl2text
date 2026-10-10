@@ -20,7 +20,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
-from pipelines.processors.schema import ExtractResult
+from utils.processor_schema import ExtractResult
 
 KIND = "OFD 版式文档"
 ENTRY_NAME = "OFD.xml"

@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
 import configs.settings as settings
-from routers.convert.schema import Usage
+from utils.convert_contract import Usage
 
 _CN_TZ = ZoneInfo("Asia/Shanghai")
 

@@ -17,6 +17,7 @@ from typing import Optional
 import configs.errors as errors
 import configs.settings as settings
 from configs.log_config import logger
+from utils import request_budget
 
 # 二进制路径在 configs 里解析（启动时一次），这里只做转发与判定
 FFMPEG_EXE = settings.FFMPEG_EXE
@@ -67,13 +68,18 @@ def extract_audio_track(source: Path, work_dir: Path) -> Path:
         str(target),
     ]
     try:
+        ffmpeg_timeout = request_budget.call_timeout(
+            settings.FFMPEG_TIMEOUT_SEC, stage="ffmpeg"
+        )
         completed = subprocess.run(
             command,
             capture_output=True,
-            timeout=settings.FFMPEG_TIMEOUT_SEC,
+            timeout=ffmpeg_timeout,
             # 静默启动窗：Windows 上不隐藏会把控制台窗口弹出来
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
+    except TimeoutError:
+        raise
     except subprocess.TimeoutExpired as exc:
         raise FfmpegError(f"抽音轨超过 {settings.FFMPEG_TIMEOUT_SEC} 秒未完成", "ffmpeg_timeout") from exc
     except OSError as exc:

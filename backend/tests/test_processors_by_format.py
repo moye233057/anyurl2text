@@ -21,8 +21,8 @@ import zipfile
 import pytest
 
 from configs import errors
-from pipelines.processors.grid import CoveredSlot, GridBuilder, check_grid, grid_notes, render_tsv
-from pipelines.processors.schema import ExtractContext
+from utils.excel.grid import CoveredSlot, GridBuilder, check_grid, grid_notes, render_tsv
+from utils.processor_schema import ExtractContext
 from pipelines.steps.step2_detect import extension_from_name
 from pipelines.steps.step4_extract import dispatch
 
@@ -180,7 +180,7 @@ def test_unprocessed_pages_are_named_when_the_render_limit_bites(asset_ctx, fixt
     行为：扫描件页数超过整页渲染上限时，`unprocessed_pages` 精确列出没处理的页码，
           而不是只留一句「其余未渲染」——机器要读得出「缺了哪几页」。
 
-    来源：借鉴设计 P1-6「meta 加结构化未处理声明」+ ADR-0003（能力边界也要机器可读）。
+    来源：ADR-0003（能力边界也要机器可读）——降级与未处理声明进 `meta`，保持机器可读。
     做法：把上限临时压到 1，用 3 页的 scanned.pdf 触发——不新增样例、不动全局配置。
     预期值来源：样例生成参数（scanned.pdf 3 页）+ 上限 1 → 没处理的是第 2、3 页。
     """
@@ -324,7 +324,7 @@ def test_grid_invariant_holds_for_a_real_merged_docx(fixture_copy):
     from docx import Document
 
     from pipelines.processors import docx as docx_processor
-    from pipelines.processors.grid import GridBuilder, check_grid, fill_from_specs
+    from utils.excel.grid import GridBuilder, check_grid, fill_from_specs
 
     path, _ = fixture_copy("merged_tail.docx")
     table = Document(str(path)).tables[0]
@@ -342,7 +342,7 @@ def test_grid_invariant_checker_reports_a_contradictory_grid():
           校验函数自己假绿（永远返回空列表）就等于没加。
     预期值来源：手搭的网格常量（一个声明 2 列跨度、却没有任何覆盖位的 origin）。
     """
-    from pipelines.processors.grid import GridSpan, check_grid
+    from utils.excel.grid import GridSpan, check_grid
 
     contradictory = [[GridSpan(text="跨两列", col_span=2)]]
     assert check_grid(contradictory), "跨度声明了 2 列却没有覆盖位，校验函数必须报出来"
@@ -730,7 +730,7 @@ def test_ods_repeated_columns_keep_the_merge_coordinates(ctx, work_dir):
     行为：多张表 + `number-columns-repeated` 补位时，合并区坐标仍按展开后的列号算——
           「补位」重复 3 次后，后面的文字落在第 4 列；跨列表的覆盖位不左移。
 
-    来源：`01-表格格位建模.md` §4.5 的未核实项（`ods_merges` 的重复列游标假设）；`align_values`
+    来源：`01-表格格位建模.md` §4.5 的未核实项（ODS 合并区的重复列游标假设）；`align_ods_values`
           依赖 `read_merge_rects` 的坐标与 pyexcel-ods 的展开口径一致。
     预期值来源：本用例写两张表——表一「A1:B1 合并 + C1」，表二「3 个重复空格 + 四列」「尾合并 跨 2 列 + d2」。
     """
@@ -1397,7 +1397,7 @@ def test_merge_rect_normalises_row_first_half_open_input():
           两条路径不能共用一个换算，所以统一到 `grid.merge_rect` 的半开形态。
     预期值来源：手算常量（xlrd 的 `(rlo, rhi, clo, chi) = (1, 3, 0, 1)` 表示 A2:A3）。
     """
-    from pipelines.processors.grid import merge_rect
+    from utils.excel.grid import merge_rect
 
     assert merge_rect(1, 0, 3, 1) == (1, 0, 3, 1), "开区间、行在前的输入应原样通过"
     assert merge_rect(3, 1, 1, 0) == (1, 0, 3, 1), "起止写反时应对调"
@@ -1420,7 +1420,7 @@ def test_odt_table_keeps_columns_instead_of_one_paragraph_per_line(ctx, fixture_
     """
     行为：ODT 表格按行列渲成制表符分隔的行，合并区文本只出现一次。
 
-    来源：`docs/PIPELINES.md` 的 odt 行 + `借鉴设计/01-表格格位建模.md`「odf.py 将来怎么接」
+    来源：`docs/PIPELINES.md` 的 odt 行（ODF 表格格位接入）
     （跨度 → `place(span)`、`covered-table-cell` → `covered()`、
     `number-columns-repeated` → 循环落位并记账）。
     实测（2026-10-04）：原来全局 `root.iter()` 收 `text:p`，每个单元格各自成一行、不含制表符，
@@ -1664,7 +1664,7 @@ def test_hidden_ods_table_content_survives(ctx, fixture_copy):
           隐藏表与隐藏行列的内容照样进正文，可见性同样登记进 `notes`。
 
     来源：用户 2026-10-04 拍板「隐藏内容一律照抽」（`01-表格格位建模.md` §1.2）；
-          `pyexcel-ods` 只给值矩阵、样式一概丢掉，所以可见性由 `processors/ods_visibility.py`
+          `pyexcel-ods` 只给值矩阵、样式一概丢掉，所以可见性由 `excel.read_ods_visibility`
           解 `content.xml` 的自动样式表读出来。
     预期值来源：阶段 21 的生成参数——与 `hidden.xlsx` / `hidden.xls` 同一组常量（隐藏第 2、4-5 行与 B 列、
           另有一张 hidden 表）。
@@ -1908,7 +1908,7 @@ def test_limits_hit_reaches_meta_with_the_templated_note(ctx, work_dir):
     既没有结构化名字，也没有统一模板，改说法要动十几个文件。
     """
     from configs import limits
-    from pipelines.processors.schema import PreparedSource
+    from utils.processor_schema import PreparedSource
     from pipelines.steps.step6_assemble import build_response
     from routers.convert.schema import Detector
 
@@ -1943,7 +1943,7 @@ def test_model_side_limits_are_reported_by_step5(monkeypatch):
     from pathlib import Path
 
     from configs import settings
-    from pipelines.processors.schema import PreparedSource
+    from utils.processor_schema import PreparedSource
     from pipelines.steps import step5_enhance
     from routers.convert.schema import Detector
 
@@ -2081,7 +2081,7 @@ def test_epub_content_is_identical_on_both_paths(ctx, asset_ctx, fixture_copy):
     做法：缝 A 里各跑一次 `dispatch` + `build_response`——`tests/test_extract_contract.py`
     只覆盖 extract 那一口，epub 没有 HTTP 双路用例（understand 那一路要真模型，属贵缝）。
     """
-    from pipelines.processors.schema import PreparedSource
+    from utils.processor_schema import PreparedSource
     from pipelines.steps.step6_assemble import build_response
     from routers.convert.schema import Detector
 

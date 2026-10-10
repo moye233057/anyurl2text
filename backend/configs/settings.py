@@ -26,9 +26,16 @@ API_PORT = int(os.getenv("ANYURL2TEXT_PORT", "8020"))
 # （父进程只负责看文件、子进程才是真服务）；本机自用默认打开，不想多这个进程就设 false。
 RELOAD = os.getenv("RELOAD", "true").strip().lower() in ("1", "true", "yes", "on")
 
-# ---------- 下载层 ----------
-# 单次请求总预算；下载、解析、模型各自分段计时，超时预算按剩余时间递减。
+# ---------- 请求生命周期 ----------
+# 全链路预算（下载 + 解析 + 模型）；任一步超时即终止该请求。
 REQUEST_BUDGET_SEC = float(os.getenv("REQUEST_BUDGET_SEC", "120"))
+# 下载层单独上限，且不超过全链路剩余时间。
+DOWNLOAD_BUDGET_SEC = float(os.getenv("DOWNLOAD_BUDGET_SEC", "20"))
+# 并发：文档/表格等快池；独立图片与音视频慢池（满员时路由返回 429）。
+CONCURRENCY_FAST = int(os.getenv("CONCURRENCY_FAST", "32"))
+CONCURRENCY_MEDIA = int(os.getenv("CONCURRENCY_MEDIA", "8"))
+
+# ---------- 下载层 ----------
 CONNECT_TIMEOUT_SEC = float(os.getenv("CONNECT_TIMEOUT_SEC", "10"))
 READ_TIMEOUT_SEC = float(os.getenv("READ_TIMEOUT_SEC", "30"))
 MAX_DOWNLOAD_BYTES = int(os.getenv("MAX_DOWNLOAD_BYTES", str(200 * 1024 * 1024)))
@@ -78,13 +85,13 @@ THINKING_ENABLED = os.getenv("THINKING_ENABLED", "false").strip().lower() in ("1
 THINKING_EFFORT = os.getenv("THINKING_EFFORT", "high")
 
 # ---------- 本机 OCR 服务 ----------
-# 独立图片判型为「文字图片」时交给它读字（出口见 models/paddle_ocr.py，默认指向 Individual/paddle-ocr）。
+# 独立图片判型为「文字图片」时交给它读字（出口见 models/paddle_ocr.py）。
 # 服务不计 token，usage 只反映 DeepSeek 调用；服务起不来时那一张图的增强会失败并写进 meta.notes。
 OCR_API_URL = os.getenv("OCR_API_URL", "http://127.0.0.1:8021/ocr-b64")
 OCR_TIMEOUT_SEC = float(os.getenv("OCR_TIMEOUT_SEC", "60"))
 
 # ---------- 本机语音识别服务 ----------
-# 音频与视频的音轨交给它转写（出口见 models/qwen3_asr.py，默认指向 Individual/qwen3-asr）。
+# 音频与视频的音轨交给它转写（出口见 models/qwen3_asr.py）。
 # 与 OCR 同一套约定：不计 token、服务起不来只影响这一类源的增强并写进 meta.notes。
 ASR_API_URL = os.getenv("ASR_API_URL", "http://127.0.0.1:8022/asr-b64")
 ASR_TIMEOUT_SEC = float(os.getenv("ASR_TIMEOUT_SEC", "300"))

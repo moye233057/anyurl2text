@@ -13,12 +13,11 @@
 
 - 命中时处理器只把**名字**记进 `result.limits_hit`，不自己写文案；文案只有 `note` 一处模板。
 - `LIMIT_NAMES` 是名字白名单，`meta.limits_hit` 里出现表外的名字就是漂移。
-- 每条登记的上界都要有**报告链路**：命中时名字必须能到 `meta.limits_hit`（RAG 那口报进它自己的
-  `limits_hit`）。只有代码知道的上界，用户与调用方都看不见。
+- 每条登记的上界都要有**报告链路**：命中时名字必须能到 `meta.limits_hit`。
+  只有代码知道的上界，用户与调用方都看不见。
 - 阈值（判定用的下限，如「合计不足 30 字算没有文字层」）不是上界，不进表，见 `NON_LIMIT_THRESHOLDS`。
 
-为什么压得这么密：判据 2 是「总行 ≤ 500 且代码行 ≤ 300」（`tests/test_structure.py`；2026-10-04 从
-250/150 抬起），一条上界写成多行对象会顶穿预算——这是本方案里唯一有真实预算压力的文件。
+写法仍然偏密：上界表一项一行，方便扫名单；单文件行数门禁已按 ADR-0010 废除，不必再为腾行数压缩注释。
 """
 from typing import Dict, NamedTuple, Optional, Union
 
@@ -59,8 +58,6 @@ MAX_LINKS = 100
 MAX_VISIBILITY_RANGES = 24
 # 文本类（txt/md/json/xml/csv…）读取上限
 MAX_TEXT_BYTES = 20 * 1024 * 1024
-# RAG 预览取前几页
-PREVIEW_FIRST_PAGES = 15
 # 送模型前图片长边缩到多大（不是截断，是编码前的等比缩放）
 MAX_LONG_EDGE = 1600
 
@@ -115,7 +112,7 @@ LIMITS: Dict[str, Limit] = {
     # 不加模块前缀（设计文档 03 写的是 `docx_max_table_rows`）：docx 与 odf **共用**这一条限额，
     # 值与强制点都只有一处，带模块前缀反而要拆成两个名字、两份值。命名以本文件为准。
     "max_table_rows": Limit(MAX_TABLE_ROWS, "rows", TRUNCATE, False,
-        "docx._render_table / odf._render_table / html_tables.table_to_tsv / rtf_tables.build_lines",
+        "docx._render_table / odf._render_table / html_tables.table_to_tsv / rtf.build_lines",
         "表格超过 {value} 行，其余行未列出"),
     "max_grid_expansion": Limit(MAX_GRID_EXPANSION, "count", TRUNCATE, False, "grid.GridBuilder.place",
         "表格跨度展开超过 {value} 个格位，超出的合并跨度按 1 格处理"),
@@ -131,8 +128,6 @@ LIMITS: Dict[str, Limit] = {
         "隐藏行列的连续段超过 {value} 段，只登记前 {value} 段（内容照抽，不影响正文）"),
     "max_text_bytes": Limit(MAX_TEXT_BYTES, "bytes", TRUNCATE, False, "textfile.read_text_file",
         "文本超过 {value} 字节，超出部分未读取"),
-    "preview_first_pages": Limit(PREVIEW_FIRST_PAGES, "count", TRUNCATE, False, "rag_extract._try_catalogue",
-        "预览只取前 {value} 页"),
     "max_long_edge": Limit(MAX_LONG_EDGE, "count", CLAMP, False, "images.encode_image",
         "图片长边缩到 {value} 像素后再编码"),
 }

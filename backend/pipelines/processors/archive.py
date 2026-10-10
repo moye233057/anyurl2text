@@ -15,7 +15,7 @@ import zipfile
 from pathlib import Path
 
 import configs.limits as limits
-from pipelines.processors.schema import ExtractResult
+from utils.processor_schema import ExtractResult
 
 
 def entries_to_content(entries: list, archive_kind: str) -> tuple:

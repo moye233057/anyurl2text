@@ -38,7 +38,8 @@ from configs.formats import (
     ZIP_MACRO_ENTRY,
 )
 from pipelines.steps.ole_directory import legacy_office_extension
-from routers.convert.schema import Detector, Modality
+from utils.convert_contract import Modality
+from utils.processor_schema import Detector
 
 # 复合归档后缀要整体判断，否则 .tar.gz 会被当成 .gz
 _COMPOUND_SUFFIXES = ("tar.gz", "tar.bz2", "tar.xz")

@@ -12,9 +12,11 @@
 
 ```bash
 cd backend
-python -m pytest tests -q            # 自检缝：结构判据（tests/test_structure.py）+ 各格式抽取 + 判型 + 通用件；免费、不起服务、不联网、不调模型
-python -m pytest tests -m model -q   # 贵缝：两条路 content 逐字节一致 + 模型增强产出（服务已起，真调模型与本机 OCR / ASR）
+python -m pytest tests -q            # 默认含 HTTP 缝（13 条），**后端须在 8020 应答**；只要进程内自检则加 --ignore=tests/test_extract_contract.py
+python -m pytest tests -m model -q   # 贵缝：ADR-0011 正文对比 + 模型增强产出（服务已起，真调模型与本机 OCR / ASR）
 ```
+
+进程内自检（结构判据 + 各格式抽取 + 判型 + 通用件）本身不联网、不调模型；但 `pytest tests -q` 若不加 `--ignore`，会连同 HTTP 缝一起跑。
 
 ---
 
@@ -22,23 +24,24 @@ python -m pytest tests -m model -q   # 贵缝：两条路 content 逐字节一�
 
 例：让 `.webp` 之外还想支持 `.avif`。
 
-**动三个地方**：
+**动四个地方**：
 
 1. `backend/pipelines/processors/` —— 新建一个文件（文件名按格式取，一眼能懂：`excel.py`、`html.py`、`docx.py`……），写 `extract_<格式>(path, ctx) -> ExtractResult`。
    需要模型素材就在 `ctx.prepare_assets` 为真时把图落盘并填进 `result.assets`；不需要就忽略 `ctx`。
    落盘要**按来源部件去重**（docx 用关系 id、pptx 用图片部件 `sha1`、pdf 用 xref）：同一张图被引多次
    只落一次，`MAX_EMBEDDED_IMAGES` 才算在「不同的图」上，否则重复引用会把后面的图挤出上限。
    如果这种格式的**模型处理与通用素材读取不同**（例如独立图片要先判型），再在同一个文件里写
-   `enhance_<格式>(client, …) -> EnhanceOutcome`；通用情况不用写，`pipelines/processors/reading.py` 的 `enhance_assets()` 已经覆盖。
-2. `backend/pipelines/steps/step4_extract.py` 的 `dispatch()` —— 在对应分组里加一行指向它；有专属模型增强时不用改这里（`enhance()` 会按格式找到 `<格式>.enhance_*`，没有的走通用读素材）。
-3. `backend/configs/formats.py` —— 把扩展名加进对应的格式集合（`IMAGE_EXTENSIONS` 等）；如果是容器格式，`MAGIC_PREFIXES` 里补一行魔数。**容器头常常分不出家族成员**（OLE 里的 doc/xls/ppt、ZIP 里的 docx/xlsx/odt/apk），这种情况还要补一条容器内部指纹表——ZIP 补 `ZIP_ENTRY_FLAVORS` 或 `ODF_EXTENSION_BY_MIMETYPE`，OLE 补 `pipelines/steps/ole_directory.py` 的 `STREAM_EXTENSIONS`（目录流名 → 扩展名），并在 `resolve_extension()` 里接上退回分支；漏了这步，新格式会被判成容器本身（`zip` / `ole`），处理器永远进不去（ADR 0003）。
+   `enhance_<格式>(client, …) -> EnhanceOutcome`；通用情况不用写，`models/reading.py` 的 `enhance_assets()` 已经覆盖。
+2. `backend/pipelines/steps/step4_extract.py` 的 `dispatch()` —— 在对应分组里加一行指向 `extract_*`。
+3. 若该格式有**专属**模型逻辑（与 `image.enhance_image` / `media.enhance_media` / `enhance_assets` 不同），在 `backend/pipelines/understand.py` 的 `_run_model_enhance()` 里**显式加一支**；出现第 4 个这类分支时再考虑注册表（ADR-0011）。
+4. `backend/configs/formats.py` —— 把扩展名加进对应的格式集合（`IMAGE_EXTENSIONS` 等）；如果是容器格式，`MAGIC_PREFIXES` 里补一行魔数。**容器头常常分不出家族成员**（OLE 里的 doc/xls/ppt、ZIP 里的 docx/xlsx/odt/apk），这种情况还要补一条容器内部指纹表——ZIP 补 `ZIP_ENTRY_FLAVORS` 或 `ODF_EXTENSION_BY_MIMETYPE`，OLE 补 `pipelines/steps/ole_directory.py` 的 `STREAM_EXTENSIONS`（目录流名 → 扩展名），并在 `resolve_extension()` 里接上退回分支；漏了这步，新格式会被判成容器本身（`zip` / `ole`），处理器永远进不去（ADR 0003）。
 
 **完成标准**：
 
-- `python -m pytest tests -q` 全过：结构判据（`tests/test_structure.py`）与各格式抽取、判型、通用件；其中「扩展名覆盖」就是替你比对两个集合，别靠肉眼。
-- 用真实文件跑一次两个接口：`type` 正确、`content` 非空（或对图片类为空的语义正确，见 [adr.md](./adr.md) 的 ADR-0004）。
+- `python -m pytest tests -q` 全过（后端在跑；或加 `--ignore=tests/test_extract_contract.py` 只跑进程内）：结构判据（`tests/test_structure.py`）与各格式抽取、判型、通用件；其中「扩展名覆盖」就是替你比对两个集合，别靠肉眼。
+- 用真实文件跑一次两个接口：`type` 正确；extract 的 `content` 符合 ADR-0004（图片类 extract 可为空）；understand 按 ADR-0011 合并模型转写。
 - `meta.ext` 是具体格式而不是容器名（`zip` / `ole`），`meta.engine` 是该格式的解析库——只看「请求成功」会漏掉整族格式被判成压缩包这类错误。
-- 同一个文件两条路的 `content` 逐字节相同（`tests/test_understand_contract.py` 覆盖；它是贵缝、要真模型，新加的格式自己再验一次）。
+- 若新格式**纯代码即可完整交付正文**，两条路 `content` 仍应相同；若需模型转写，understand 更长且 OCR/ASR 双写 `meta.*`（见 `test_understand_stubbed.py` / 贵缝）。
 - 在 `backend/tests/test_processors_by_format.py` 的 `DOCUMENT_FIXTURES` 里加一行，并在该文件里补一条断言，让这个格式以后每次都被自动验到。
 
 ## 2. 加一次模型调用
@@ -48,7 +51,7 @@ python -m pytest tests -m model -q   # 贵缝：两条路 content 逐字节一�
 **动三个地方**：
 
 1. `backend/models/prompts/` —— 加一个提示词模板文件。要求模型输出 JSON 时，模板里**必须出现 `json` 字样并给结构示例**，否则模型可能一直吐空白。
-2. `backend/pipelines/understand.py`（编排）或某个处理器的 `enhance_*`（按格式的模型处理）——调 `client.chat(...)`，结果只往四处放：`meta.ocr_text`、`meta.asr_text`、`summary`、`meta.notes`，**绝不动 `content`**。`tests/test_structure.py` 的 `test_enhance_functions_never_touch_content` 会查 `enhance_*` 有没有碰它。
+2. `backend/pipelines/understand.py`（编排）或某个处理器的 `enhance_*`（按格式的模型处理）——调 `client.chat(...)`，产出进 `EnhanceOutcome`；组装前由 `merge_understand_delivery()` 并进 understand 的 `content`，且仍写 `meta.ocr_text` / `meta.asr_text`（ADR-0011）。
 3. 需要新字段就按第 3 节走契约改动流程。
 
 **注意**：
@@ -61,7 +64,7 @@ python -m pytest tests -m model -q   # 贵缝：两条路 content 逐字节一�
 
 - 一次调用后 `usage.calls` 加一、`cost_cny` 大于 0。
 - 单条请求的成本在 `backend/data/` 里的样例上量一次，确认在可接受范围。
-- 两条路的 `content` 仍然逐字节相同（这是本节最容易踩坏的地方）。
+- 不要改 `ExtractResult.content` 的语义；understand 的正文合并只在 `UnderstandPipeline` 组装前做。
 
 ## 3. 改响应契约
 
@@ -129,12 +132,6 @@ frontend/src/ResultPanel.tsx 界面渲染
 
 **完成标准**：
 
-- `python -m pytest tests -q` 全过：结构判据（`tests/test_structure.py`）里的新文件同样受单文件预算与依赖方向约束。
+- `python -m pytest tests -q` 全过：结构判据（`tests/test_structure.py`）查依赖方向等；**不再**查单文件行数（ADR-0010）。新格式进 `processors/` 一族一文件，跨格式表格逻辑进 `utils/excel/`。
 - 外部服务连不上不该让整条请求 500：`tests/test_understand_contract.py` 里已有独立图片判型与音视频转写两类用例；再手工把服务停掉打一张含文字的图 / 一段音频，`meta.notes` 应说明原因且 HTTP 仍是 200。
-- 确认模型增强那条路的 `content` 仍然逐字节等于纯代码那条路——OCR 读出的文字进 `meta.ocr_text`，语音转写的文字进 `meta.asr_text`，两者都不进 `content`。
-
-## 7. 改 RAG 抽取
-
-检索入库口在 `POST /rag/extract/file`，契约是 `routers/rag/schema.py`，编排是 `pipelines/rag_extract.py`。印刷目录规则在 `pipelines/processors/catalogue.py`，分页在 `pdf_pages.py`。
-
-**不要**把页列表或目录区间写进 ConvertResponse。改完跑自检缝（`cd backend && python -m pytest tests -q`，结构判据在 `tests/test_structure.py`），再用真实手册 PDF 打一次该口，确认 `catalogue_ranges` 非空。
+- 确认 understand 的正文合并符合 ADR-0011：纯代码段保留，模型转写并进 `content` 且双写 `meta.ocr_text` / `meta.asr_text`。

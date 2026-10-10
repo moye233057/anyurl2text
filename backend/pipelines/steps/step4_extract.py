@@ -2,12 +2,10 @@
 """
 步骤 4：找到对应格式的处理器并执行——纯代码路与模型增强路两个入口都在这里。
 
-- `run_extraction()`：两条路共用的确定性抽取，产出 `content`（交付文本）与素材清单。
-- `enhance()`：只有 understand 走，按格式把素材交给模型读——独立图片读字与描述、
-  扫描页逐页识别、内嵌图批量识读；读素材的共用实现在 `pipelines/processors/reading.py`。
+- `run_extraction()`：两条路共用的确定性抽取，产出 `content`（纯代码交付文本）与素材清单。
 
-`extract_*` 不调模型、也不感知调用方是哪个接口（ADR 0002/0007），所以 `content` 只有一个来源；
-`enhance_*` 只能在抽取产出之上追加，**永远不碰 `content`**。认不出的扩展名与缺依赖的类型
+模型增强分派在 `pipelines/understand.py` 的 `_run_model_enhance()`（ADR-0011）。
+`extract_*` 不调模型、也不感知调用方是哪个接口（ADR 0002/0007）。认不出的扩展名与缺依赖的类型
 走 `extract_file_info()` 的降级产出——那是正常结果，不是错误（ADR 0003）。
 """
 import time
@@ -22,7 +20,6 @@ from configs.formats import (
     OFFICE_LEGACY_EXTENSIONS,
     WEBPAGE_EXTENSIONS,
 )
-from models.deepseek import DeepSeekClient
 from pipelines.processors import (
     archive,
     docx,
@@ -38,13 +35,7 @@ from pipelines.processors import (
     plaintext,
     pptx,
 )
-from pipelines.processors.reading import enhance_assets
-from pipelines.processors.schema import (
-    EnhanceOutcome,
-    ExtractContext,
-    ExtractResult,
-    PreparedSource,
-)
+from utils.processor_schema import ExtractContext, ExtractResult, PreparedSource
 from utils.textfile import read_header_hex
 
 def _degrade_reason(ext: str) -> str:
@@ -163,25 +154,6 @@ def dispatch(ext: str, path: Path, ctx: ExtractContext, page_url: str = "", sour
     return extract_file_info(
         path, f"没有 .{ext} 的解析路径，只能给出文件信息", degrade_code="unsupported_type"
     )
-
-def enhance(prepared: PreparedSource, result: ExtractResult, client: DeepSeekClient) -> EnhanceOutcome:
-    """
-    模型增强路的处理器入口：按格式决定怎么用模型。
-
-    功能：独立图片（源本身是图片、没有素材清单）交给 `pipelines/processors/image.py` 处理——
-          它负责判型后的分流位置与「文字 + 客观描述」的取法；
-          音频与视频交给 `pipelines/processors/media.py`——它拿步骤 4 抽好的音轨去问本机 ASR；
-          其余格式读 `result.assets`（内嵌图批量识读、扫描页逐页识别），共用 `enhance_assets`。
-    应用场景：understand 的第 4 步（`run_extraction` 之后）调用一次。
-    输入：prepared — 源；result — 确定性产出；client — 模型客户端。
-    输出：EnhanceOutcome；没有可增强内容时各项为空。
-    异常：LlmError — 模型调用失败，由调用方转成 notes。
-    """
-    if prepared.ext in IMAGE_EXTENSIONS and not result.assets:
-        return image.enhance_image(client, prepared)
-    if prepared.ext in MEDIA_EXTENSIONS:
-        return media.enhance_media(result)
-    return enhance_assets(client, result)
 
 def run_extraction(prepared: PreparedSource, prepare_assets: bool) -> Tuple[ExtractResult, int]:
     """

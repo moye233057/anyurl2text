@@ -13,7 +13,7 @@ from pathlib import Path
 import pymupdf  # PyMuPDF
 
 import configs.settings as settings
-from pipelines.processors.schema import EmbeddedAsset, ExtractContext, ExtractResult
+from utils.processor_schema import EmbeddedAsset, ExtractContext, ExtractResult
 
 # 判定「这份 PDF 没有文字层」的字符数下限：低于它就走页面渲染
 TEXT_LAYER_MIN_CHARS = 30

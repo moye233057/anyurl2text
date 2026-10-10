@@ -32,8 +32,6 @@ from configs.log_config import logger  # noqa: E402
 from pipelines.steps.step6_assemble import error_response  # noqa: E402
 from routers.convert.router import router as convert_router  # noqa: E402
 from routers.probe.router import router as probe_router  # noqa: E402
-from routers.rag.router import router as rag_router  # noqa: E402
-from routers.rag.schema import RagExtractResponse  # noqa: E402
 
 # multipart 的边界与各段头部会带来额外字节，额度上留出余量；
 # 真正的文件上限仍是 MAX_DOWNLOAD_BYTES，在落盘过程中按实际字节数把关。
@@ -60,9 +58,8 @@ app = FastAPI(
     description=(
         "任意 URL 或本地文件转文本。\n\n"
         "- `POST /extract`：纯代码确定性抽取，不调用模型，稳定且快。\n"
-        "- `POST /understand`：在 extract 之上叠加模型能力（认字、描述、摘要）。\n"
-        "- `POST /rag/extract/file`：给检索入库用；印刷目录 PDF 吐页与区间，否则吐交付文本。\n\n"
-        "extract 与 understand 共用同一份请求与响应契约，`content` 逐字节一致，"
+        "- `POST /understand`：在 extract 之上叠加模型能力（认字、描述、摘要）。\n\n"
+        "extract 与 understand 共用同一份请求与响应契约；understand 正文可含模型转写（ADR-0011），"
         "差别只在是否产生模型费用——因此同一个源可以两条路各跑一次直接对比。"
     ),
     lifespan=lifespan,
@@ -78,9 +75,6 @@ async def reject_oversized_body(request: Request, call_next):
     if declared and declared.isdigit() and int(declared) > limit:
         logger.info(f"请求体过大被拒绝 declared={declared} limit={limit}")
         message = f"请求体过大: {declared} 字节，超过上限 {limit} 字节"
-        if request.url.path.startswith("/rag"):
-            body = RagExtractResponse(kind="error", error=message).model_dump(mode="json")
-            return JSONResponse(status_code=413, content=body)
         result = error_response(
             "(请求体在解析前被拒绝)", message, 0, 413, "request_body_too_large", "upload"
         )
@@ -102,7 +96,6 @@ app.add_middleware(
 
 app.include_router(convert_router)
 app.include_router(probe_router)
-app.include_router(rag_router)
 
 if __name__ == "__main__":
     if settings.RELOAD:

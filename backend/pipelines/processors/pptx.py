@@ -17,9 +17,9 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from PIL import Image
 
 import configs.settings as settings
-from pipelines.processors import cell_text, table_kind
-from pipelines.processors.grid import GridBuilder, grid_notes, render_tsv
-from pipelines.processors.schema import EmbeddedAsset, ExtractContext, ExtractResult
+from utils.excel import cell_text, table_kind
+from utils.excel.grid import GridBuilder, grid_notes, render_tsv
+from utils.processor_schema import EmbeddedAsset, ExtractContext, ExtractResult
 
 def _walk_shapes(shapes) -> list:
     """递归展开形状与组合形状，返回扁平列表。"""

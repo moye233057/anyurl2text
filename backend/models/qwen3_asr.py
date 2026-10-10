@@ -6,7 +6,7 @@
 什么时候调用它由处理器决定（`pipelines/processors/media.py` 的 `enhance_media`）。
 语音识别不计 token、也不产生 DeepSeek 账单，所以这里不记账：`usage` 只反映 DeepSeek 调用。
 
-服务契约（对齐 Individual/qwen3-asr 的 `POST /asr-b64`）：
+服务契约（本机 ASR，`POST /asr-b64`）：
 请求 `{"audio_base64": "..."}`，响应 `{"code": "200", "data": "文本", "language": "Chinese", "cost": 1.2}`，
 其中 `cost` 是服务端耗时秒数，`language` 是模型判定的语种；`code` 不是 "200" 一律当失败。
 
@@ -21,6 +21,7 @@ import httpx
 
 import configs.settings as settings
 from configs.log_config import logger
+from utils import request_budget
 from utils.errors import LlmError
 
 class Transcription(NamedTuple):
@@ -49,7 +50,9 @@ def transcribe(path: Path) -> Transcription:
     payload = {"audio_base64": base64.b64encode(audio_bytes).decode("ascii")}
     try:
         response = httpx.post(
-            settings.ASR_API_URL, json=payload, timeout=settings.ASR_TIMEOUT_SEC
+            settings.ASR_API_URL,
+            json=payload,
+            timeout=request_budget.call_timeout(settings.ASR_TIMEOUT_SEC, stage="asr"),
         )
         response.raise_for_status()
         result = response.json()

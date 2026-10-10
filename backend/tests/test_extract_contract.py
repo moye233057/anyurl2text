@@ -15,8 +15,8 @@ extract 缝的契约测试：只打 HTTP，不 import 项目内任何东西。
 - 用例自己写入的已知内容（最强的一种：输入是我造的，输出该是什么我知道）
 
 本机跑法（用项目自己的环境，服务先起）：
-    E:\miniconda\envs\multimodal\python.exe app.py                    # cwd=backend，后端起在 8020
-    E:\miniconda\envs\multimodal\python.exe -m pytest tests/test_extract_contract.py -v
+    python app.py                    # cwd=backend，后端起在 8020
+    python -m pytest tests/test_extract_contract.py -v
 
 环境：项目自己的 `multimodal`（后端依赖与 pytest 都在这一个环境里），不要另开环境。
 `conda activate` 在非交互 shell 里不可用，直接调环境解释器更稳。

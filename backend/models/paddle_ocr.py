@@ -6,7 +6,7 @@
 什么时候调用它由处理器决定（`pipelines/processors/image.py` 的 `enhance_image`）。
 OCR 不计 token、也不产生 DeepSeek 账单，所以这里不记账：`usage` 只反映 DeepSeek 调用。
 
-服务契约（对齐 Individual/paddle-ocr 的 `POST /ocr-b64`）：
+服务契约（本机 OCR，`POST /ocr-b64`）：
 请求 `{"file_base64": "..."}`，响应 `{"code": "200", "msg": "success", "data": "文本", "cost": 2.1}`，
 其中 `cost` 是服务端耗时秒数；`code` 不是 "200" 一律当失败。
 
@@ -23,6 +23,7 @@ import httpx
 from PIL import Image
 
 import configs.settings as settings
+from utils import request_budget
 from configs.log_config import logger
 from utils.errors import LlmError
 
@@ -60,7 +61,9 @@ def _recognize_bytes(image_bytes: bytes, label: str) -> str:
     payload = {"file_base64": base64.b64encode(image_bytes).decode("ascii")}
     try:
         response = httpx.post(
-            settings.OCR_API_URL, json=payload, timeout=settings.OCR_TIMEOUT_SEC
+            settings.OCR_API_URL,
+            json=payload,
+            timeout=request_budget.call_timeout(settings.OCR_TIMEOUT_SEC, stage="ocr"),
         )
         response.raise_for_status()
         result = response.json()

@@ -21,14 +21,14 @@ _Avoid_: 本地解析、离线解析
 _Avoid_: 模型解析、AI 处理
 
 **处理器**：
-一种格式在两条路下的处理单元（`pipelines/processors/` 下一个格式一个文件）。它总是提供确定性产出，
-需要模型处理时再提供该格式的模型增强入口——两者在同一份实现里，所以调试一种格式只开一个文件。
-_Avoid_: 解析器、抽取器、handler
+一种**格式族**在两条路下的处理单元（`pipelines/processors/` 下**一个族一个文件**，例如 `excel.py` 覆盖 xlsx/xls/ods/csv）。
+它总是提供确定性产出，需要模型处理时再提供该格式的模型增强入口——两者在同一份实现里，调试只开一个文件。
+不为过行数门禁再拆兄弟文件。跨格式表格公共件进 `utils/excel/`；处理器契约进 `utils/processor_schema.py`；涉及模型调用的公共逻辑进 `models/`（如 `models/reading.py`）。
+_Avoid_: 解析器、抽取器、handler、为预算拆出的 `*_merges.py` / `*_visibility.py` 式碎片
 
 **格位**（格位网格）：
 表格里一个逻辑位置的表示。内容与跨度只挂在 origin 上，被跨度覆盖的位置只记「指向哪个 origin」，
-所以合并单元格既不会让文本重复、也不会让列错位——四个表格格式共用这一份结构
-（`pipelines/processors/grid.py`），渲染也只有一份实现。
+所以合并单元格既不会让文本重复、也不会让列错位——多个表格格式共用一份结构与渲染（`utils/excel/`）。
 _Avoid_: 单元格矩阵、merge 表、span 表
 
 **模态**：
@@ -36,7 +36,7 @@ _Avoid_: 单元格矩阵、merge 表、span 表
 _Avoid_: 类型、文件类型
 
 **交付文本**（`content`）：
-从源抽取出的文本本身。任何接口、任何参数下都不被摘要覆盖，也不被追加实现细节前缀。
+对外主正文。`/extract` 只含纯代码抽取段；`/understand` 在同一段之上合并模型/OCR/ASR 等转写（仍双写进 `meta.ocr_text` / `meta.asr_text`）。纯代码即可完整交付的类型，两路 `content` 仍相同。摘要进 `summary`，不替换 `content`。
 _Avoid_: 原文、正文、result
 
 **摘要**（`summary`）：
@@ -48,11 +48,11 @@ _Avoid_: 总结、answer
 _Avoid_: 兜底信息、fallback、占位
 
 **识别文本**（`meta.ocr_text`）：
-从图像中读出的文字：独立图片走本机 Paddle OCR，文档内嵌图与扫描件页面走视觉模型。与交付文本分开存放，因为交付文本在两个接口下必须完全一致，模型产出不能混进去。
+从图像中读出的文字：独立图片走本机 Paddle OCR，文档内嵌图与扫描件页面走视觉模型。understand 路同时并进 `content` 与 `meta.ocr_text`（溯源副本）。
 _Avoid_: OCR 结果、识别内容、正文
 
 **转写文本**（`meta.asr_text`）：
-从音频/视频的音轨里听出的文字，由本机 Qwen3-ASR 产出，只有 understand 那一路有值。与识别文本同理不进交付文本，也与识别文本分开存放——两者来源不同，混在一个字段里就分不清是哪一种能力读出来的。
+从音频/视频的音轨里听出的文字，由本机 Qwen3-ASR 产出，只有 understand 那一路有值。understand 路同时并进 `content` 与 `meta.asr_text`；与 `ocr_text` 分字段是为区分来源。
 _Avoid_: 语音识别结果、ASR 文本、字幕
 
 **音轨**：
@@ -86,7 +86,3 @@ _Avoid_: inputTokens / outputTokens
 **耗时**（`timings`）：
 分段墙钟（下载 / 解析 / 模型），用于区分「慢在网络上」与「慢在模型上」。
 _Avoid_: cost、elapsed
-
-**RAG 抽取**：
-给检索入库用的独立接口 `POST /rag/extract/file`。PDF 抽出印刷目录则吐页列表与目录区间，否则吐 extract 内核的交付文本。不走 ConvertResponse，不调用模型。
-_Avoid_: 接口三、understand 入库、把页塞进 content

@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from pipelines.processors.rtf import extract_rtf, rtf_to_text
-from pipelines.processors.schema import ExtractResult
+from utils.processor_schema import ExtractResult
 from utils.textfile import read_text_file
 
 def _pretty_json(text: str) -> str:

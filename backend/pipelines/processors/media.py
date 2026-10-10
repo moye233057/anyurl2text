@@ -15,13 +15,13 @@ import configs.settings as settings
 from configs.formats import FFMPEG_ONLY_AUDIO_EXTENSIONS, VIDEO_EXTENSIONS
 from configs.log_config import logger
 from models import qwen3_asr
-from pipelines.processors.schema import (
+from utils.processor_schema import (
     EmbeddedAsset,
     EnhanceOutcome,
     ExtractContext,
     ExtractResult,
 )
-from routers.convert.schema import AudioMeta
+from utils.processor_schema import AudioMeta
 from utils import ffmpeg
 from utils.ffmpeg import FfmpegError
 
@@ -115,7 +115,7 @@ def enhance_media(result: ExtractResult) -> EnhanceOutcome:
 
     功能：取 `result.assets` 里的音轨送 `/asr-b64`，产出识别文本与语种说明；
           音轨缺失（降级）或超过时长上限时不发请求，只在 notes 里说明——不静默丢内容。
-    应用场景：understand 遇到音频/视频时调用（`step4_extract.enhance()` 分派到这里）。
+    应用场景：understand 遇到音频/视频时调用（`understand._run_model_enhance()` 分派到这里）。
     输入：result — 确定性产出（本函数只读它的素材与时长，不改 content）。
     输出：EnhanceOutcome，asr_text 为转写结果；没有说话声时只写说明。
     异常：LlmError — 服务不可达或返回失败，由调用方转成 notes。

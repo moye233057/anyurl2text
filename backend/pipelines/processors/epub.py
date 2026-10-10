@@ -25,8 +25,8 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 
 import configs.limits as limits
-from pipelines.processors import html_tables
-from pipelines.processors.schema import ExtractContext, ExtractResult
+from utils.excel import html_tables
+from utils.processor_schema import ExtractContext, ExtractResult
 
 # EPUB 规范要求容器里必有这个文件，它指向 OPF（真正的包描述）
 CONTAINER_PATH = "META-INF/container.xml"

@@ -3,7 +3,7 @@
 步骤 3：把「临时目录里的一个文件」变成 `PreparedSource`——补上识别结果作为扩展名。
 
 它把步骤 1（下载 / 上传落盘）与步骤 2（类型识别）串起来，两条路共用；
-请求结束时由 `cleanup` 清掉本次请求的临时目录。产出的 `PreparedSource` 定义在 `processors/schema.py`。
+请求结束时由 `cleanup` 清掉本次请求的临时目录。产出的 `PreparedSource` 定义在 `utils/processor_schema.py`。
 """
 import shutil
 import tempfile
@@ -17,7 +17,7 @@ import configs.settings as settings
 from configs.log_config import logger
 from pipelines.steps.step1_download import FetchError, download
 from pipelines.steps.step2_detect import read_head, resolve_extension
-from pipelines.processors.schema import PreparedSource
+from utils.processor_schema import PreparedSource
 
 # 上传落盘用的固定文件名（下载落盘名由 tempfile 生成）
 UPLOAD_FILE_NAME = "upload.bin"

@@ -15,8 +15,8 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 
 import configs.limits as limits
-from pipelines.processors import html_tables
-from pipelines.processors.schema import ExtractResult
+from utils.excel import html_tables
+from utils.processor_schema import ExtractResult
 from utils.textfile import read_text_file
 
 def _clean_text(raw: str) -> str:

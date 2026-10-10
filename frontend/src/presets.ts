@@ -11,7 +11,10 @@
 export interface Preset {
   kind: string
   desc: string
-  url: string
+  /** 远程 URL 预设：填入输入框后走下载口 */
+  url?: string
+  /** 本站静态样例：相对站点根的路径，点击后走本地文件上传口 */
+  file?: string
 }
 
 export interface PresetLoadResult {
@@ -38,6 +41,14 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
+function isSiteRelativeFile(value: string): boolean {
+  if (!value || value.startsWith('/') || value.includes('://') || value.includes('\\')) {
+    return false
+  }
+  const parts = value.split('/')
+  return parts.every((part) => part.length > 0 && part !== '.' && part !== '..')
+}
+
 function readPreset(entry: unknown, index: number, problems: string[]): Preset | null {
   const label = `第 ${index + 1} 条`
   if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
@@ -49,24 +60,52 @@ function readPreset(entry: unknown, index: number, problems: string[]): Preset |
   const kind = asText(record, 'kind')
   // desc 允许是空串（只显示标题），但字段必须存在——写成 description 这类名字要能被发现
   const desc = 'desc' in record ? asText(record, 'desc') : null
-  const url = asText(record, 'url')
-  const missing = [
-    ['kind', kind],
-    ['desc', desc],
-    ['url', url],
-  ]
-    .filter(([, value]) => value === null)
-    .map(([name]) => name)
+  const hasUrlField = 'url' in record
+  const hasFileField = 'file' in record
+  const url = hasUrlField ? asText(record, 'url') : null
+  const file = hasFileField ? asText(record, 'file') : null
 
-  if (missing.length > 0) {
+  if (kind === null || desc === null) {
+    const missing = [
+      ['kind', kind],
+      ['desc', desc],
+    ]
+      .filter(([, value]) => value === null)
+      .map(([name]) => name)
     problems.push(`${label}的 ${missing.join(' / ')} 缺失或不是字符串，已跳过`)
     return null
   }
-  if (!isHttpUrl(url as string)) {
-    problems.push(`${label}的 url 不是 http(s) 地址（${url}），已跳过`)
+
+  const urlValue = url && url.length > 0 ? url : null
+  const fileValue = file && file.length > 0 ? file : null
+  if (urlValue && fileValue) {
+    problems.push(`${label}同时写了 url 与 file，已跳过（二者只能选一个）`)
     return null
   }
-  return { kind: kind as string, desc: desc as string, url: url as string }
+  if (!urlValue && !fileValue) {
+    problems.push(`${label}需要 url 或 file 其中一个，已跳过`)
+    return null
+  }
+  if (urlValue && !isHttpUrl(urlValue)) {
+    problems.push(`${label}的 url 不是 http(s) 地址（${urlValue}），已跳过`)
+    return null
+  }
+  if (fileValue && !isSiteRelativeFile(fileValue)) {
+    problems.push(
+      `${label}的 file 必须是相对站点根的路径、不能含 .. 或盘符（${fileValue}），已跳过`,
+    )
+    return null
+  }
+  return {
+    kind,
+    desc,
+    ...(urlValue ? { url: urlValue } : {}),
+    ...(fileValue ? { file: fileValue } : {}),
+  }
+}
+
+export function presetKey(preset: Preset): string {
+  return preset.file ? `file:${preset.file}` : `url:${preset.url}`
 }
 
 export async function loadPresets(): Promise<PresetLoadResult> {

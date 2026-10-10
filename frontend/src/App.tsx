@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import ResultPanel from './ResultPanel'
-import { loadPresets, type Preset } from './presets'
+import { loadPresets, presetKey, type Preset } from './presets'
 import { fetchHealth, runPipeline } from './api'
 import type { ConvertResponse } from './types'
 
@@ -21,6 +21,7 @@ export default function App() {
   const [extractLoading, setExtractLoading] = useState(false)
   const [understandLoading, setUnderstandLoading] = useState(false)
   const [transportError, setTransportError] = useState('')
+  const [activePresetKey, setActivePresetKey] = useState('')
   const urlRef = useRef<HTMLTextAreaElement>(null)
 
   // 只在「后端起来了但没配 Key」时提示一句；后端没起来就不猜，让请求自己报错。
@@ -79,10 +80,32 @@ export default function App() {
   }
 
   async function applyPreset(preset: Preset) {
+    setTransportError('')
+    setActivePresetKey(presetKey(preset))
+    if (preset.file) {
+      // 本站样例走上传口：不经过后端 URL 下载，也就不必开 ALLOW_PRIVATE_HOSTS。
+      setMode('file')
+      setUrl('')
+      try {
+        const response = await fetch(`${import.meta.env.BASE_URL}${preset.file}`)
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`)
+        }
+        const blob = await response.blob()
+        const name = preset.file.split('/').pop() || 'sample'
+        setFile(new File([blob], name, { type: blob.type || 'application/octet-stream' }))
+      } catch (error) {
+        setFile(null)
+        setTransportError(`预设样例加载失败（${preset.file}）：${String(error)}`)
+      }
+      return
+    }
+
     setMode('url')
-    setUrl(preset.url)
+    setFile(null)
+    setUrl(preset.url || '')
     try {
-      await navigator.clipboard.writeText(preset.url)
+      await navigator.clipboard.writeText(preset.url || '')
     } catch {
       // 非安全上下文里剪贴板会失败；主要动作是填入输入框，不该被它打断
     }
@@ -128,41 +151,42 @@ export default function App() {
               </div>
             )}
 
-            {mode === 'url' && (
-              <div className="preset-box">
-                <div className="preset-head">
-                  预设样例
-                  <span className="hint">点击即复制并填入</span>
-                </div>
-                <div className="preset-list">
-                  {presets?.map((preset) => (
+            <div className="preset-box">
+              <div className="preset-head">
+                预设样例
+                <span className="hint">本仓样例走本地上传；远程条目填入 URL</span>
+              </div>
+              <div className="preset-list">
+                {presets?.map((preset) => {
+                  const key = presetKey(preset)
+                  return (
                     <button
-                      key={preset.url}
+                      key={key}
                       type="button"
-                      className={preset.url === url ? 'preset-item active' : 'preset-item'}
+                      className={key === activePresetKey ? 'preset-item active' : 'preset-item'}
                       onClick={() => applyPreset(preset)}
                     >
                       <span className="preset-kind">{preset.kind}</span>
                       <span className="preset-desc">{preset.desc}</span>
                     </button>
-                  ))}
-                  {presets?.length === 0 && presetProblems.length === 0 && (
-                    <p className="empty">配置文件里没有样例</p>
-                  )}
-                </div>
-                {presetProblems.length > 0 && (
-                  <div className="note-box">
-                    {/* 这句话对「整份配置没取回来」和「个别条目写错」都成立，细节在下面的列表里 */}
-                    预设配置有问题：
-                    <ul>
-                      {presetProblems.map((problem, index) => (
-                        <li key={index}>{problem}</li>
-                      ))}
-                    </ul>
-                  </div>
+                  )
+                })}
+                {presets?.length === 0 && presetProblems.length === 0 && (
+                  <p className="empty">配置文件里没有样例</p>
                 )}
               </div>
-            )}
+              {presetProblems.length > 0 && (
+                <div className="note-box">
+                  {/* 这句话对「整份配置没取回来」和「个别条目写错」都成立，细节在下面的列表里 */}
+                  预设配置有问题：
+                  <ul>
+                    {presetProblems.map((problem, index) => (
+                      <li key={index}>{problem}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
 
             <div className="field">
               <label className="field-label">

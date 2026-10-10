@@ -22,9 +22,10 @@ import zipfile
 from pathlib import Path
 
 import configs.limits as limits
-from pipelines.processors import cell_text, odf_table_rows, table_kind
-from pipelines.processors.grid import GridBuilder, grid_notes, render_tsv
-from pipelines.processors.schema import ExtractResult
+from utils.excel import cell_text, table_kind
+from utils.excel.odf_table_rows import table_rows as collect_odf_table_rows
+from utils.excel.grid import GridBuilder, grid_notes, render_tsv
+from utils.processor_schema import ExtractResult
 
 TEXT_NS = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}"
 TABLE_NS = "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}"
@@ -102,7 +103,7 @@ def _render_table(table, hits: list) -> tuple:
     输入：table — `table:table` 元素；hits — 命中的上界名收集到这一份列表里。
     输出：(制表符分隔的多行文本, 源标出的表头行数)；超行数上限时末行说明还剩多少行。
     """
-    rows, header_rows = odf_table_rows.table_rows(
+    rows, header_rows = collect_odf_table_rows(
         table, lambda row: _count(row, "number-rows-repeated", limits.MAX_REPEATED_SLOTS)
     )
     repeats = [_count(row, "number-rows-repeated", limits.MAX_REPEATED_SLOTS) for row in rows]

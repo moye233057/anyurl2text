@@ -11,7 +11,6 @@ openai
 
 # 文档与网页解析
 pymupdf
-pymupdf4llm
 python-docx
 python-pptx
 openpyxl

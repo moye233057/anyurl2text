@@ -15,8 +15,9 @@ HTTP 状态码。每条只有一个码；同一触发点不得两个码；不同
 - 第 2 组（降级）→ `meta.degrade_code`，HTTP 200（ADR-0003：降级是能力边界而不是故障）；
 - 第 3 组（模型阶段失败）→ `meta.model_error.code`，HTTP 200（确定性抽取产出仍然交付）。
 
-**第 1、2、3 组已全落**：硬失败 17 个、降级 25 个（音轨与转码 6 + 类型与格式 19）、
-模型阶段失败 15 个。每个码后面注明它的触发点，就是为了防止「同一个码两处用」。
+**第 1、2、3 组已全落**：硬失败 18 个、降级 25 个（音轨与转码 5 + 类型与格式 20；
+`media_track_read_failed` 算类型侧）、模型阶段失败 15 个。每个码后面注明它的触发点，
+就是为了防止「同一个码两处用」。
 """
 
 HARD_FAILURE_CODES = frozenset({
@@ -36,10 +37,12 @@ HARD_FAILURE_CODES = frozenset({
     "download_redirect_limit",             # step1_download.download：跳转次数超过上限（502）
     "download_budget_exhausted",           # step1_download._stream_to_file：请求时间预算用尽（504）
     "download_timeout",                    # step1_download.download：httpx 超时（504）
+    "request_budget_exhausted",            # 解析/模型阶段：全链路 120s 预算用尽（504）
+    "request_concurrency_limit",           # routers.convert：快/慢池满员（429）
     "internal",                            # 兜底：未预期的异常；文案不回显异常文本（500）
 })
 
-# 第 2 组：降级（进 meta.degrade_code，HTTP 200）。25 个：音轨与转码 6 + 类型与格式 19。
+# 第 2 组：降级（进 meta.degrade_code，HTTP 200）。25 个：音轨与转码 5 + 类型与格式 20。
 # 与设计文档 `03-错误模型与限额.md` 的第 2 组（20 个）差一条：odf 那两处拆成
 # `odf_parse_failed` / `odf_content_failed`。理由是设计给它标的是「同码，param 区分」，
 # 而降级通道只有 code + reason 两个字段、没有 param；不拆的话「容器坏了」与

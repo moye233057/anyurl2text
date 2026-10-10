@@ -2,21 +2,8 @@
 r"""
 缝 E2：模型增强那条路的契约（**贵缝，默认不跑**）。
 
-缝：`POST /understand/file`。要起服务、要真调模型（花钱），图片判型那两条还要本机
-Paddle OCR（8021）在跑。所以整份文件挂 `model` 标记，默认被 `pytest.ini` 的
-`addopts = -m "not model"` 挡在外面，由人在关键节点显式跑：
-
-    E:\miniconda\envs\multimodal\python.exe -m pytest tests -m model -q
-
-它接替已删除的 `scripts/smoke_check.py` 里那半边——smoke_check 同时管两条路，
-而 `/extract` 那半边已经由 `test_extract_contract.py` 用免费的 HTTP 缝覆盖了。
-
-**本项目最核心的不变量在这里验**：同一个源，两条路的 `content` 逐字节相同。
-README 说这是本项目存在的理由；ADR-0002 说模型产出只能进
-`summary` / `meta.ocr_text` / `meta.asr_text` / `meta.notes`。
-
-预期值来源：README 的「两条路产出的正文逐字节一致」与「模型读出的文字也不进正文」、
-`CONTEXT.md` 对判型与识别文本/转写文本的定义、样例生成参数。
+对比规则（ADR-0011）：纯代码即可交付正文的源，两条路 `content` 相同；需要模型转写的源，
+understand 的 `content` 含模型正文，且 `meta.ocr_text` / `meta.asr_text` 仍保留副本。
 """
 import os
 from pathlib import Path
@@ -34,7 +21,6 @@ TIMEOUT = 300.0
 
 @pytest.fixture(scope="module")
 def understanding_is_possible():
-    """贵缝的前置条件：服务在、模型 Key 配了、本机 OCR 服务在。缺一条就跳过并说明。"""
     try:
         health = httpx.get(f"{BASE_URL}/probe/health", timeout=10).json()
     except Exception as exc:
@@ -51,7 +37,6 @@ def understanding_is_possible():
 
 
 def call(pipeline: str, file_name: str, query=None):
-    """打一次上传接口，返回 (状态码, 响应体)。"""
     path = DATA_DIR / file_name
     if not path.exists():
         pytest.skip(f"样例不存在：{path}（先跑 python scripts/make_fixtures.py）")
@@ -62,46 +47,35 @@ def call(pipeline: str, file_name: str, query=None):
     return response.status_code, response.json()
 
 
-# ---------- 核心不变量：两条路逐字节一致 ----------
+CODE_IDENTICAL = ("plain.txt", "table.csv", "legacy.doc", "sample.wav", "sample.mp4")
 
-@pytest.mark.parametrize(
-    "name",
-    ["plain.txt", "table.csv", "report.docx", "manual.pdf", "legacy.doc", "sample.wav", "sample.mp4"],
-)
-def test_both_paths_deliver_byte_identical_text(name, understanding_is_possible):
-    """
-    行为：同一个源，`/extract/file` 与 `/understand/file` 的 `content` 逐字节相同。
 
-    来源：README「两条路产出的正文 **逐字节一致**，所以可以直接对比」——本项目存在的理由。
-    覆盖四种态：纯文本、表格、带内嵌图的文档、PDF、降级源，以及音视频——
-    音视频没有可确定性抽取的正文，两条路都该是空串：从音轨里听出的字只能进 `meta.asr_text`。
-    """
+@pytest.mark.parametrize("name", CODE_IDENTICAL)
+def test_both_paths_same_content_when_only_code_delivers(name, understanding_is_possible):
     _, fast = call("extract", name)
     _, deep = call("understand", name)
     assert fast["content"] == deep["content"], f"{name} 两条路的交付文本不一致"
 
 
+@pytest.mark.parametrize("name", ["report.docx", "manual.pdf"])
+def test_understand_extends_content_with_model_text(name, understanding_is_possible):
+    _, fast = call("extract", name)
+    _, deep = call("understand", name)
+    assert fast["content"].strip(), f"{name} extract 应有纯代码正文"
+    assert fast["content"].strip() in deep["content"]
+    if deep["meta"].get("ocr_text"):
+        assert deep["meta"]["ocr_text"] in deep["content"] or deep["meta"]["ocr_text"].strip() in deep["content"]
+
+
 @pytest.mark.parametrize("name", ["report.docx", "table.csv"])
 def test_query_does_not_change_delivered_text(name, understanding_is_possible):
-    """
-    行为：带 query 时交付文本仍与不带时一致——query 只改摘要，绝不动正文。
-
-    来源：ADR-0001（否掉「带 query 时用摘要覆盖正文」那套契约，原文会永久丢失）。
-    """
     _, plain = call("understand", name)
     _, asked = call("understand", name, query="这份材料的重点是什么？")
     assert asked["content"] == plain["content"], f"{name} 带 query 后交付文本被改动了"
     assert asked["summary"], "带 query 时摘要应给出针对性回答"
 
 
-# ---------- understand 独有产出 ----------
-
 def test_understand_produces_summary_usage_and_model_timing(understanding_is_possible):
-    """
-    行为：模型增强路真的产出了摘要、按真实 token 记了账、并给出模型段耗时。
-
-    来源：README「成本按真实 token 记账」+「纯代码那一路 usage 为 null」的反面。
-    """
     _, body = call("understand", "report.docx")
     assert body["error"] is None
     assert body["summary"], "understand 应产出摘要"
@@ -113,26 +87,16 @@ def test_understand_produces_summary_usage_and_model_timing(understanding_is_pos
     assert body["timings"]["model_ms"] > 0
 
 
-def test_model_output_never_lands_in_delivered_text(understanding_is_possible):
-    """
-    行为：模型读出的文字与摘要都进各自的字段，`content` 一个字符都不多。
-
-    来源：README「模型读出的文字也不进正文」+ CONTEXT 对识别文本的定义。
-    report.docx 会同时产出 summary 与非空 ocr_text，是对这条最强的样例。
-    """
+def test_docx_merges_ocr_into_content_and_meta(understanding_is_possible):
     _, fast = call("extract", "report.docx")
     _, deep = call("understand", "report.docx")
     assert deep["meta"]["ocr_text"], "含内嵌图的文档应读出图里的文字"
     assert deep["summary"]
-    assert deep["content"] == fast["content"]
+    assert deep["meta"]["ocr_text"].strip() in deep["content"]
+    assert fast["content"].strip() in deep["content"]
 
 
 def test_model_is_skipped_when_there_is_nothing_to_understand(understanding_is_possible):
-    """
-    行为：源没有可加工的内容时不调模型——usage 为 null、模型段耗时为 0，并在现场说明。
-
-    来源：README「没调模型就没有用量，给 0 是噪音」。legacy.doc 走降级、content 为空。
-    """
     _, body = call("understand", "legacy.doc")
     assert body["error"] is None
     assert body["usage"] is None
@@ -140,52 +104,29 @@ def test_model_is_skipped_when_there_is_nothing_to_understand(understanding_is_p
     assert body["meta"]["notes"], "跳过模型调用要说明原因，不能静默"
 
 
-# ---------- 图片判型分流 ----------
-
-def test_text_image_is_read_by_the_local_ocr_service(understanding_is_possible):
-    """
-    行为：判为文字图片的独立图片，文字进 `meta.ocr_text`，`content` 仍为空。
-
-    来源：CONTEXT「判型」+ ADR-0004（extract 不内置 OCR，认字是 understand 的职责）。
-    样例 screenshot.png 是含文字的截图。
-    """
+def test_text_image_ocr_lands_in_content_and_meta(understanding_is_possible):
+    _, fast = call("extract", "screenshot.png")
     _, body = call("understand", "screenshot.png")
     assert body["error"] is None
     assert body["meta"]["ocr_text"], "文字图片应读出文字"
-    assert body["content"] == "", "图片的交付文本仍为空，读出的字不进 content"
+    assert body["content"].strip(), "understand 正文应有 OCR 结果"
+    assert body["meta"]["ocr_text"].strip() in body["content"]
+    assert fast["content"] == "", "extract 对图片仍为空"
     assert body["meta"]["notes"], "判型结果要说明，不能静默"
 
 
-def test_semantic_image_gets_a_description_instead_of_ocr(understanding_is_possible):
-    """
-    行为：判为语义图片的独立图片不做 OCR，改给客观描述，`content` 仍为空。
-
-    来源：CONTEXT「判型」——语义图片直接用同一次调用给出的客观描述。
-    样例 photo.png 是纯色几何图形，图里没有文字。
-    """
+def test_semantic_image_description_in_content(understanding_is_possible):
     _, body = call("understand", "photo.png")
     assert body["error"] is None
     assert not body["meta"]["ocr_text"], "语义图片不该有识别文本"
     assert body["summary"], "语义图片应直接给出客观描述"
-    assert body["content"] == ""
+    assert body["content"].strip(), "语义描述应进 understand 正文"
 
-
-# ---------- 音视频：音轨交本机 ASR，正文仍为空 ----------
 
 @pytest.mark.parametrize(("name", "modality"), [("sample.wav", "audio"), ("sample.mp4", "video")])
 def test_media_stays_a_boundary_and_says_what_it_did(name, modality, understanding_is_possible):
-    """
-    行为：音视频在模型增强路上仍是「正常结果」——没有正文、不降级、按源报 audio / video 两种模态、
-    音轨参数照报，并把「音轨送没送去转写、结果如何」写进现场说明。
-
-    来源：CONTEXT「音轨」与「转写文本」（转写出的文字进 `meta.asr_text`，不进 content）
-    + README「音视频要本机 ASR 服务起着…缺任一项都退回降级并在 `meta.notes` 里说明」。
-    样例是正弦音、没有说话声，所以转写文本为空：真从这段纯音里"听"出文字才是异常信号。
-    不断言 `notes` 的措辞——转写为空与转写服务出问题都会留下说明，钉字面就成了抄实现。
-    """
     _, body = call("understand", name)
     assert body["error"] is None
-    assert body["content"] == ""
     assert body["type"] == modality
     assert body["meta"]["degraded"] is False
     assert body["meta"]["audio"], "音轨参数要照报"
@@ -195,15 +136,7 @@ def test_media_stays_a_boundary_and_says_what_it_did(name, modality, understandi
     assert body["usage"] is None, "本机 ASR 不算模型用量，没摘要就不该记账"
 
 
-# ---------- 降级与失败仍走契约 ----------
-
 def test_degraded_source_stays_a_boundary_on_both_paths(understanding_is_possible):
-    """
-    行为：降级源在模型增强路上同样是「正常结果」——HTTP 200、error 为 null、degraded 为真，
-    且两条路的降级结论一致。
-
-    来源：README「降级是能力边界而非故障」+ ADR-0003。
-    """
     fast_status, fast = call("extract", "legacy.doc")
     deep_status, deep = call("understand", "legacy.doc")
     assert fast_status == deep_status == 200
@@ -214,6 +147,5 @@ def test_degraded_source_stays_a_boundary_on_both_paths(understanding_is_possibl
 
 
 def test_response_shape_is_the_same_seven_fields(understanding_is_possible):
-    """行为：understand 与 extract 共用同一份响应契约，7 个字段一个不多一个不少。来源：ADR-0001。"""
     _, body = call("understand", "plain.txt")
     assert set(body) == {"type", "content", "summary", "meta", "usage", "timings", "error"}
