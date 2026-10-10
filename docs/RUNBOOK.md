@@ -28,8 +28,8 @@
 | `FRONTEND_PORT` | `5173` | 前端 dev server 端口 | 与后端端口一样读同一份 `.env`；Vite 开了 `strictPort`，被占用会直接失败而不是换端口 |
 | `ALLOW_PRIVATE_HOSTS` | `false` | 允许下载内网 / 回环地址 | 仅在本机串本地文件服务调试时打开；对外可访问的部署保持 `false` |
 | `ALLOW_HTTP_SOURCE` | `true` | 是否接受 `http://` 源。`false` 时只收 https，`http://` 在发起连接之前就被 422 拒掉（`download_http_not_allowed`）。**默认 `true` 就是既有行为** | 想让传输一律走加密时设 `false`；本机串内网的 HTTP 服务保持 `true` |
-| `OCR_API_URL` | `http://127.0.0.1:8021/ocr-b64` | 本仓 OCR 扩展地址（目标由 `optional/ocr` 拉起） | 换端口或部署位置时 |
-| `ASR_API_URL` | `http://127.0.0.1:8022/asr-b64` | 本仓 ASR 扩展地址（目标由 `optional/asr` 拉起） | 换端口或部署位置时 |
+| `OCR_API_URL` | `http://127.0.0.1:8021/ocr-b64` | 本仓 OCR 扩展地址（目标由 `backend/extensions/ocr` 拉起） | 换端口或部署位置时 |
+| `ASR_API_URL` | `http://127.0.0.1:8022/asr-b64` | 本仓 ASR 扩展地址（目标由 `backend/extensions/asr` 拉起） | 换端口或部署位置时 |
 | `ASR_MAX_AUDIO_SECONDS` | 600 | 送转写的音轨时长上限；超过则跳过转写（视频/容器音频会先探时长，超限不抽完整 wav；抽取时仍带 `-t` 封顶）。命中写进 `limits_hit` / `meta.notes` | 想转写更长录音时。**先把 ASR 服务的 `max_new_tokens` 调大**，否则上游会把尾部静默丢掉 |
 
 ### 成本相关

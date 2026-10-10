@@ -24,8 +24,8 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = PROJECT_DIR / "backend"
 FRONTEND_DIR = PROJECT_DIR / "frontend"
-OPTIONAL_OCR = PROJECT_DIR / "optional" / "ocr" / "main.py"
-OPTIONAL_ASR = PROJECT_DIR / "optional" / "asr" / "main.py"
+OPTIONAL_OCR = PROJECT_DIR / "backend" / "extensions" / "ocr" / "main.py"
+OPTIONAL_ASR = PROJECT_DIR / "backend" / "extensions" / "asr" / "main.py"
 EXTENSIONS_MODELS = PROJECT_DIR / "backend" / "extensions" / "models"
 
 
@@ -86,7 +86,7 @@ BACKEND_PORT = int(os.getenv("ANYURL2TEXT_PORT", "8020"))
 FRONTEND_PORT = int(os.getenv("FRONTEND_PORT", "5173"))
 OCR_PORT = int(os.getenv("OCR_PORT", "8021"))
 ASR_PORT = int(os.getenv("ASR_PORT", "8022"))
-# 为 true 且 optional/*/main.py 存在、权重目录非空时，尝试一并拉起扩展子进程
+# 为 true 且 backend/extensions/{ocr,asr}/main.py 存在、权重目录非空时，尝试一并拉起扩展子进程
 START_EXTENSIONS = os.getenv("START_EXTENSIONS", "true").strip().lower() in ("1", "true", "yes", "on")
 HEALTH_URL = f"http://127.0.0.1:{BACKEND_PORT}/probe/health"
 DOCS_URL = f"http://127.0.0.1:{BACKEND_PORT}/docs"
@@ -218,7 +218,7 @@ def run() -> int:
             ocr_proc = _start_optional("OCR 扩展", OPTIONAL_OCR, OCR_PORT)
             asr_proc = _start_optional("ASR 扩展", OPTIONAL_ASR, ASR_PORT)
         else:
-            print("START_EXTENSIONS=false：不自动拉起 optional 扩展（可按 optional/*/README 手动起）")
+            print("START_EXTENSIONS=false：不自动拉起 optional 扩展（可按 backend/extensions/{ocr,asr}/README 手动起）")
         backend = step4_start_backend()
         frontend = step5_start_frontend()
         if not step6_wait_ready(backend, frontend):

@@ -15,7 +15,7 @@
 - OCR / ASR / LLM 均为可选扩展；远程 API 与本机部署同类（Q3）。
 - 远程仓不收录权重；权重落 `backend/extensions/models/`。
 - OCR/ASR **要起就在本仓**起，不默认另起外部 ModelServer（Q4）。
-- 目录：`optional/ocr`、`optional/asr`；出口包 `backend/extensions/`（原 `backend/models`）；权重 `backend/extensions/models/`。
+- 目录：`backend/extensions/ocr`、`backend/extensions/asr`；出口包 `backend/extensions/`（原 `backend/models`）；权重 `backend/extensions/models/`。
 - 启动：默认由本仓管理子进程一并拉起；并文档说明可手动起 `optional` 进程（Q8=C）。
 - LLM：DeepSeek 远程 + 本机 OpenAI 兼容端点（同一客户端换 `BASE_URL`）（Q9=B）。
 - 接口：`POST /convert`、`/convert/file`；字段 `ocr` / `asr` / `llm` 默认 `false`（Q6=A）。
@@ -28,11 +28,11 @@
 - [x] 路由：`POST /convert` 与 `/convert/file`；已删旧 `/extract*` `/understand*`
 - [x] 编排：`pipelines/convert.py` + 能力门闩（开关矩阵 × 模态）
 - [x] 交付：按实际跑过的扩展并进 `content`
-- [ ] 收编 OCR：`optional/ocr/` 代码自 ModelServer/paddle-ocr（现仅 README 占位）
-- [ ] 收编 ASR：`optional/asr/` 代码自 ModelServer/qwen3-asr（现仅 README 占位）
+- [x] 收编 OCR：`backend/extensions/ocr/`（自 ModelServer/paddle-ocr；权重外置）
+- [x] 收编 ASR：`backend/extensions/asr/`（自 ModelServer/qwen3-asr；权重外置）
 - [x] 启动器：`start.py` 条件满足时尝试拉起扩展（缺 main.py/权重则跳过并提示）
 - [ ] LLM：RUNBOOK 写本机 OpenAI 兼容端点一例
-- [x] 文档骨架：`optional/*/README` + `backend/extensions/models/README`
+- [x] 文档骨架：`backend/extensions/{ocr,asr}/README` + `backend/extensions/models/README`
 - [x] 包重命名：`backend/models` → `backend/extensions`；权重目录 `backend/extensions/models/`
 - [x] 前端：单路 + 三开关
 - [x] 测试：进程内/贵缝改开关矩阵；结构测试跟新模块

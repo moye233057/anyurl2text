@@ -1,0 +1,12 @@
+# 建议新建独立环境，官方推荐 Python 3.12：conda create -n asr python=3.12 -y
+# 有 NVIDIA 显卡时先装带 CUDA 的 torch，再装本文件其余依赖：
+# CUDA 12.4 + pip 示例：pip install torch --index-url https://download.pytorch.org/whl/cu124
+# pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+fastapi
+uvicorn
+requests
+# soundfile 由 qwen-asr（经 librosa）间接带入，这里显式声明是因为测试脚本直接 import 它读音频时长。
+soundfile
+qwen-asr
+modelscope

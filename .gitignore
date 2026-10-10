@@ -9,6 +9,12 @@
 backend/extensions/models/**
 !backend/extensions/models/README.md
 
+# 扩展服务运行时产物
+backend/extensions/ocr/logs/
+backend/extensions/ocr/temp/
+backend/extensions/asr/logs/
+backend/extensions/asr/temp/
+
 # 运行产物（都在 backend/data/ 下）
 backend/data/debug/
 backend/data/logs/

@@ -1,0 +1,20 @@
+# 当前服务复用 mineru 包里的 PytorchPaddleOCR 源码，但不需要安装 mineru[core]。
+# 新环境先执行：pip install --no-deps mineru==3.2.3
+# 然后再执行：pip install -r requirements.txt
+fastapi
+uvicorn
+python-multipart
+modelscope
+requests
+numpy
+opencv-python
+pillow
+PyYAML
+loguru
+tqdm
+six
+shapely
+pyclipper
+torchvision==0.20.1
+torchaudio==2.5.1
+huggingface_hub

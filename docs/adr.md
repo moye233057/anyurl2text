@@ -74,6 +74,6 @@
 
 **开关矩阵**：凡看图支路（独立图判型/OCR/语义描述、扫描件整页、内嵌图）要求 `ocr && llm`；音视频转写仅 `asr`；摘要/query 仅 `llm`。缺开关或扩展不可用则跳过并写 `meta.notes`，不静默半套。
 
-**扩展**：OCR/ASR 服务代码在 `optional/`；出口客户端在 `backend/extensions/`（原 `backend/models`）；权重在 `backend/extensions/models/`（不进 git，勿在该目录放 Python 包）。默认由本仓启动器拉起**管理子进程**，并允许按文档手动起 `optional` 进程。LLM 走同一客户端：远程 DeepSeek 或本机 OpenAI 兼容端点（换 `BASE_URL`）。
+**扩展**：OCR/ASR 服务代码在 `backend/extensions/ocr|asr/`；出口客户端在 `backend/extensions/`（原 `backend/models`）；权重在 `backend/extensions/models/`（不进 git，勿在该目录放 Python 包）。默认由本仓启动器拉起**管理子进程**，并允许按文档手动起 `optional` 进程。LLM 走同一客户端：远程 DeepSeek 或本机 OpenAI 兼容端点（换 `BASE_URL`）。
 
 **否掉**：双栏对比主路径；权重进 git；默认依赖外部 ModelServer 仓；旧路由长期别名；看图只开 `ocr` 或只开 `llm` 仍强行半跑。

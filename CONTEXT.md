@@ -21,7 +21,7 @@ _Avoid_: 模型服务（作总称时）、插件、sidecar（作产品名时）
 _Avoid_: mode、understand 标志、增强开关（单布尔）
 
 **扩展模块**：
-落在本仓 `optional/` 下、由本仓拉起的 OCR / ASR 实现（代码与进程归属本仓，不依赖使用者另起外部 ModelServer）。
+落在本仓 `backend/extensions/ocr/` 与 `backend/extensions/asr/`、由本仓拉起的 OCR / ASR 服务（代码与进程归属本仓，不依赖使用者另起外部 ModelServer）。
 _Avoid_: 外部 ModelServer、辅服务仓、第三方进程（作默认部署名时）
 
 **扩展权重目录**：

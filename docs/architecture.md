@@ -60,15 +60,15 @@
 | 限额 / 错误码 | `backend/configs/limits.py`、`errors.py` | 已实现 |
 | 资源防护：ZIP / 请求体 | `backend/utils/zip_read.py`、`body_limit.py` | 已实现 |
 | 出站复用 | `backend/utils/egress.py` | 已实现 |
-| **OCR 扩展模块** | `optional/ocr/`（从 ModelServer/paddle-ocr 收编；本仓启动） | 未做（仅 README） |
-| **ASR 扩展模块** | `optional/asr/`（从 ModelServer/qwen3-asr 收编；本仓启动） | 未做（仅 README） |
+| **OCR 扩展模块** | `backend/extensions/ocr/`（自 ModelServer/paddle-ocr；独立进程） | 已实现（权重自备） |
+| **ASR 扩展模块** | `backend/extensions/asr/`（自 ModelServer/qwen3-asr；独立进程） | 已实现（权重自备） |
 | **扩展权重** | `backend/extensions/models/`（gitignore；使用者自备） | 已实现（目录约定 + ignore） |
-| **扩展安装与启动说明** | `optional/*/README` + `backend/extensions/models/README` | 内联（RUNBOOK 细则未完） |
+| **扩展安装与启动说明** | `backend/extensions/{ocr,asr}/README` + `backend/extensions/models/README` | 内联（RUNBOOK 细则未完） |
 | **能力门闩**（开关 × 健康 × 模态） | `pipelines/convert.py` | 已实现（开关×模态；健康探测未扩） |
 | LLM 扩展出口 | `backend/extensions/deepseek.py`（远程 DeepSeek 或本机 OpenAI 兼容，换 `BASE_URL`） | 已实现（远程；本机端点验收未做） |
 | 样例与测试 | `backend/scripts/make_fixtures.py`；`backend/tests/` | 已实现（开关矩阵；HTTP 缝须后端在跑） |
 | 前端 | `frontend/`：单路 + 三开关 | 已实现 |
-| 一键拉起 | `start.py`：条件满足时拉起 OCR/ASR **子进程**；亦可按 optional README 手动起 | 内联（收编代码后才真起得来） |
+| 一键拉起 | `start.py`：权重非空时拉起 OCR/ASR **子进程**；亦可按各 README 手动起 | 已实现 |
 | 术语表 | `CONTEXT.md` | 已实现 |
 
 ## 4. 依赖方向
@@ -80,7 +80,7 @@ app → routers → pipelines → { extensions , utils } → configs
          └───────────────→ utils
 ```
 
-`optional/ocr`、`optional/asr` 是**可独立进程**的扩展，不加入上述 import 图；核心只通过配置的 URL（默认本机端口）用 HTTP/字节协议调用。扩展自带依赖与（可选）独立虚拟环境，由启动器与文档约定，不强制打进核心 `.venv`。
+`backend/extensions/ocr`、`backend/extensions/asr` 是**可独立进程**的扩展，不加入上述 import 图；核心只通过配置的 URL（默认本机端口）用 HTTP/字节协议调用。扩展自带依赖与（可选）独立虚拟环境，由启动器与文档约定，不强制打进核心 `.venv`。
 
 ## 5. 一次请求怎么走（落点视角）
 
@@ -97,7 +97,7 @@ app → routers → pipelines → { extensions , utils } → configs
 
 ## 6. 现状缺口
 
-- **OCR/ASR 代码尚未收编进 `optional/`**（仅文档占位）；现仍可对接已起的 `8021` / `8022`。
+- OCR/ASR 已收编到 `backend/extensions/{ocr,asr}`；须自备权重并在独立环境装依赖后才能真正起服务。
 - 老版 Office 无解析路径（ADR-0003）。
 - 下载层 SSRF 已钉 IP；鉴权 / CORS 见选做清单。
 - 剩余计划项见 [TODO.md](../TODO.md)。

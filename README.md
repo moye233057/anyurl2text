@@ -88,7 +88,7 @@ cp .env.example .env
 ```
 
 用编辑器打开仓库根目录的 `.env`，按需填写 LLM 相关项（如 `DEEPSEEK_API_KEY`）。  
-OCR / ASR 为目标态仓内扩展（`optional/` + `backend/extensions/models/` 自备权重）；迁移完成前仍可能需本机 `8021` / `8022`。详见 [TODO.md](TODO.md) 与 RUNBOOK。
+OCR / ASR 为目标态仓内扩展（`backend/extensions/ocr|asr/` + `backend/extensions/models/` 自备权重）；迁移完成前仍可能需本机 `8021` / `8022`。详见 [TODO.md](TODO.md) 与 RUNBOOK。
 
 ## 后端
 
@@ -144,8 +144,8 @@ Ctrl+C 一起停止。对外部署见 [RUNBOOK](docs/RUNBOOK.md#对外部署下�
 |---|---|---|
 | 确定性抽取 | `uv sync` 安装的解析库 | 对应格式降级或起不来 |
 | LLM 扩展 | 配置的 API Key 或本地兼容端点 | 无摘要 / 无视觉相关增强；确定性段不受影响 |
-| OCR 扩展 | 本仓 `optional/ocr` + 自备权重 | 图片读字不可用；文档确定性正文仍在 |
-| ASR 扩展 | 本仓 `optional/asr` + 自备权重 + `imageio-ffmpeg` | 音视频无转写，仅结构信息 |
+| OCR 扩展 | 本仓 `backend/extensions/ocr` + 自备权重 | 图片读字不可用；文档确定性正文仍在 |
+| ASR 扩展 | 本仓 `backend/extensions/asr` + 自备权重 + `imageio-ffmpeg` | 音视频无转写，仅结构信息 |
 
 扩展名与分派表见 [PIPELINES §2.3](docs/PIPELINES.md)。
 
@@ -173,7 +173,7 @@ docs/                        架构、ADR、API、RUNBOOK、管线
 app → routers → pipelines → { extensions , utils } → configs
 ```
 
-`optional/*` 不进入上图 import 链；核心经本机 URL 调用。
+`backend/extensions/{ocr,asr}` 不进入上图 import 链；核心经本机 URL 调用。
 
 ## 使用说明
 
