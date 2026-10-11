@@ -17,20 +17,20 @@
 - 各格式链路见 [docs/PIPELINES.md](docs/PIPELINES.md)
 - 配置、验收与对外部署见 [docs/RUNBOOK.md](docs/RUNBOOK.md)
 - 扩展入口见 [docs/EXTENDING.md](docs/EXTENDING.md)
-- 计划与选做见 [docs/TODO.md](docs/TODO.md)
 - 本仓给 AI 的规矩见 [AGENTS.md](AGENTS.md)
+- 许可证：[MIT](LICENSE)
 
 ## 生产信息
 
 - 接口文档：http://127.0.0.1:8020/docs
 - 前端：http://127.0.0.1:5173
 - 健康检查：http://127.0.0.1:8020/probe/health
-- GitHub：无（当前远端在 Gitee）
+- GitHub：https://github.com/moye233057/anyurl2text
 
 ## 获取代码
 
 ```powershell
-git clone <本仓库地址>
+git clone https://github.com/moye233057/anyurl2text.git
 cd anyurl2text
 ```
 
