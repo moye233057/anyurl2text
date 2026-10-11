@@ -88,6 +88,14 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* 自己滚，不要把下面的预设样例顶出视口 */
+  max-height: 42vh;
+  overflow-y: auto;
+}
+
+/* 刷新按钮跟在「可用 N / M」右边：随着能力变多也不用往下滚才够得到 */
+.cap-refresh {
+  margin-left: auto;
 }
 
 .cap-group-title {
@@ -241,6 +249,12 @@ body {
   flex-direction: column;
   gap: 10px;
   overflow-y: auto;
+}
+
+/* 子项不许被压扁：flex 列里默认 flex-shrink:1，展开的卡片会被压缩而不是让容器滚动，
+   而卡片自带 overflow:hidden——结果就是「展开了但看不到、也滑不动」（2026-10-11 用户报障）。 */
+.region-body > * {
+  flex: 0 0 auto;
 }
 
 .block {

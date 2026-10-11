@@ -79,6 +79,18 @@ function CapabilityCard(props: {
       <summary className="cap-card-head">
         扩展能力
         <span className="hint">{all.length === 0 ? '读取中…' : `可用 ${usable} / ${all.length}`}</span>
+        <button
+          type="button"
+          className="link-button cap-refresh"
+          onClick={(event) => {
+            // 按钮在 <summary> 里：不拦一下的话点它会顺带折叠卡片
+            event.preventDefault()
+            event.stopPropagation()
+            props.onRefresh()
+          }}
+        >
+          刷新
+        </button>
       </summary>
       <div className="cap-rows">
         {CAPABILITY_ORDER.map((capability) => (
@@ -113,9 +125,6 @@ function CapabilityCard(props: {
             })}
           </div>
         ))}
-        <button type="button" className="link-button" onClick={props.onRefresh}>
-          刷新可用性
-        </button>
       </div>
     </details>
   )
