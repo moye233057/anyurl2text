@@ -21,7 +21,7 @@
 export default [
   {
     kind: 'PDF',
-    desc: '43 KB · 文档，两条管线都能出正文',
+    desc: '6 KB · 文档，两条管线都能出正文',
     file: 'samples/manual.pdf',
   },
   {
@@ -91,7 +91,7 @@ export default [
   },
   {
     kind: '无扩展名',
-    desc: '43 KB · 文件名无后缀，靠内容头识别（内容是 PDF）',
+    desc: '6 KB · 文件名无后缀，靠内容头识别（内容是 PDF）',
     file: 'samples/noext_sample',
   },
   {

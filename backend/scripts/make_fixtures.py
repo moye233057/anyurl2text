@@ -10,7 +10,7 @@
     step2_make_docx          带表格与内嵌图的 Word 文档
     step3_make_xlsx          单表、含空单元格的 Excel
     step4_make_pptx          六页演示文稿，含表格与图片
-    step5_make_pdf           十页纯文本 PDF
+    step5_make_pdf           三页纯文本 PDF，每页两节
     step6_make_scanned_pdf   三页「扫描件」：整页是图、没有文字层
     step7_make_archive       十几个条目的 ZIP
     step8_make_install_pkg   APK 结构指纹样本
@@ -511,27 +511,57 @@ def step4_make_pptx() -> None:
     presentation.save(str(DATA_DIR / "deck.pptx"))
     print(f"[阶段4] 已写入 {DATA_DIR / 'deck.pptx'}（6 页，含表格与 1 张图）")
 
+def _page_blocks(lines: list) -> list:
+    """
+    把正文按空行切成块：第 0 块是标题，之后每块是一节。
+
+    用途：step5 按「每页数节」分页。页与页的正文必须不同——正文相同的话
+    「阅读顺序」根本验不了（顺序错了也看不出来），样例在界面上还像解析故障。
+    """
+    blocks: list = []
+    for line in lines:
+        if not line:
+            if blocks and blocks[-1]:
+                blocks.append([])
+            continue
+        if not blocks:
+            blocks.append([])
+        blocks[-1].append(line)
+    return [block for block in blocks if block]
+
 def step5_make_pdf() -> None:
-    """造十页纯文本 PDF：每页一段规程，用于验证分页与阅读顺序。"""
+    """造三页纯文本 PDF：标题加六节规程，两节一页，用于验证分页与阅读顺序。
+
+    正文逐页不同是刻意的：先前把同一份正文贴到十页上，只能验页数，
+    验不了阅读顺序，而且每页看起来一模一样。
+    """
     import pymupdf
 
     font = _load_font(FONT_SIZE)
-    lines = _page_lines(font)
+    blocks = _page_blocks(_page_lines(font))
+    # 期望形状：标题 + 六节 = 7 块；语料被改长改短时按块数平均分，不至于炸掉
+    body = blocks[1:] if blocks else []
+    per_page = max(1, math.ceil(len(body) / 3))
+    pages = [blocks[:1] + body[index * per_page : (index + 1) * per_page] for index in range(3)]
+    pages = [page for page in pages if page]
+
     document = pymupdf.open()
-    for page_index in range(10):
+    for page_index, page_blocks in enumerate(pages):
         page = document.new_page(width=595, height=842)
-        page.insert_text((60, 70), f"第 {page_index + 1} 页 / 共 10 页", fontname="china-s", fontsize=12)
+        page.insert_text((60, 70), f"第 {page_index + 1} 页 / 共 {len(pages)} 页", fontname="china-s", fontsize=12)
         y = 110
-        for line in lines:
-            if line:
+        for block_index, block in enumerate(page_blocks):
+            if block_index:
+                y += 22  # 节与节之间留一空行
+            for line in block:
                 # 用 PyMuPDF 内置中文字体，避免依赖系统字体注册
                 page.insert_text((60, y), line, fontname="china-s", fontsize=11)
-            y += 22
-            if y > 800:
-                break
+                y += 22
+                if y > 800:
+                    break
     document.save(str(DATA_DIR / "manual.pdf"))
     document.close()
-    print(f"[阶段5] 已写入 {DATA_DIR / 'manual.pdf'}（10 页，有文字层）")
+    print(f"[阶段5] 已写入 {DATA_DIR / 'manual.pdf'}（{len(pages)} 页，有文字层，每页内容不同）")
 
 def step6_make_scanned_pdf() -> None:
     """造三页扫描件：整页是图，没有任何文字层——用来验收扫描件的页面渲染补全（ADR 0006）。"""
@@ -1259,7 +1289,7 @@ if __name__ == "__main__":
     step3_make_xlsx()
     # 阶段4：演示文稿（6 页）→ deck.pptx
     step4_make_pptx()
-    # 阶段5：纯文本 PDF（10 页，有文字层）→ manual.pdf
+    # 阶段5：纯文本 PDF（3 页，有文字层，每页两节）→ manual.pdf
     step5_make_pdf()
     # 阶段6：扫描件（3 页，无文字层）→ scanned.pdf
     step6_make_scanned_pdf()

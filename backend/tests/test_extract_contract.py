@@ -44,10 +44,10 @@ pytestmark = pytest.mark.capability_http
 RESPONSE_KEYS = {"type", "content", "summary", "meta", "usage", "timings", "error"}
 
 # 抽查代表：挑三条风险最高的路径，每条再钉一个**业务事实**（页数 / 内嵌图数 / 正文特征串）。
-# 期望值来源：`scripts/make_fixtures.py` 写死的生成参数——manual.pdf 10 页有文字层、
+# 期望值来源：`scripts/make_fixtures.py` 写死的生成参数——manual.pdf 3 页有文字层、
 # report.docx 带一个表格与 1 张内嵌图、sample.epub 3 章（spine 顺序与 manifest / zip 顺序都不同）。
 REPRESENTATIVES = (
-    ("manual.pdf", 10, 0, "=== 第1页 ==="),
+    ("manual.pdf", 3, 0, "=== 第1页 ==="),
     ("report.docx", 1, 1, "\t"),
     ("sample.epub", None, None, "=== 章节 1"),
 )

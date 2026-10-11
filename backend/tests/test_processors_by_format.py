@@ -12,7 +12,7 @@ r"""
 预期值来源（都不是「跑一遍看输出」）：
 - `README.md`「支持哪些输入」表：承诺完整解析的格式、只给结构信息的格式、降级的格式
 - 样例的生成参数（`scripts/make_fixtures.py` 各阶段写死的页数 / 条目数）：
-  manual.pdf 10 页有文字层、scanned.pdf 3 页无文字层、deck.pptx 6 页、report.docx 内嵌 1 张图、
+  manual.pdf 3 页有文字层、scanned.pdf 3 页无文字层、deck.pptx 6 页、report.docx 内嵌 1 张图、
   bundle.zip 12 条目、demo.apk 6 条目、sample.epub 3 章（spine 顺序与 manifest / zip 顺序都不同）
 - `CONTEXT.md` 的术语：「基础文件信息」「交付文本」「降级」
 """
@@ -146,15 +146,20 @@ def test_spreadsheet_reports_its_sheet_count(ctx, fixture_copy):
 @pytest.mark.capability_document
 def test_text_pdf_reports_every_page(ctx, fixture_copy):
     """
-    行为：有文字层的 PDF 逐页抽出正文，页数与内嵌图张数如实报出。
+    行为：有文字层的 PDF 逐页抽出正文，页数与内嵌图张数如实报出，且三节按文档顺序出现。
 
-    来源：样例生成参数（manual.pdf 10 页，纯文本无图）。
+    来源：样例生成参数（manual.pdf 3 页，纯文本无图，标题加六节、两节一页）。
     """
     result = run("manual.pdf", ctx, fixture_copy)
-    assert result.pages == 10
+    assert result.pages == 3
     assert result.images == 0
     assert result.content.strip()
     assert result.degraded is False
+    # 阅读顺序：页与页正文不同，顺序错了才看得出来（正文相同的样本验不了这一条）
+    marks = ["一、主办与承办", "三、组别与关门时间", "五、报名与缴费"]
+    positions = [result.content.find(mark) for mark in marks]
+    assert all(position >= 0 for position in positions), result.content
+    assert positions == sorted(positions), result.content
 
 
 @pytest.mark.capability_document
