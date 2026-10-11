@@ -29,6 +29,7 @@ from utils.convert_contract import Usage
 from utils.errors import LlmError
 from utils import request_budget
 from utils.egress import llm_egress_slot, shared_openai_client
+from extensions import registry
 
 _CN_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -261,10 +262,12 @@ class DeepSeekClient:
                 f"ledger_cny={self.ledger.cost_cny:.6f} tokens={self.ledger.total_tokens}"
             )
             if text:
+                registry.note_api_call(True)
                 return text
             last_error = "模型返回空内容"
             _sleep_within_budget(min(2 ** attempt, 8))
 
+        registry.note_api_call(False, last_error)
         raise LlmError(
             f"模型调用失败（已重试 {settings.LLM_MAX_RETRIES} 次）: {last_error}",
             "llm_call_failed",

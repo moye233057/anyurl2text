@@ -87,8 +87,17 @@ LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "8192"))
 THINKING_ENABLED = os.getenv("THINKING_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
 THINKING_EFFORT = os.getenv("THINKING_EFFORT", "high")
 
+# ---------- 扩展提供商的选择 ----------
+# 能力 → 提供商的静态名单在 configs/extensions.py；这里只放「默认选谁」与探活超时。
+# 留空 = 用名单里声明的默认（is_default=True 的那一个）；请求里传 true 时用这里的值。
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "")
+OCR_PROVIDER = os.getenv("OCR_PROVIDER", "")
+ASR_PROVIDER = os.getenv("ASR_PROVIDER", "")
+# 侧车探活超时（秒）：/probe/health 只回答「现在能不能用」，不该让前端等太久。
+EXTENSION_PROBE_TIMEOUT_SEC = float(os.getenv("EXTENSION_PROBE_TIMEOUT_SEC", "2"))
+
 # ---------- 本机 OCR 服务 ----------
-# 独立图片判型为「文字图片」时交给它读字（出口见 extensions/paddle_ocr.py）。
+# 文字转写选了 paddle 时交给它读字（出口见 extensions/paddle_ocr.py）；选 deepseek 则由模型读。
 # 服务不计 token，usage 只反映 DeepSeek 调用；服务起不来时那一张图的增强会失败并写进 meta.notes。
 OCR_API_URL = os.getenv("OCR_API_URL", "http://127.0.0.1:8021/ocr-b64")
 OCR_TIMEOUT_SEC = float(os.getenv("OCR_TIMEOUT_SEC", "60"))

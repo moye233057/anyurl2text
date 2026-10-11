@@ -6,10 +6,11 @@
 `routers/convert/schema.py` 再导出本模块，OpenAPI 与旧 import 路径仍可用。
 """
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from configs.extensions import CAPABILITY_OCR, normalize_choice
 from utils.processor_schema import AudioMeta, Detector, ErrorInfo, ImageMeta
 
 
@@ -17,13 +18,23 @@ class ConvertUrlBody(BaseModel):
     """URL 入参。"""
 
     url: str = Field(..., description="待处理的 http/https 地址")
-    ocr: bool = Field(False, description="启用 OCR 相关能力；看图支路还须同时 llm=true")
+    ocr: Union[bool, str] = Field(
+        False,
+        description="文字转写用哪个 OCR 提供商：false 不用、true 用默认，或直接给 id（deepseek / paddle）。"
+        "同一请求只能选一个。看图（判型、语义描述、扫描页、内嵌图）只要 llm=true 就会跑，不看这一项。",
+    )
     asr: bool = Field(False, description="启用音视频转写")
-    llm: bool = Field(False, description="启用 LLM（摘要/query；看图还须 ocr=true）")
+    llm: bool = Field(False, description="启用 LLM：摘要 / query，以及看图支路（判型、描述、扫描页、内嵌图）")
     query: Optional[str] = Field(
         None,
         description="可选问题。仅 llm=true 时消费：有则针对性回答，无则通用摘要。",
     )
+
+    @field_validator("ocr")
+    @classmethod
+    def _check_ocr(cls, value: Union[bool, str]) -> Union[bool, str]:
+        """名单只在 `configs/extensions.py` 一处；非法名字抛 ValueError，由 FastAPI 转成 422。"""
+        return normalize_choice(CAPABILITY_OCR, value)
 
 
 class Modality(str, Enum):
@@ -96,7 +107,7 @@ class Meta(BaseModel):
     ocr_text: Optional[str] = Field(
         None,
         description="从图像读出的文字（独立图片、文档内嵌图、扫描件页面）；"
-        "实际跑过看图时并进 content（ADR-0011/0014）。",
+        "llm=true 时并进 content（ADR-0011/0014）。文字转写用哪个提供商由请求的 ocr 决定。",
     )
     asr_text: Optional[str] = Field(
         None,

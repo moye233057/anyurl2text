@@ -1,26 +1,29 @@
 # -*- coding: utf-8 -*-
 """
-探针：只报告本服务的自身状态，不探测上游。
+探针：报告本服务的自身状态，以及各扩展提供商现在能不能用。
 
-刻意不在这里调用模型或发外部请求——探针被高频访问，一旦它带副作用，
-健康检查本身就会变成成本与故障源。
+**不调用模型、不发会产生费用的请求**：探针被高频访问，一旦它带副作用，健康检查本身就会
+变成成本与故障源。侧车（本机 OCR / ASR）用短超时的 `GET /health` 探活——它们在本机、
+不花钱；第三方 API 只查密钥是否配置，真实可用性见 `extensions/registry.note_api_call()`。
 """
 import os
 
 from fastapi import APIRouter
 
 import configs.settings as settings
+from pipelines import capabilities as capability_registry
 
 router = APIRouter(prefix="/probe", tags=["probe"])
 
 @router.get("/health", summary="存活与配置自检")
 def health() -> dict:
     """
-    报告服务存活与关键配置是否就绪。
+    报告服务存活、关键配置是否就绪，以及各扩展提供商现在能不能用。
 
-    功能：返回模型名、是否配了 API key，以及几个会影响行为的配置值，
-          供前端提示「模型未配置」这类问题，而不是等用户点了 understand 才失败。
-    应用场景：前端启动自检、本地排查。
+    功能：返回模型名、是否配了 API key、几个影响行为的配置值，外加一份能力清单
+          （能力 → 提供商 → available / reason / detail），供前端把不可用项置灰并说明原因，
+          而不是等用户点了运行才失败。
+    应用场景：前端启动自检、用户手动刷新可用性、本地排查。
     输入：无。
     输出：状态字典。
     """
@@ -49,4 +52,6 @@ def health() -> dict:
         "allow_http_source": settings.ALLOW_HTTP_SOURCE,
         "max_download_bytes": settings.MAX_DOWNLOAD_BYTES,
         "max_content_chars": settings.MAX_CONTENT_CHARS,
+        # 能力清单：每项带 available / reason / detail，前端据此置灰不可用项
+        "capabilities": capability_registry.snapshot(),
     }

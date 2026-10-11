@@ -72,8 +72,27 @@
 
 **产品**：取消双路对比；对外 `POST /convert` 与 `/convert/file`，请求字段 `ocr` / `asr` / `llm`（默认 `false`）。文档类关扩展仍做确定性抽取；图片与音视频在看图/ASR 未实际跑时只给基础文件信息。迁移完成即删除旧 `/extract*` `/understand*`，不留别名。
 
-**开关矩阵**：凡看图支路（独立图判型/OCR/语义描述、扫描件整页、内嵌图）要求 `ocr && llm`；音视频转写仅 `asr`；摘要/query 仅 `llm`。缺开关或扩展不可用则跳过并写 `meta.notes`，不静默半套。
+**开关矩阵**：凡看图支路（独立图判型/OCR/语义描述、扫描件整页、内嵌图）要求 `ocr && llm`；音视频转写仅 `asr`；摘要/query 仅 `llm`。缺开关或扩展不可用则跳过并写 `meta.notes`，不静默半套。 **（本条矩阵已由 ADR-0015 取代：看图只看 `llm`；`ocr` 改为提供商单选。）**
 
 **扩展**：OCR/ASR **服务进程**在仓库根 `services/{ocr,asr}/<实现名>/`（专栏下可多实现，一实现一端口）；权重在该实现自己的 `models/`（不进 git）。**出口客户端**只在 `backend/extensions/`。默认由 `start.py` 拉起管理子进程，亦可按 `services/` README 手动起。LLM 走同一客户端：远程 DeepSeek 或本机 OpenAI 兼容端点（换 `BASE_URL`）。
 
 **否掉**：双栏对比主路径；权重进 git；默认依赖外部 ModelServer 仓；旧路由长期别名；看图只开 `ocr` 或只开 `llm` 仍强行半跑。
+
+## ADR-0015 · 2026-10-11 · 扩展按「能力 → 提供商」注册；OCR 改为提供商单选，探活决定谁能用
+
+**背景**：扩展既有本机侧车（Paddle OCR / Qwen3-ASR），也有第三方 API（DeepSeek）。此前「谁能干这件事」是写死的：`ocr` 只是个布尔，独立文字图一律交本机 Paddle——于是配了 API key 也绕不开侧车，侧车没起就整条路失败；而「某项现在能不能用」只能等用户点了运行、由失败信息告诉他。
+
+**决定**：
+
+1. 能力与提供商的**名字**在 `configs/extensions.py` 声明一次（能力 `llm` / `ocr` / `asr`；OCR 有两家：`deepseek` 模型视觉、`paddle` 本机侧车）；探活、单选与能力快照在 `extensions/registry.py`。名单放 `configs/` 是因为契约层与路由层按依赖单向（ADR-0010）都到不了 `extensions/`。
+2. 请求契约里 `ocr` 变成**提供商单选**：`false` / `true`（用默认）/ 提供商 id；同一请求只能选一个，非法名字当场 422。
+3. `/probe/health` 增加 `capabilities`（每个提供商的 `available` / `reason` / `detail`），前端据此把不可用项置灰并写明原因。
+4. **探活口径**：侧车探 `GET <origin>/health`（本机、不花钱）；API 只看密钥是否配置，**绝不发模型请求**——「探针不带副作用」优先于「显示最真实状态」。API 的真实可用性另用记忆的上次调用结果提示，并留出用户主动「测试连接」的位置。
+5. **门闩拆开**：看图（判型、语义描述、扫描页、内嵌图）只看 `llm`；`ocr` 只管独立文字图的转写交给谁。
+6. 文字转写按**方案 B**：选模型提供商时，文字由判型那次调用一并返回（图本来就在那次调用里），不再单发一次转录请求；只有「被要求转写」时才在提示里要它，选本机 OCR 时不白花这份 token。
+
+**后果**：
+
+- 只配 `DEEPSEEK_API_KEY` 就能覆盖读图的大部分路径，不必起 OCR 侧车；选 `paddle` 则完全不花 token。
+- 新增一家实现只需在 `configs/extensions.py` 加一条、在 `extensions/registry.py` 补一个探活分支；路由、界面、契约都不再各写一份名字。
+- 侧车的 502 类误报暴露出一件事：本地调用不能走代理。`utils/egress.shared_httpx_client()` 已改为 `trust_env=False`——httpx 在 Windows 上会经 `urllib.request.getproxies()` 读到注册表里的 WinINET 代理（且不认它的 `ProxyOverride` 例外表），把「本机侧车没起」伪装成「上游 502」。

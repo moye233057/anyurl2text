@@ -55,6 +55,9 @@
 | 处理器契约 | `backend/utils/processor_schema.py` | 已实现 |
 | HTTP 契约主体 | `backend/utils/convert_contract.py` | 已实现 |
 | 扩展出口客户端（读素材 / DeepSeek / OCR·ASR HTTP） | `backend/extensions/`（原 `backend/models`） | 已实现 |
+| 能力与提供商的静态名单（名字的唯一声明处） | `backend/configs/extensions.py` | 已实现 |
+| 提供商探活、单选与能力快照 | `backend/extensions/registry.py` | 已实现 |
+| 能力清单的管线出口（供 `/probe/health`） | `backend/pipelines/capabilities.py` | 已实现 |
 | 多格式表格公共件 | `backend/utils/excel/` | 已实现 |
 | 一格式族一文件处理器 | `backend/pipelines/processors/*.py` | 已实现 |
 | 限额 / 错误码 | `backend/configs/limits.py`、`errors.py` | 已实现 |
@@ -64,7 +67,7 @@
 | **ASR 扩展模块** | `services/asr/qwen3-asr/`（自 ModelServer/qwen3-asr；独立进程） | 已实现（权重自备） |
 | **扩展权重** | `各服务自己的 models/`（gitignore；使用者自备） | 已实现（目录约定 + ignore） |
 | **扩展安装与启动说明** | `services/{ocr,asr}/<实现名>/README` + `各服务自己的 models/README` | 内联（RUNBOOK 细则未完） |
-| **能力门闩**（开关 × 健康 × 模态） | `pipelines/convert.py` | 已实现（开关×模态；健康探测未扩） |
+| **能力门闩**（选择 × 提供商 × 模态） | `pipelines/convert.py` + `extensions/registry.py` | 已实现（含探活与置灰数据） |
 | LLM 扩展出口 | `backend/extensions/deepseek.py`（远程 DeepSeek 或本机 OpenAI 兼容，换 `BASE_URL`） | 已实现（远程；本机端点验收未做） |
 | 样例与测试 | `backend/scripts/make_fixtures.py`；`backend/tests/` | 已实现（开关矩阵；HTTP 缝须后端在跑） |
 | 前端 | `frontend/`：单路 + 三开关 | 已实现 |

@@ -5,18 +5,22 @@
 纯代码对一张图拿不到任何文字，能确定拿到的是格式、尺寸、色彩模式与拍摄参数。
 认字是 understand 的职责——两条管线的边界在这里最清楚，也是「取舍」叙事的支点。
 
-模型增强走本文件的 `enhance_image`（ADR 0007 的「按格式聚合处理器」）：先用视觉模型判型，语义图片
-直接用这次调用给出的描述，文字图片交本机 Paddle OCR 读字——分流与说明都在那一个函数里，见该函数。
+模型增强走本文件的 `enhance_image`（ADR 0007 的「按格式聚合处理器」）：一次视觉调用同时判型、
+给语义描述，并在需要时**顺手把文字图片转写掉**（方案 B：图本来就在那次调用里，省掉第二次请求）；
+文字转写也可以改交给本机 Paddle OCR——交给谁由请求里的 ocr 提供商决定（ADR-0015），
+分流与说明都收在那一个函数里，见该函数。
 
 SVG 走纯 XML 解析给出画布尺寸与元素统计——矢量图不需要光栅化就能报出结构，
 不必为了拿几个结构字段把它渲染成位图。
 """
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 from PIL import Image
 
+import configs.extensions as ext
+from configs.extensions import CAPABILITY_OCR
 from configs.log_config import logger
 from configs.settings import PROMPTS_DIR
 from extensions import paddle_ocr
@@ -161,15 +165,16 @@ def extract_image(path: Path, ext: str) -> ExtractResult:
         return result
 
 
-# 判型结果：模型判为语义图片时，描述由这次判型调用一并给出，不再 OCR
+# 判型结果：模型判为语义图片时，描述由这次判型调用一并给出，不再读字
 SEMANTIC_KIND = "semantic"
 
-def _ocr_outcome(prepared: PreparedSource) -> EnhanceOutcome:
+
+def _paddle_outcome(prepared: PreparedSource) -> EnhanceOutcome:
     """
-    文字图片分支：交给本机 Paddle OCR 读字。
+    本机 OCR 分支：把图交给 Paddle 侧车读字。
 
     功能：出口（`extensions/paddle_ocr.py`）只负责发图收字，分流与说明放在这里。
-    应用场景：判型为文字图片，以及判型输出解析不出来时调用（拿不准就 OCR）。
+    应用场景：请求选了 paddle 提供商时调用（判不判型由调用方决定）。
     输入：prepared — 已落盘并识别过的图片。
     输出：EnhanceOutcome：读到文字填 ocr_text，没读到就只在 notes 里说明。
     异常：LlmError — OCR 失败，由调用方转成 notes。
@@ -187,25 +192,97 @@ def _ocr_outcome(prepared: PreparedSource) -> EnhanceOutcome:
         limits_hit=ocr_hits,
     )
 
-def enhance_image(client: DeepSeekClient, prepared: PreparedSource) -> EnhanceOutcome:
-    """
-    独立图片的模型增强：先判型，再分流到「客观描述」或「OCR」。
 
-    功能：一次视觉模型调用同时拿到判型与语义描述——判为语义图片时，这次调用给出的 description
-          就是产出（不再 OCR）；判为文字图片时把图交给本机 Paddle OCR 读字。
-          判型输出解析不出来时按文字图片处理：OCR 是本机服务、不花 token，漏掉整页文字代价更大。
-    应用场景：understand 遇到源本身就是图片时调用（`understand._run_model_enhance()` 分派到这里）。
-    输入：client — 模型客户端；prepared — 已落盘并识别过的图片。
-    输出：EnhanceOutcome：语义图片给 description，文字图片给 ocr_text，分支说明进 notes。
-    异常：LlmError — 判型调用或 OCR 失败。
+def _model_text_outcome(parsed: Any, provider: str, encode_hits: list) -> EnhanceOutcome:
     """
+    模型转写分支（方案 B）：文字取自判型那次调用一并返回的 `text`。
+
+    功能：不再为文字图片单发一次转录请求——图本来就在判型调用里，让它顺手读掉。
+    应用场景：请求选的 OCR 提供商需要模型（如 deepseek）。
+    输入：parsed — 判型调用的 JSON 结果；provider — 提供商 id；encode_hits — 编码阶段命中的上界。
+    输出：EnhanceOutcome：拿到文字填 ocr_text，没拿到就说明原因。
+    """
+    text = ""
+    if isinstance(parsed, dict):
+        text = str(parsed.get("text", "") or "").strip()
+    if not text:
+        return EnhanceOutcome(
+            notes=[f"判为文字图片，但提供商 {provider} 这次没有返回文字（可能只给了分类）"],
+            limits_hit=list(encode_hits),
+        )
+    return EnhanceOutcome(
+        ocr_text=text,
+        notes=[f"判为文字图片，已由模型（{provider}）读出 {len(text)} 字"],
+        limits_hit=list(encode_hits),
+    )
+
+
+def _text_outcome(
+    prepared: PreparedSource,
+    parsed: Any,
+    provider: Optional[str],
+    encode_hits: list,
+) -> EnhanceOutcome:
+    """
+    文字图片分支：按提供商决定文字从哪来。
+
+    功能：把「模型读 / 本机读 / 不读」收在一处，路由不散到调用方去。
+    应用场景：判型为文字图片，以及判型输出解析不出来时（拿不准就转写，漏掉整段文字代价更大）。
+    输入：prepared — 图片；parsed — 判型结果（本机 OCR 分支用不到）；provider — 提供商 id；
+          encode_hits — 编码阶段命中的上界名。
+    输出：EnhanceOutcome。
+    异常：LlmError — 侧车调用失败。
+    """
+    if provider is None:
+        return EnhanceOutcome(
+            notes=["判为文字图片，但没有选 OCR 提供商，未做转写"],
+            limits_hit=list(encode_hits),
+        )
+    if ext.needs_model(CAPABILITY_OCR, provider):
+        return _model_text_outcome(parsed, provider, encode_hits)
+    outcome = _paddle_outcome(prepared)
+    outcome.limits_hit.extend(encode_hits)
+    return outcome
+
+
+def enhance_image(
+    client: Optional[DeepSeekClient],
+    prepared: PreparedSource,
+    provider: Optional[str],
+) -> EnhanceOutcome:
+    """
+    独立图片的增强：判型 → 语义描述 / 文字转写。
+
+    功能：一次视觉调用同时拿到判型、语义描述与文字。判为语义图片时用这次调用给的
+          description；判为文字图片且提供商需要模型时，用同一次调用一并返回的 `text`
+          （方案 B），否则把图交给本机 Paddle OCR。判型输出解析不出来时按文字图片处理：
+          漏掉整段文字的代价比多读一遍大。
+          没有模型客户端（未开 llm）时不判型——选了不吃模型的提供商就直接读字，
+          专用 OCR 不需要先知道图属于哪一类。
+    应用场景：understand 遇到源本身就是图片时调用（`convert._run_enhance()` 分派到这里）。
+    输入：client — 模型客户端，未开 llm 时为 None；prepared — 已落盘并识别过的图片；
+          provider — OCR 提供商 id，None 表示不做文字转写。
+    输出：EnhanceOutcome：语义图片给 description，文字图片给 ocr_text，分支说明进 notes。
+    异常：LlmError — 模型调用或侧车调用失败。
+    """
+    if client is None:
+        if provider and not ext.needs_model(CAPABILITY_OCR, provider):
+            return _paddle_outcome(prepared)
+        return EnhanceOutcome(notes=["未开 llm，且所选提供商需要模型：跳过图片增强"])
+
+    # 只有模型要转写时才要求它转写：选本机 OCR 时多要一段文字等于白花 token，
+    # 而这次调用的判型结果本机 OCR 也用不上。
+    wants_model_text = bool(provider) and ext.needs_model(CAPABILITY_OCR, provider)
     data_url, encode_hits = encode_image(prepared.path)
+    ask = "请按 json 结构判断这张图的类型并给出内容。"
+    if wants_model_text:
+        ask += "若它是文字图片，请把图上的文字逐字转写到 text。"
     messages = [
         {"role": "system", "content": (PROMPTS_DIR / "classify_image.txt").read_text(encoding="utf-8").strip()},
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": "请按 json 结构判断这张图的类型并给出内容。"},
+                {"type": "text", "text": ask},
                 {"type": "image_url", "image_url": {"url": data_url}},
             ],
         },
@@ -215,9 +292,7 @@ def enhance_image(client: DeepSeekClient, prepared: PreparedSource) -> EnhanceOu
 
     if kind != SEMANTIC_KIND:
         logger.info(f"独立图片判型：按文字图片处理（kind={kind or '判型输出无法解析'}）")
-        outcome = _ocr_outcome(prepared)
-        outcome.limits_hit.extend(encode_hits)
-        return outcome
+        return _text_outcome(prepared, parsed, provider, encode_hits)
 
     description = str(parsed.get("description", "") or "").strip()
     logger.info(f"独立图片判型：语义图片，描述 {len(description)} 字")
@@ -225,6 +300,6 @@ def enhance_image(client: DeepSeekClient, prepared: PreparedSource) -> EnhanceOu
         return EnhanceOutcome(notes=["判为语义图片，但模型没有给出描述"], limits_hit=encode_hits)
     return EnhanceOutcome(
         description=description,
-        notes=["判为语义图片，只给客观描述、不做 OCR"],
+        notes=["判为语义图片，只给客观描述、不做转写"],
         limits_hit=encode_hits,
     )

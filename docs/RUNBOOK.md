@@ -165,7 +165,7 @@ mp4 那一份需要 `imageio-ffmpeg`（可选依赖），没装时脚本跳过�
 打开前端后是**单路**：左侧选源与能力开关，右侧看结果。
 
 - **输入**：切「远程 URL / 本地文件」，可点预设样例：本仓样例走本地上传，远程条目填入 URL（并尝试复制到剪贴板）。
-- **能力开关**：`OCR` / `ASR` / `LLM`（默认全关）。看图支路要 OCR 与 LLM 同时开；音视频转写只开 ASR；摘要只开 LLM。矩阵见 [API.md](./API.md) §1.1。
+- **能力选择**：`LLM` / `ASR` 是开关，`OCR` 是提供商单选（模型视觉 / 本机 Paddle），同一能力只能选一个。看图（判型、语义描述、扫描页、内嵌图）只要 LLM；音视频转写要 ASR；摘要要 LLM。不可用项在界面上置灰，原因来自 `/probe/health` 的 `capabilities`。矩阵见 [API.md](./API.md) §1.1。
 - **运行**：一次请求打 `POST /convert`（或 `/convert/file`），开关随请求带上。
 
 预设样例由 `frontend/public/presets.config.js` 配置：一个带注释的顶层文件，页面启动时按 URL 取回来，

@@ -116,7 +116,7 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 
 | 分支 | 条件 | 实现 |
 |---|---|---|
-| 独立图片 | 源本身是图片且没有素材清单 | `image.enhance_image()`：判型后分流到描述或本机 OCR |
+| 独立图片 | 源本身是图片且没有素材清单 | `image.enhance_image()`：一次调用判型 + 语义描述 + 文字转写；转写给谁由 `ocr` 的提供商决定（ADR-0015） |
 | 音频与视频 | 源是音视频 | `media.enhance_media()`：拿步骤 4 抽好的音轨送本机 ASR |
 | 其余 | 有素材清单的文档与网页 | `reading.enhance_assets()`：`kind="page"` 逐页识别，`kind="image"` 批量识读 |
 
@@ -131,7 +131,7 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 | 出口 | 何时用 | 记账 |
 |---|---|---|
 | `deepseek.py`（视觉 + 文本，`deepseek-flash`） | 判型、页面识别、内嵌图识读、摘要、按 query 回答 | 记账（`usage`） |
-| `paddle_ocr.py`（本机 `POST /ocr-b64`） | 独立图片判为文字图片后读字 | 不记账 |
+| `paddle_ocr.py`（本机 `POST /ocr-b64`） | 独立图片的文字转写**选了 paddle 时**才用 | 不记账 |
 | `qwen3_asr.py`（本机 `POST /asr-b64`） | 音轨转写 | 不记账 |
 
 `deepseek.chat()` 统一负责：显式给 `max_tokens`、默认关思考模式、空内容与异常按 `LLM_MAX_RETRIES` 重试、每次调用记进账本。提示词模板都在 `extensions/prompts/`：`classify_image.txt`、`read_scanned_page.txt`、`read_embedded_images.txt`、`summarize.txt`、`answer.txt`。
@@ -166,7 +166,7 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 | odt / odp | 段落 + 标题 + 表格（制表符）+ 嵌套列表 | 按结构递归读 ZIP 内 `content.xml` | 无素材，直接进摘要 |
 | 纯文本族 | 文本本身（json/xml 美化） | 解码直读；rtf 走控制字解析 | 无素材，直接进摘要 |
 | html / htm | 标题 + 摘要 + 正文 + 链接 | BeautifulSoup 剥标签取文本 | 无素材，直接进摘要 |
-| 图片 | 空串 | 只给尺寸 / 格式 / EXIF | 先判型：语义图给描述，文字图交本机 OCR → `ocr_text` |
+| 图片 | 空串 | 只给尺寸 / 格式 / EXIF | 判型：语义图给描述；文字图交给 `ocr` 所选提供商转写 → `ocr_text` |
 | 音频 / 视频 | 空串 | 报音轨参数（时长 / 采样率 / 声道） | 抽音轨送本机 ASR → `asr_text` |
 | 压缩包 | 条目清单 | 只读目录，不解压 | 无素材，直接进摘要 |
 | 安装包 | 文件头 + 指纹行 + 条目清单 | 容器条目 + 结构特征 | 无素材，直接进摘要 |

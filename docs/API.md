@@ -1,7 +1,7 @@
 # 接口与响应契约
 
 > **用途**：怎么调、响应每个字段是什么意思、失败长什么样。  
-> **目标态**：`POST /convert` + `ocr` / `asr` / `llm`（ADR-0014）。  
+> **目标态**：`POST /convert` + `ocr` / `asr` / `llm`（ADR-0014）；`ocr` 为提供商单选（ADR-0015）。  
 > **现行**：仅 `/convert`·`/convert/file`；旧双路已删除。  
 > **关联**：[architecture.md](./architecture.md) · [adr.md](./adr.md) · [CONTEXT.md](../CONTEXT.md)  
 > **基线**：2026-10-02 · **目标态修订**：2026-10-10
@@ -24,27 +24,30 @@
 |---|---|---|---|
 | `url` | 是（JSON） | — | `http` / `https` |
 | `file` | 是（上传） | — | 文件本体 |
-| `ocr` | 否 | `false` | 启用 OCR 相关能力（看图读字支路还须 `llm`，见 §1.1） |
+| `ocr` | 否 | `false` | 文字转写用哪个 OCR 提供商：`false` 不用 / `true` 用默认 / 提供商 id（`deepseek`、`paddle`）。同一请求只能选一个，见 §1.1（ADR-0015） |
 | `asr` | 否 | `false` | 启用音视频转写 |
-| `llm` | 否 | `false` | 启用 LLM（摘要 / query；看图相关还须 `ocr`） |
+| `llm` | 否 | `false` | 启用 LLM：摘要 / query，以及看图支路（判型、语义描述、扫描页、内嵌图） |
 | `query` | 否 | — | 仅 `llm=true` 时消费：有则针对性回答，无则通用摘要 |
 
 空串 `query` 按「没有 query」处理。不要传字符串 `"None"` / `"null"`。
 
-### 1.1 开关矩阵
+### 1.1 能力选择矩阵
 
-「实际会跑」= 下表所需开关均为 `true` **且** 对应扩展可用（健康 / 已配置）。缺任一则跳过该行为，并在 `meta.notes`（或 `model_error`）说明，不静默假装成功。
+「实际会跑」= 下表条件满足 **且** 该扩展可用（`/probe/health` 的 `capabilities` 里 `available=true`）。缺则跳过该行为，并在 `meta.notes`（或 `model_error`）说明，不静默假装成功。
 
-| 行为 | 所需开关 |
+`ocr` 是**提供商单选**（ADR-0015）：`false` 不用、`true` 用默认提供商、或直接给提供商 id。名单的唯一事实源是 `backend/configs/extensions.py`，当前是 `deepseek`（模型视觉）与 `paddle`（本机 8021）。
+
+| 行为 | 需要什么 |
 |---|---|
-| 独立图片：判型 + OCR 读字 | `ocr` **且** `llm` |
-| 独立图片：语义描述 | `ocr` **且** `llm` |
-| 扫描件整页渲染识别 | `ocr` **且** `llm` |
-| 文档内嵌图认字 | `ocr` **且** `llm` |
+| 独立图片：判型 | `llm` |
+| 独立图片：文字转写 | `ocr` 选一个提供商。选 `deepseek` 时由判型那次调用一并返回文字（省一次请求）；选 `paddle` 时交给本机侧车，不需要 `llm` |
+| 独立图片：语义描述 | `llm` |
+| 扫描件整页渲染识别 | `llm` |
+| 文档内嵌图转写 | `llm` |
 | 音视频转写 | `asr` |
 | 摘要 / query 回答 | `llm` |
 
-凡涉及「看图」的支路一律要求 `ocr && llm`（判型 / 视觉走 LLM，读字走 OCR）。只开其一：看图支路不跑。
+看图（判型、语义描述、扫描页、内嵌图）只看 `llm`；`ocr` 只决定**独立文字图**的转写交给谁——本机侧车与模型的视觉能力是同一能力的两家实现。
 
 ## 2. 响应结构
 
@@ -109,10 +112,10 @@ LLM 可为远程 DeepSeek 或本机 OpenAI 兼容端点（同一客户端，靠 
 
 ## 10. 样例（目标态语义）
 
-### 图片 · `ocr=true` 且 `llm=true`
+### 图片 · `llm=true`
 
-判为文字图片：`content` 与 `meta.ocr_text` 为 OCR 全文；若还需摘要则另开一次 LLM。  
-`ocr`/`llm` 任一为 false：看图支路不跑，`content` 为空，仅 `meta.image` 等基础信息。
+判为文字图片：文字由 `ocr` 选的提供商读出（模型视觉或本机 Paddle），`content` 与 `meta.ocr_text` 为该文本；若还需摘要则另开一次 LLM。  
+`llm=false` 且 `ocr` 没选（或选的是需要模型的提供商）：看图支路不跑，`content` 为空，仅 `meta.image` 等基础信息。
 
 ### 表格 · 三开关皆 false
 
