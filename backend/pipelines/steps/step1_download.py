@@ -22,10 +22,10 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
 
-import httpx
+import httpcore
 
 import configs.errors as errors
 import configs.settings as settings
@@ -162,12 +162,30 @@ def _pinned_url(url: str, connect_ip: str) -> Tuple[str, str, str]:
     return pinned, _host_header(parsed), host
 
 
-def _budgeted_timeout(deadline: float) -> httpx.Timeout:
-    """按剩余预算收紧超时，避免「连接与读取各自用满」把总时间冲爆。"""
+def _budgeted_timeout(deadline: float) -> dict:
+    """
+    按剩余预算收紧超时，避免「连接与读取各自用满」把总时间冲爆。
+
+    形态是 httpcore 的 `timeout` 扩展（一个 dict），不是 httpx.Timeout。
+    """
     remaining = max(1.0, deadline - time.monotonic())
     connect = min(settings.CONNECT_TIMEOUT_SEC, remaining)
     read = min(settings.READ_TIMEOUT_SEC, remaining)
-    return httpx.Timeout(connect=connect, read=read, write=connect, pool=connect)
+    return {"connect": connect, "read": read, "write": connect, "pool": connect}
+
+
+def _header_value(headers: List[Tuple[bytes, bytes]], name: str) -> Optional[str]:
+    """
+    取 httpcore 响应里的一个头。
+
+    httpcore 的响应头是 `[(bytes, bytes)]` 列表而不是 dict，所以按名字逐个比、大小写不敏感；
+    值按 latin-1 解——HTTP 头是字节，`Content-Disposition` 里的非 ASCII 文件名靠它保持原样。
+    """
+    wanted = name.lower().encode("ascii")
+    for key, value in headers:
+        if key.lower() == wanted:
+            return value.decode("latin-1")
+    return None
 
 
 def _filename_from_disposition(header: Optional[str]) -> str:
@@ -181,7 +199,7 @@ def _filename_from_disposition(header: Optional[str]) -> str:
 
 
 def _stream_to_file(
-    response: httpx.Response,
+    response: httpcore.Response,
     url: str,
     dest_dir: Path,
     deadline: float,
@@ -196,7 +214,7 @@ def _stream_to_file(
     输出：FetchedFile。
     异常：FetchError — 超限（413）、超时（504）或写盘失败（500）。
     """
-    declared = response.headers.get("content-length")
+    declared = _header_value(response.headers, "content-length")
     if declared and declared.isdigit() and int(declared) > settings.MAX_DOWNLOAD_BYTES:
         raise FetchError(
             f"文件过大: {int(declared)} 字节，超过上限 {settings.MAX_DOWNLOAD_BYTES} 字节",
@@ -210,7 +228,9 @@ def _stream_to_file(
     written = 0
     try:
         with open(handle, "wb") as sink:
-            for chunk in response.iter_bytes(settings.DOWNLOAD_CHUNK_BYTES):
+            # httpcore 每次最多读 64 KiB（http11.READ_NUM_BYTES），与 DOWNLOAD_CHUNK_BYTES 同值，
+            # 所以这里不再显式传粒度：边收边数的语义与逐块中断的上界都没变。
+            for chunk in response.iter_stream():
                 if not chunk:
                     continue
                 if time.monotonic() > deadline:
@@ -227,14 +247,14 @@ def _stream_to_file(
         target.unlink(missing_ok=True)
         raise
 
-    file_name = _filename_from_disposition(response.headers.get("content-disposition"))
+    file_name = _filename_from_disposition(_header_value(response.headers, "content-disposition"))
     if not file_name:
         file_name = Path(urlsplit(url).path).name
     return FetchedFile(
         path=target,
         url=url,
         size_bytes=written,
-        content_type=response.headers.get("content-type"),
+        content_type=_header_value(response.headers, "content-type"),
         file_name=file_name,
     )
 
@@ -261,25 +281,30 @@ def download(url: str, dest_dir: Path) -> FetchedFile:
 
     headers = {"User-Agent": settings.USER_AGENT, "Accept": "*/*"}
     try:
-        with httpx.Client(follow_redirects=False, verify=True, headers=headers) as client:
+        # 这一跳用 httpcore 而不是 httpx 发（2026-10-11 实测 httpx 0.28.1 + httpcore 1.0.9 不行）：
+        # httpx 会把请求 URL 上的主机——这里是钉死的 IP——当成 TLS 的 server_hostname，
+        # `sni_hostname` 扩展被它丢掉，证书于是按 IP 校验，**所有 https 都 CERTIFICATE_VERIFY_FAILED**。
+        # httpcore 认这个扩展（`_sync/connection.py` 读它并当 server_hostname 用），
+        # 于是 ADR 0005 第 1 条（钉 IP）与第 3 条（TLS 不降级）同时成立。
+        # 换回来之前先看这条注释：httpx 那条路不是「配置不对」，是它这一层就做不到。
+        with httpcore.ConnectionPool() as pool:
             for _ in range(settings.MAX_REDIRECTS + 1):
                 previous_scheme = urlsplit(current).scheme
                 connect_ip = _assert_safe_url(current)
                 pinned, host_header, sni_host = _pinned_url(current, connect_ip)
                 request_headers = {**headers, "Host": host_header}
-                extensions = {"sni_hostname": sni_host} if previous_scheme == "https" else {}
-                with client.stream(
-                    "GET",
-                    pinned,
-                    headers=request_headers,
-                    timeout=_budgeted_timeout(deadline),
-                    extensions=extensions,
-                ) as response:
-                    if response.status_code in REDIRECT_STATUS:
-                        location = response.headers.get("location")
+                extensions = {"timeout": _budgeted_timeout(deadline)}
+                if previous_scheme == "https":
+                    extensions["sni_hostname"] = sni_host
+                response = pool.handle_request(
+                    httpcore.Request("GET", pinned, headers=request_headers, extensions=extensions)
+                )
+                try:
+                    if response.status in REDIRECT_STATUS:
+                        location = _header_value(response.headers, "location")
                         if not location:
                             raise FetchError(
-                                f"HTTP {response.status_code} 重定向但缺少 Location",
+                                f"HTTP {response.status} 重定向但缺少 Location",
                                 502,
                                 "download_redirect_missing_location",
                             )
@@ -295,16 +320,19 @@ def download(url: str, dest_dir: Path) -> FetchedFile:
                         current = next_url
                         logger.info(f"fetch 重定向 -> {redact_url_for_log(current)}")
                         continue
-                    if response.status_code >= 400:
-                        raise FetchError(f"下载失败，HTTP {response.status_code}", 502, "download_http_error")
+                    if response.status >= 400:
+                        raise FetchError(f"下载失败，HTTP {response.status}", 502, "download_http_error")
                     fetched = _stream_to_file(response, current, dest_dir, deadline)
                     logger.info(
                         f"fetch 完成 size={fetched.size_bytes} content_type={fetched.content_type}"
                     )
                     return fetched
-    except httpx.TimeoutException as exc:
+                finally:
+                    # 每一跳都要关：成功时响应体已写完，重定向与非 2xx 时也得把连接放回池子。
+                    response.close()
+    except httpcore.TimeoutException as exc:
         raise FetchError("下载超时", 504, "download_timeout") from exc
-    except httpx.HTTPError as exc:
+    except httpcore.NetworkError as exc:
         raise FetchError(f"网络错误: {exc}", 502, "download_network_error") from exc
 
     raise FetchError(f"重定向次数超过上限 {settings.MAX_REDIRECTS}", 502, "download_redirect_limit")

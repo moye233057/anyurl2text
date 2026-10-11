@@ -37,7 +37,7 @@ HARD_FAILURE_CODES = frozenset({
     "download_network_error",              # step1_download.download：网络异常（502；也是默认码）
     "download_redirect_limit",             # step1_download.download：跳转次数超过上限（502）
     "download_budget_exhausted",           # step1_download._stream_to_file：请求时间预算用尽（504）
-    "download_timeout",                    # step1_download.download：httpx 超时（504）
+    "download_timeout",                    # step1_download.download：httpcore 连接 / 读取超时（504）
     "request_budget_exhausted",            # 解析/模型阶段：全链路 120s 预算用尽（504）
     "request_concurrency_limit",           # routers.convert：快/慢池满员（429）
     "internal",                            # 兜底：未预期的异常；文案不回显异常文本（500）
