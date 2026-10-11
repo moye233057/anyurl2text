@@ -6,7 +6,7 @@
 
 [项目介绍](#项目介绍) · [快速开始](#快速开始) · [怎么工作](#怎么工作) · [接口用法](#接口用法) · [项目结构](#项目结构) · [许可与第三方](#许可与第三方)
 
-![前端：输入区（模式 / 能力开关 / 预设样例）与结果区（用量、统计、元信息、正文）](docs/images/screenshot-web.png)
+![前端：输入区（模式 / 扩展能力 / 预设样例）与结果区（用量、统计、元信息、正文）](docs/images/screenshot-web.png)
 ![PDF：按页标注的正文抽取，元信息给出页数与解析器](docs/images/screenshot-pdf.png)
 ![xlsx：表头与列位对齐，空单元格不错位](docs/images/screenshot-table.png)
 
