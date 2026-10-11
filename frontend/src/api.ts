@@ -8,7 +8,8 @@ export interface ConvertInput {
   url: string
   file: File | null
   query: string
-  ocr: boolean
+  /** OCR 提供商：false 不用；字符串是提供商 id（see configs/extensions.py）。同一请求只能选一个。 */
+  ocr: boolean | string
   asr: boolean
   llm: boolean
 }

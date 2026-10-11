@@ -3,7 +3,7 @@ r"""
 缝 A2：进程内转换管线（**假客户端，免费**）。
 
 缝：`ConvertPipeline.run_from_upload()` —— 真实编排，模型客户端换成脚本化替身。
-开关矩阵见 docs/API.md §1.1；看图要 ocr∧llm。
+能力选择见 docs/API.md §1.1 与 ADR-0015：看图只要 `llm`；`ocr` 是**独立文字图转写**的提供商单选。
 """
 import json
 import tempfile
@@ -24,6 +24,8 @@ STUB_SUMMARY = "假模型给的摘要"
 STUB_IMAGE_TEXT = "假模型读出的图里的字"
 STUB_USAGE = {"prompt_tokens": 120, "prompt_cache_hit_tokens": 20, "completion_tokens": 30}
 
+# 「纯代码」= 不含内嵌图素材：仅开 llm 时正文只该多出摘要，不该多出图像转写。
+# deck.pptx 不在此列——它带一张内嵌图，而看图只看 llm（ADR-0015），所以它归 VISION_MERGE_FIXTURES。
 CODE_ONLY_FIXTURES = (
     "plain.txt",
     "table.csv",
@@ -32,12 +34,12 @@ CODE_ONLY_FIXTURES = (
     "sample.epub",
     "sample.ofd",
     "inventory.xlsx",
-    "deck.pptx",
     "legacy.doc",
 )
 
-# manual.pdf 有文字层时通常无内嵌图素材，看图支路不会跑——只验含内嵌图的 docx
-VISION_MERGE_FIXTURES = ("report.docx",)
+# 含内嵌图素材的样例：只要 llm 就会把图里的文字转写并进 content。
+# manual.pdf 有文字层时通常无内嵌图素材，所以不在此列。
+VISION_MERGE_FIXTURES = ("report.docx", "deck.pptx")
 
 
 class _StubClient:
@@ -89,7 +91,7 @@ def upload(path: Path, name: str, query=None, *, ocr=False, asr=False, llm=False
 
 @pytest.mark.parametrize("name", CODE_ONLY_FIXTURES)
 def test_llm_alone_keeps_code_content(name, stub_client, fixture_copy):
-    """文档类：仅开 llm 时 content 与全关相同，可另有摘要。"""
+    """文档类：仅开 llm 时 content 与全关相同，可另有摘要（样例保证不含内嵌图素材）。"""
     path, _ = fixture_copy(name)
     off = upload(path, name)
     on = upload(path, name, llm=True)
@@ -100,10 +102,10 @@ def test_llm_alone_keeps_code_content(name, stub_client, fixture_copy):
 
 @pytest.mark.parametrize("name", VISION_MERGE_FIXTURES)
 def test_vision_flags_merge_ocr_into_content(name, stub_client, fixture_copy):
-    """看图：ocr∧llm 时模型转写并进 content，并双写 meta.ocr_text。"""
+    """看图：只开 llm（不选 ocr）也转写内嵌图并进 content，并双写 meta.ocr_text。"""
     path, _ = fixture_copy(name)
     off = upload(path, name)
-    on = upload(path, name, ocr=True, llm=True)
+    on = upload(path, name, llm=True)
     assert STUB_IMAGE_TEXT in (on.response.meta.ocr_text or "")
     assert STUB_IMAGE_TEXT in on.response.content
     assert off.response.content.strip()
@@ -148,10 +150,10 @@ def test_query_only_changes_the_summary(stub_client, fixture_copy):
     assert asked.response.summary == STUB_SUMMARY
 
 
-def test_partial_vision_flags_skip_with_note(stub_client, fixture_copy):
-    """只开 ocr 或只开 llm 时看图支路跳过。"""
+def test_llm_off_skips_vision_with_note(stub_client, fixture_copy):
+    """没开 llm 时看图支路跳过——选不选 ocr 都改变不了这一条（ADR-0015 把门闩拆开了）。"""
     path, _ = fixture_copy("report.docx")
     only_ocr = upload(path, "report.docx", ocr=True, llm=False)
     assert stub_client.calls == 0
-    assert any("同时开启 ocr 与 llm" in n for n in only_ocr.response.meta.notes)
+    assert any("未开启 llm" in n for n in only_ocr.response.meta.notes), only_ocr.response.meta.notes
     assert STUB_IMAGE_TEXT not in (only_ocr.response.meta.ocr_text or "")

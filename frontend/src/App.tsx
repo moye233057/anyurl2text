@@ -1,18 +1,87 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import ResultPanel from './ResultPanel'
 import { loadPresets, presetKey, type Preset } from './presets'
 import { fetchHealth, runConvert } from './api'
-import type { ConvertResponse } from './types'
+import type { CapabilityStatus, ConvertResponse } from './types'
+
+type Capabilities = Record<string, CapabilityStatus> | null
+
+/**
+ * 一个能力的候选项。
+ *
+ * `id` 为空串表示「不用」（与后端契约的 false 对应）；不可用的项在界面上置灰，
+ * 原因来自后端探活（`/probe/health` 的 capabilities）。
+ */
+interface CapOption {
+  id: string
+  label: string
+  available: boolean
+  reason: string | null
+}
+
+function optionsFor(capabilities: Capabilities, capability: string): CapOption[] {
+  const options: CapOption[] = [{ id: '', label: '不用', available: true, reason: null }]
+  for (const provider of capabilities?.[capability]?.providers ?? []) {
+    options.push({
+      id: provider.id,
+      label: provider.label,
+      available: provider.available,
+      reason: provider.reason ?? null,
+    })
+  }
+  return options
+}
+
+/** 一块能力的选择器：单选，不可用项禁用并显示原因。 */
+function CapabilityPicker(props: {
+  capability: string
+  title: string
+  hint: string
+  selected: string
+  onSelect: (id: string) => void
+  capabilities: Capabilities
+}) {
+  const entry = props.capabilities?.[props.capability]
+  return (
+    <div className="cap-block">
+      <div className="cap-title">{props.title}</div>
+      <div className="cap-toggles">
+        {optionsFor(props.capabilities, props.capability).map((option) => (
+          <label key={option.id || 'off'} className={option.available ? 'cap-item' : 'cap-item off'}>
+            <input
+              type="radio"
+              name={props.capability}
+              checked={props.selected === option.id}
+              disabled={!option.available}
+              onChange={() => props.onSelect(option.id)}
+            />
+            {option.label}
+          </label>
+        ))}
+      </div>
+      {(entry?.providers ?? [])
+        .filter((provider) => !provider.available || provider.detail)
+        .map((provider) => (
+          <p key={provider.id} className={provider.available ? 'hint' : 'inline-warn'}>
+            {provider.label}：{provider.available ? provider.detail : provider.reason}
+          </p>
+        ))}
+      {!entry && <p className="hint">正在读取扩展可用性…</p>}
+      <p className="hint">{props.hint}</p>
+    </div>
+  )
+}
 
 export default function App() {
-  const [modelKeyConfigured, setModelKeyConfigured] = useState(true)
+  const [capabilities, setCapabilities] = useState<Capabilities>(null)
   const [mode, setMode] = useState<'url' | 'file'>('url')
   const [url, setUrl] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [query, setQuery] = useState('')
-  const [ocr, setOcr] = useState(false)
-  const [asr, setAsr] = useState(false)
-  const [llm, setLlm] = useState(false)
+  // 三块能力各选一个提供商；空串 = 不用
+  const [ocr, setOcr] = useState('')
+  const [asr, setAsr] = useState('')
+  const [llm, setLlm] = useState('')
   const [presets, setPresets] = useState<Preset[] | null>(null)
   const [presetProblems, setPresetProblems] = useState<string[]>([])
 
@@ -22,11 +91,15 @@ export default function App() {
   const [activePresetKey, setActivePresetKey] = useState('')
   const urlRef = useRef<HTMLTextAreaElement>(null)
 
-  useEffect(() => {
+  const refreshHealth = useCallback(() => {
     fetchHealth()
-      .then((health) => setModelKeyConfigured(health.model_key_configured))
-      .catch(() => setModelKeyConfigured(true))
+      .then((health) => setCapabilities(health.capabilities ?? null))
+      .catch(() => setCapabilities(null))
   }, [])
+
+  useEffect(() => {
+    refreshHealth()
+  }, [refreshHealth])
 
   useEffect(() => {
     loadPresets().then((loaded) => {
@@ -61,9 +134,9 @@ export default function App() {
           url: url.trim(),
           file,
           query: query.trim(),
-          ocr,
-          asr,
-          llm,
+          ocr: ocr === '' ? false : ocr,
+          asr: asr !== '',
+          llm: llm !== '',
         }),
       )
     } catch (error) {
@@ -146,22 +219,36 @@ export default function App() {
             )}
 
             <div className="field">
-              <label className="field-label">扩展能力</label>
-              <div className="cap-toggles">
-                <label className="cap-item">
-                  <input type="checkbox" checked={ocr} onChange={(e) => setOcr(e.target.checked)} />
-                  OCR
-                </label>
-                <label className="cap-item">
-                  <input type="checkbox" checked={asr} onChange={(e) => setAsr(e.target.checked)} />
-                  ASR
-                </label>
-                <label className="cap-item">
-                  <input type="checkbox" checked={llm} onChange={(e) => setLlm(e.target.checked)} />
-                  LLM
-                </label>
+              <div className="cap-head">
+                <span className="field-label">扩展能力</span>
+                <button type="button" className="link-button" onClick={refreshHealth}>
+                  刷新可用性
+                </button>
               </div>
-              <p className="hint">看图需要同时开 OCR 与 LLM；摘要只需 LLM；音视频转写只需 ASR。</p>
+              <CapabilityPicker
+                capability="llm"
+                title="LLM · 摘要与看图"
+                hint="摘要与按问题回答；图片判型、语义描述，以及扫描页与内嵌图的文字转写。"
+                selected={llm}
+                onSelect={setLlm}
+                capabilities={capabilities}
+              />
+              <CapabilityPicker
+                capability="ocr"
+                title="OCR · 文字转写交给谁"
+                hint="只决定独立图片上的文字由谁读：模型视觉能力，或本机 Paddle OCR。"
+                selected={ocr}
+                onSelect={setOcr}
+                capabilities={capabilities}
+              />
+              <CapabilityPicker
+                capability="asr"
+                title="ASR · 音视频转写"
+                hint="音视频的音轨转写成文字。"
+                selected={asr}
+                onSelect={setAsr}
+                capabilities={capabilities}
+              />
             </div>
 
             <div className="preset-box">
@@ -213,18 +300,12 @@ export default function App() {
             </div>
 
             {transportError && <div className="error-box">{transportError}</div>}
-
-            {!modelKeyConfigured && llm && (
-              <p className="inline-warn">
-                后端未配置 DEEPSEEK_API_KEY，开启 LLM / 看图时会失败并说明原因。
-              </p>
-            )}
           </div>
         </aside>
 
         <ResultPanel
           title="转换结果"
-          subtitle="确定性抽取 + 已开启且可用的扩展。"
+          subtitle="确定性抽取 + 已选中且可用的扩展。"
           result={result}
           loading={loading}
           onRun={run}

@@ -101,6 +101,30 @@ export interface ConvertResponse {
   error?: ErrorInfo | null
 }
 
+/**
+ * 一个扩展提供商的可用性，来自 `/probe/health` 的 capabilities。
+ *
+ * 名单与探活口径的唯一事实源在 Python 侧 `configs/extensions.py` 与 `extensions/registry.py`。
+ */
+export interface ProviderStatus {
+  id: string
+  label: string
+  /** api = 第三方接口（看密钥是否配置）；sidecar = 本机侧车（探 /health） */
+  kind: 'api' | 'sidecar'
+  available: boolean
+  /** 不可用的原因；可用时为 null */
+  reason?: string | null
+  /** 可用时的补充说明（如「上次调用失败」），不改变可用性 */
+  detail?: string | null
+}
+
+/** 一个能力：默认用哪个提供商，以及各提供商现在能不能用。 */
+export interface CapabilityStatus {
+  /** 请求里传 true 时用的提供商 id */
+  default: string
+  providers: ProviderStatus[]
+}
+
 export interface Health {
   status: string
   model: string
@@ -116,4 +140,6 @@ export interface Health {
   allow_http_source: boolean
   max_download_bytes: number
   max_content_chars: number
+  /** 能力名（llm / ocr / asr）→ 提供商可用性；界面据此置灰不可用项 */
+  capabilities: Record<string, CapabilityStatus>
 }

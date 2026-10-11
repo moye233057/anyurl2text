@@ -60,6 +60,41 @@ body {
   cursor: pointer;
 }
 
+/* 能力选择：一块能力一张小标题 + 一行单选；不可用项置灰并禁用（原因另起一行） */
+.cap-block {
+  margin-top: 10px;
+}
+
+.cap-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cap-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.link-button {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+.cap-item.off {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
 /* 白底铺满自己的格子（height:100%），内容多少都不影响区域本身的大小 */
 .region {
   height: 100%;
