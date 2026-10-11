@@ -46,38 +46,111 @@ body {
   gap: 14px;
 }
 
-.cap-toggles {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 6px;
+/* 扩展能力卡片：默认收起（标题上直接给「可用 N / M」），展开后一个选项一行 */
+.cap-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
 }
 
-.cap-item {
+.cap-card > summary,
+.preset-box > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 7px 10px;
+  background: #f9fafb;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.cap-card > summary::-webkit-details-marker,
+.preset-box > summary::-webkit-details-marker {
+  display: none;
+}
+
+.cap-card > summary::before,
+.preset-box > summary::before {
+  content: '▸';
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.cap-card[open] > summary::before,
+.preset-box[open] > summary::before {
+  content: '▾';
+}
+
+.cap-rows {
+  padding: 6px 8px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cap-group-title {
+  margin: 6px 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.cap-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px;
+  border-radius: 4px;
+}
+
+.cap-row.on {
+  background: #eef4ff;
+}
+
+.cap-row.off {
+  color: var(--muted);
+}
+
+.cap-row-pick {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex: 1;
+  min-width: 0;
   cursor: pointer;
 }
 
-/* 能力选择：一块能力一张小标题 + 一行单选；不可用项置灰并禁用（原因另起一行） */
-.cap-block {
-  margin-top: 10px;
+.cap-row.off .cap-row-pick {
+  cursor: not-allowed;
 }
 
-.cap-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+.cap-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.cap-title {
-  font-size: 12px;
-  font-weight: 600;
+.cap-state {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: #0f766e;
+}
+
+.cap-state.off {
+  color: var(--muted);
+}
+
+.cap-note {
+  margin: 2px 0 4px 24px;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.4;
 }
 
 .link-button {
+  flex: 0 0 auto;
   border: 0;
   background: none;
   padding: 0;
@@ -90,9 +163,10 @@ body {
   text-decoration: underline;
 }
 
-.cap-item.off {
+.link-button:disabled {
   color: var(--muted);
-  cursor: not-allowed;
+  cursor: default;
+  text-decoration: none;
 }
 
 /* 白底铺满自己的格子（height:100%），内容多少都不影响区域本身的大小 */

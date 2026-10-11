@@ -56,3 +56,18 @@ export async function fetchHealth(): Promise<Health> {
   const response = await fetch(`${BASE}/probe/health`)
   return (await response.json()) as Health
 }
+
+export interface ProviderTestResult {
+  available: boolean
+  reason?: string | null
+  detail?: string | null
+}
+
+/** 主动测一次某个提供商。API 那一条会真发一次最小请求（花极小 token），侧车只探 /health。 */
+export async function testProvider(capability: string, provider: string): Promise<ProviderTestResult> {
+  const response = await fetch(`${BASE}/probe/test/${capability}/${provider}`, { method: 'POST' })
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`)
+  }
+  return (await response.json()) as ProviderTestResult
+}

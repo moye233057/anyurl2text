@@ -133,7 +133,7 @@ python main.py
 
 ### Ⅲ 在界面里试一次
 
-打开 http://127.0.0.1:5173 ：选 URL 或本地文件 → 按需选择 LLM / OCR / ASR → 运行。不可用的扩展会置灰并写明原因，可点「刷新可用性」重探。  
+打开 http://127.0.0.1:5173 ：选 URL 或本地文件 → 在「扩展能力」卡片里选 LLM / OCR / ASR（默认收起；不可用的项置灰，点右侧「测试」通过后即可选）→ 运行。预设样例在下方，点一下就连同样例一起准备好。  
 文档类可先全关开关，确认正文；再开扩展做读图、转写或摘要。
 
 ---
@@ -177,7 +177,8 @@ flowchart LR
 |---|---|---|
 | POST | `/convert` | JSON：`url` + `llm` / `asr` / `ocr`（可选 `query`；`ocr` 传提供商 id） |
 | POST | `/convert/file` | multipart 上传文件，字段同上 |
-| GET | `/probe/health` | 自身与扩展是否就绪 |
+| GET | `/probe/health` | 自身与扩展是否就绪；`capabilities` 给每个提供商的可用性与原因 |
+| POST | `/probe/test/{capability}/{provider}` | 真实测一次这个名字；通过后界面即可选 |
 
 示例（纯抽取，扩展全关）：
 
