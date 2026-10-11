@@ -4,7 +4,11 @@
 
 确定性抽取 · OCR 读图 · ASR 转写 · LLM 摘要
 
-[项目介绍](#项目介绍) · [快速开始](#快速开始) · [怎么工作](#怎么工作) · [接口用法](#接口用法) · [项目结构](#项目结构)
+[项目介绍](#项目介绍) · [快速开始](#快速开始) · [怎么工作](#怎么工作) · [接口用法](#接口用法) · [项目结构](#项目结构) · [许可与第三方](#许可与第三方)
+
+![前端：输入区（模式 / 能力开关 / 预设样例）与结果区（用量、统计、元信息、正文）](docs/images/screenshot-web.png)
+![PDF：按页标注的正文抽取，元信息给出页数与解析器](docs/images/screenshot-pdf.png)
+![xlsx：表头与列位对齐，空单元格不错位](docs/images/screenshot-table.png)
 
 ---
 
@@ -24,7 +28,7 @@ anyurl2text 用一条统一接口 `POST /convert` 完成这件事：先将URL或
 | LLM | 摘要、按问题回答；看图时的判型与语义描述 | **理解与看图编排**。看图支路还须同时开 OCR |
 | Web 界面 | 选源、开开关、看结果 | 本机调试与日常使用 |
 
-远程仓库：https://github.com/moye233057/anyurl2text.git  
+仓库：https://github.com/moye233057/anyurl2text （镜像：https://gitee.com/osc_74795964/anyurl2text）  
 许可证：[MIT](LICENSE)  
 仓库**不收录** OCR / ASR 模型权重，需自行下载到对应服务目录或准备其它相同类型的服务。
 
@@ -208,3 +212,26 @@ anyurl2text/
 ├── frontend/                # Web：单路 + 三开关
 └── docs/                    # 内部说明（给协作与自动化用，日常使用不必读）
 ```
+
+---
+
+## 许可与第三方
+
+本仓代码以 [MIT](LICENSE) 发布。核心依赖以宽松许可为主；下面几项与「自用之外」的使用形态相关，单独说明。
+
+| 组件 | 用途 | 许可 |
+|---|---|---|
+| PyMuPDF（`pymupdf`） | PDF 抽取与扫描件页面渲染 | **AGPL-3.0**（另有商业授权） |
+| MinerU（`services/ocr/paddle-ocr` 用它加载 PP-OCRv5） | 图片读字 | Apache-2.0 **+ 附加条款** |
+| PaddleOCR / PP-OCRv5 权重 | OCR 模型 | Apache-2.0 |
+| Qwen3-ASR-1.7B | 音视频转写模型 | Apache-2.0 |
+| imageio-ffmpeg | 抽音轨（wheel 内含 ffmpeg 二进制） | BSD-2-Clause（ffmpeg 二进制另有其许可） |
+| 表格格位建模与预算量级 | `backend/utils/excel/`、`backend/configs/limits.py` | 口径参考 [firecrawl/anydoc](https://github.com/firecrawl/anydoc)（MIT），代码为本仓独立实现 |
+| 其余 Python 依赖 | — | 完整清单见 `uv.lock` 与 `services/*/requirements.txt` |
+
+两点与部署形态有关，公开托管前请自行评估：
+
+- **PyMuPDF 是 AGPL-3.0。** 本仓只在 `pyproject.toml` 里声明依赖、不重分发它。若把本服务**公开托管给第三方在线使用**，或把 PyMuPDF 一并打包进分发包，AGPL 的义务（含向使用者提供对应源代码）就会落到你身上；不接受时可换成 `pdfminer.six` / `pypdf` 这类宽松许可的实现。
+- **MinerU 是 Apache-2.0 并带附加条款。** 其中一条是**在线服务标识义务**：基于 MinerU 向第三方提供在线服务时，必须在产品界面或公开文档的显著位置标明使用了 MinerU。本地自用不受此条约束。条款全文见 [opendatalab/MinerU LICENSE](https://github.com/opendatalab/MinerU/blob/master/LICENSE.md)。
+
+本仓**不重分发** OCR / ASR 模型权重（`services/*/models/` 不入 git），也不捆绑 ffmpeg 二进制——这些由使用者在各自环境自行安装。
