@@ -52,8 +52,9 @@ export async function runConvert(input: ConvertInput): Promise<ConvertResponse> 
   return parseResponse(response)
 }
 
-export async function fetchHealth(): Promise<Health> {
-  const response = await fetch(`${BASE}/probe/health`)
+/** 读健康 + 能力清单。refresh=true 时忽略后端探活缓存强制重探（点「刷新可用性」才用）。 */
+export async function fetchHealth(refresh = false): Promise<Health> {
+  const response = await fetch(`${BASE}/probe/health${refresh ? '?refresh=true' : ''}`)
   return (await response.json()) as Health
 }
 

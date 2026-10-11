@@ -93,8 +93,13 @@ THINKING_EFFORT = os.getenv("THINKING_EFFORT", "high")
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "")
 OCR_PROVIDER = os.getenv("OCR_PROVIDER", "")
 ASR_PROVIDER = os.getenv("ASR_PROVIDER", "")
-# 侧车探活超时（秒）：/probe/health 只回答「现在能不能用」，不该让前端等太久。
-EXTENSION_PROBE_TIMEOUT_SEC = float(os.getenv("EXTENSION_PROBE_TIMEOUT_SEC", "2"))
+# 侧车探活超时（秒）：本机 /health 是毫秒级响应，0.5 秒足够。
+# 不能给大——/probe/health 有**硬性时限**：start.py 的就绪探测是 urlopen(timeout=2)，
+# 健康检查慢过 2 秒就会被判成「后端没起」（2026-10-11 踩到：4 秒的健康检查让 start.py 90 秒后放弃）。
+EXTENSION_PROBE_TIMEOUT_SEC = float(os.getenv("EXTENSION_PROBE_TIMEOUT_SEC", "0.5"))
+# 探活结果的缓存秒数：/probe/health 会被就绪探测与前端反复调用，每次真探一遍既慢又吵。
+# 缓存到这一刻；用户点「刷新可用性」时带 refresh 强制重探。
+EXTENSION_PROBE_CACHE_SEC = float(os.getenv("EXTENSION_PROBE_CACHE_SEC", "10"))
 
 # ---------- 本机 OCR 服务 ----------
 # 文字转写选了 paddle 时交给它读字（出口见 extensions/paddle_ocr.py）；选 deepseek 则由模型读。

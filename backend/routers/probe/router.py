@@ -16,16 +16,18 @@ from pipelines import capabilities as capability_registry
 router = APIRouter(prefix="/probe", tags=["probe"])
 
 @router.get("/health", summary="存活与配置自检")
-def health() -> dict:
+def health(refresh: bool = False) -> dict:
     """
     报告服务存活、关键配置是否就绪，以及各扩展提供商现在能不能用。
 
     功能：返回模型名、是否配了 API key、几个影响行为的配置值，外加一份能力清单
           （能力 → 提供商 → available / reason / detail），供前端把不可用项置灰并说明原因，
-          而不是等用户点了运行才失败。
-    应用场景：前端启动自检、用户手动刷新可用性、本地排查。
-    输入：无。
+          而不是等用户点了运行才失败。能力清单走缓存，`refresh=true` 强制重探一遍。
+    应用场景：前端启动自检、`start.py` 的就绪探测、用户手动刷新、本地排查。
+    输入：refresh — 是否忽略探活缓存强制重探（默认 false，只读缓存）。
     输出：状态字典。
+    注意：这条接口会被就绪探测反复调用，所以**必须快**（调用方只等 2 秒）——见
+          `extensions/registry.py` 模块文档的两条性能约束。
     """
     return {
         "status": "ok",
@@ -53,7 +55,7 @@ def health() -> dict:
         "max_download_bytes": settings.MAX_DOWNLOAD_BYTES,
         "max_content_chars": settings.MAX_CONTENT_CHARS,
         # 能力清单：每项带 available / reason / detail，前端据此置灰不可用项
-        "capabilities": capability_registry.snapshot(),
+        "capabilities": capability_registry.snapshot(force=refresh),
     }
 
 

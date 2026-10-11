@@ -12,8 +12,16 @@
 - API：**只看密钥是否配置**，绝不在这里发模型请求——`routers/probe/router.py` 定下的规矩是
   「探针不带副作用」，健康检查一旦会花钱，它自己就成了成本与故障源。真实可用性靠
   `note_api_call()` 记住的上一次调用，以及用户在界面上主动点的「测试连接」。
+
+两条性能约束（踩过才知道）：
+- **并发探**：一个一个探时总耗时是各家超时之和，而 `/probe/health` 的调用方（`start.py` 的就绪探测）
+  只等 2 秒——串行探两个没起的侧车就足以让它判「后端没起」。
+- **缓存**：健康检查会被就绪探测与前端反复调用，`EXTENSION_PROBE_CACHE_SEC` 内直接复用上次结果。
 """
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 from typing import Dict, NamedTuple, Optional, Union
 from urllib.parse import urlsplit, urlunsplit
 
@@ -54,6 +62,53 @@ def note_api_call(ok: bool, message: str = "") -> None:
     """
     global _last_api_call
     _last_api_call = {"ok": bool(ok), "message": (message or "")[:200]}
+
+
+# 进程内缓存：{能力/提供商: ProbeResult} 与它的取样时刻。
+# 存在的理由见模块文档的两条性能约束——健康检查的调用方只等 2 秒，探活不能每次都真跑。
+_cache: Dict[str, ProbeResult] = {}
+_cache_at: float = 0.0
+_cache_lock = Lock()
+
+
+def _cache_key(provider: ext.Provider) -> str:
+    return f"{provider.capability}/{provider.id}"
+
+
+def _remember(provider: ext.Provider, result: ProbeResult) -> ProbeResult:
+    """把一次真实测试的结果写进缓存：测完就该立刻能在界面上看到。"""
+    with _cache_lock:
+        _cache[_cache_key(provider)] = result
+    return result
+
+
+def _probe_all(force: bool = False) -> Dict[str, ProbeResult]:
+    """
+    探一遍名单里的所有提供商并写进缓存，返回 {缓存键: 结果}。
+
+    功能：缓存新鲜且没要求强制重探时直接返回上次结果（不发任何请求）；否则**并发**探一遍。
+    应用场景：`snapshot()` 的唯一数据来源。
+    输入：force — 忽略缓存强制重探。
+    输出：缓存键 → ProbeResult。
+    """
+    global _cache_at
+    providers = [provider for capability in ext.CAPABILITIES for provider in ext.PROVIDERS[capability]]
+    with _cache_lock:
+        cached = dict(_cache)
+        fresh = not force and cached and (time.monotonic() - _cache_at) < settings.EXTENSION_PROBE_CACHE_SEC
+    if fresh:
+        return cached
+    if not providers:
+        return {}
+
+    # 并发：串行时总耗时是各家超时之和，而 /probe/health 的调用方只等 2 秒。
+    with ThreadPoolExecutor(max_workers=len(providers)) as pool:
+        results = list(pool.map(probe, providers))
+    with _cache_lock:
+        for provider, result in zip(providers, results):
+            _cache[_cache_key(provider)] = result
+        _cache_at = time.monotonic()
+        return dict(_cache)
 
 
 def _sidecar_url(capability: str, provider_id: str) -> Optional[str]:
@@ -153,13 +208,15 @@ def test_provider(capability: str, provider_id: str) -> Optional[ProbeResult]:
     与 `snapshot()` 的分工：快照要便宜、可高频调用，所以侧车只探 `/health`、API 只看密钥；
     这里是真的跑一遍——侧车打 `/health`，API 发一次最小请求（会花极小的 token）。
     因此它只该由用户点「测试」触发，不能挂在健康检查里。
+
+    结果会写进缓存：用户测完就该在界面上看到它变成可选，不必等缓存过期或再探一遍。
     """
     provider = ext.find(capability, provider_id)
     if provider is None:
         return None
     if provider.kind == ext.KIND_SIDECAR:
-        return _probe_sidecar(provider)
-    return _test_api_for_real(provider)
+        return _remember(provider, _probe_sidecar(provider))
+    return _remember(provider, _test_api_for_real(provider))
 
 
 def default_provider(capability: str) -> str:
@@ -190,20 +247,24 @@ def resolve(capability: str, choice: Union[bool, str, None]) -> Optional[str]:
     return str(choice)
 
 
-def snapshot() -> Dict[str, object]:
+def snapshot(force: bool = False) -> Dict[str, object]:
     """
     能力清单：每个能力的默认选择 + 各提供商现在能不能用。
 
-    功能：一次算全所有能力的可用性与原因，供 `/probe/health` 下发、前端置灰与排障。
-    应用场景：前端启动自检、用户手动刷新、排查「这项为什么是灰的」。
-    输入：无。
+    功能：缓存内直接复用上次结果（`EXTENSION_PROBE_CACHE_SEC`），过期或 `force=True` 时真探一遍；
+          真探是**并发**的，总耗时约等于最慢那一家，而不是各家超时之和。
+    应用场景：`/probe/health` 下发、前端置灰、`?refresh=true` 强制重探、排查「这项为什么是灰的」。
+    输入：force — 忽略缓存强制重探。
     输出：{能力名: {"default": 提供商 id, "providers": [{id,label,kind,available,reason,detail}]}}。
     """
+    measured = _probe_all(force=force)
     capabilities: Dict[str, object] = {}
     for capability in ext.CAPABILITIES:
         providers = []
         for provider in ext.PROVIDERS[capability]:
-            result = probe(provider)
+            result = measured.get(_cache_key(provider)) or ProbeResult(
+                False, "尚未探测（点「刷新可用性」重试）"
+            )
             providers.append(
                 {
                     "id": provider.id,

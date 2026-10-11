@@ -239,7 +239,7 @@ uv run python -m pytest tests -m "capability_table or capability_limits" -v
 
 | # | 做什么 | 判据 |
 |---|---|---|
-| 1 | 访问 `/probe/health` | `model_key_configured` 为 `true`；启动日志里配置文件路径指向项目根目录的 `.env` |
+| 1 | 访问 `/probe/health` | `model_key_configured` 为 `true`；启动日志里配置文件路径指向项目根目录的 `.env`。**它还必须在 2 秒内返回**——`start.py` 的就绪探测是 `urlopen(timeout=2)`，健康检查慢过它就会被判成「后端没起」，而后端其实每次都是 200（2026-10-11 踩到）。侧车探活因此是并发的、带缓存的，超时只有 `EXTENSION_PROBE_TIMEOUT_SEC`（默认 0.5 秒） |
 | 2 | `/convert` 纯文本样例，三开关全关 | `type` 为 `document`，`content` 非空，`usage` 为 `null` |
 | 3 | `/convert` 含文字图（如 `screenshot.png`），`ocr`+`llm` 开（需 `services/ocr/paddle-ocr`） | `meta.ocr_text` 非空，`meta.notes` 说明判为文字图片；`usage` 非 `null` |
 | 3b | `/convert` 无文字图（如 `photo.png`），`ocr`+`llm` 开 | `meta.ocr_text` 为 `null`、`summary` 是图像客观描述，`meta.notes` 说明判为语义图片 |

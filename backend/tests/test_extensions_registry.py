@@ -92,10 +92,11 @@ def test_health_snapshot_always_carries_a_reason_when_unavailable(monkeypatch):
     """
     行为：能力快照里每个提供商都有 available；不可用时必须给出原因，可用时可以带补充说明。
 
-    探活超时压到 0.2 秒：这条只验形状，不该为了等本机侧车超时把套件拖慢。
+    探活超时压到 0.2 秒、并强制重探：这条只验形状，不该为了等本机侧车超时把套件拖慢，
+    也不该被别的用例写进缓存的假结果影响。
     """
     monkeypatch.setattr(registry.settings, "EXTENSION_PROBE_TIMEOUT_SEC", 0.2)
-    snapshot = registry.snapshot()
+    snapshot = registry.snapshot(force=True)
     assert set(snapshot) == set(CAPABILITIES)
     for capability, entry in snapshot.items():
         assert entry["default"] in provider_ids(capability)
@@ -104,6 +105,26 @@ def test_health_snapshot_always_carries_a_reason_when_unavailable(monkeypatch):
             assert isinstance(provider["available"], bool)
             if not provider["available"]:
                 assert provider["reason"], f"{capability}/{provider['id']} 不可用却没给原因"
+
+
+def test_snapshot_reuses_the_cache_within_its_ttl(monkeypatch):
+    """
+    行为：缓存没过期时不重复探活——`/probe/health` 会被就绪探测与前端反复调用，
+    而它的调用方（`start.py`）只等 2 秒，探活一慢就会被判成「后端没起」。
+    """
+    calls = []
+
+    def _counting_probe(provider):
+        calls.append(provider.id)
+        return registry.ProbeResult(True)
+
+    monkeypatch.setattr(registry, "probe", _counting_probe)
+    monkeypatch.setattr(registry.settings, "EXTENSION_PROBE_CACHE_SEC", 60)
+    registry.snapshot(force=True)
+    first = len(calls)
+    assert first > 0
+    registry.snapshot()
+    assert len(calls) == first, "缓存没过期却又探了一遍"
 
 
 def test_sidecar_health_url_is_derived_from_the_service_url():

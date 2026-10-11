@@ -139,8 +139,8 @@ export default function App() {
   const [activePresetKey, setActivePresetKey] = useState('')
   const urlRef = useRef<HTMLTextAreaElement>(null)
 
-  const refreshHealth = useCallback(() => {
-    fetchHealth()
+  const refreshHealth = useCallback((force = false) => {
+    fetchHealth(force)
       .then((health) => setCapabilities(health.capabilities ?? null))
       .catch(() => setCapabilities(null))
   }, [])
@@ -291,7 +291,7 @@ export default function App() {
               capabilities={capabilities}
               selected={selected}
               onSelect={(capability, id) => setSelected((current) => ({ ...current, [capability]: id }))}
-              onRefresh={refreshHealth}
+              onRefresh={() => refreshHealth(true)}
               onTest={runTest}
               testing={testing}
               notes={testNotes}
