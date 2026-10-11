@@ -110,3 +110,32 @@ def test_sidecar_health_url_is_derived_from_the_service_url():
     """行为：侧车探活打的是同一个 origin 的 /health（侧车契约），不把业务路径当健康端点。"""
     assert registry._health_url("http://127.0.0.1:8021/ocr-b64") == "http://127.0.0.1:8021/health"
     assert registry._health_url("http://127.0.0.1:8022/asr-b64") == "http://127.0.0.1:8022/health"
+
+
+def test_test_provider_dispatches_by_kind(monkeypatch):
+    """
+    行为：真实测试按类别分派——侧车打 /health，API 发一次最小请求。
+
+    两条都换成替身：这条验的是分派，不该为了它联网、更不该为了它花 token。
+    """
+    calls = []
+
+    def _sidecar(provider):
+        calls.append(("sidecar", provider.id))
+        return registry.ProbeResult(True)
+
+    def _api(provider):
+        calls.append(("api", provider.id))
+        return registry.ProbeResult(True)
+
+    monkeypatch.setattr(registry, "_probe_sidecar", _sidecar)
+    monkeypatch.setattr(registry, "_test_api_for_real", _api)
+    assert registry.test_provider(CAPABILITY_OCR, "paddle").available is True
+    assert registry.test_provider("llm", "deepseek").available is True
+    assert calls == [("sidecar", "paddle"), ("api", "deepseek")]
+
+
+def test_test_provider_rejects_unknown_names():
+    """行为：没登记的名字返回 None（HTTP 缝上由路由转成 422），不为它发任何请求。"""
+    assert registry.test_provider(CAPABILITY_OCR, "tesseract") is None
+    assert registry.test_provider("nope", "deepseek") is None

@@ -20,6 +20,7 @@ from urllib.parse import urlsplit, urlunsplit
 import configs.extensions as ext
 import configs.settings as settings
 from utils import egress
+from utils.errors import LlmError
 
 
 class ProbeResult(NamedTuple):
@@ -103,6 +104,62 @@ def probe(provider: ext.Provider) -> ProbeResult:
     if provider.kind == ext.KIND_SIDECAR:
         return _probe_sidecar(provider)
     return _probe_api(provider)
+
+
+def _tiny_png_data_url() -> str:
+    """
+    造一张 64×64 白底 PNG 的 data URL。
+
+    用途：测视觉提供商时带一张图——要验的正是「这家 API 收不收图」，只发文字测不出这一点。
+    尺寸无所谓（官方会把小图等比放大），关键是走一次真的带图请求。
+    """
+    import base64
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (64, 64), "white").save(buffer, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def _test_api_for_real(provider: ext.Provider) -> ProbeResult:
+    """
+    真实测一次 API：发一个最小请求，成功才算可用。
+
+    与 `_probe_api()`（只看密钥是否配置）分工不同——这条**会花钱**，只在用户主动点「测试」
+    时跑。`DeepSeekClient.chat()` 内部会把结果记进 `note_api_call()`，所以测完再取快照，
+    界面上看到的就是刚测出来的状态。
+    """
+    # 延迟 import：deepseek.py 在模块级 import 本模块，模块级互相 import 会成环。
+    from extensions.deepseek import DeepSeekClient
+
+    content: list = [{"type": "text", "text": "只回复 OK"}]
+    if provider.capability == ext.CAPABILITY_OCR:
+        content.append({"type": "image_url", "image_url": {"url": _tiny_png_data_url()}})
+    try:
+        text = DeepSeekClient().chat([{"role": "user", "content": content}], max_tokens=16)
+    except LlmError as exc:
+        return ProbeResult(False, f"测试失败：{exc}")
+    except Exception as exc:  # noqa: BLE001 - 探针要把任何失败都翻成原因给界面
+        return ProbeResult(False, f"测试失败：{type(exc).__name__}: {exc}")
+    return ProbeResult(True, None, f"测试通过（回复 {text.strip()[:20]!r}）")
+
+
+def test_provider(capability: str, provider_id: str) -> Optional[ProbeResult]:
+    """
+    真实测一次这个提供商；名字不在名单里返回 None（调用方转 422）。
+
+    与 `snapshot()` 的分工：快照要便宜、可高频调用，所以侧车只探 `/health`、API 只看密钥；
+    这里是真的跑一遍——侧车打 `/health`，API 发一次最小请求（会花极小的 token）。
+    因此它只该由用户点「测试」触发，不能挂在健康检查里。
+    """
+    provider = ext.find(capability, provider_id)
+    if provider is None:
+        return None
+    if provider.kind == ext.KIND_SIDECAR:
+        return _probe_sidecar(provider)
+    return _test_api_for_real(provider)
 
 
 def default_provider(capability: str) -> str:

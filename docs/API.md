@@ -14,7 +14,8 @@
 |---|---|---|---|
 | POST | `/convert` | JSON | 统一转换 |
 | POST | `/convert/file` | multipart | 同上，上传文件 |
-| GET | `/probe/health` | — | 自身与扩展 readiness |
+| GET | `/probe/health` | — | 自身与扩展 readiness；`capabilities` 给每个提供商的 `available` / `reason` / `detail` |
+| POST | `/probe/test/{capability}/{provider}` | — | 真实测一次这个名字：侧车探 `/health`，API 真发一次最小请求（花极小 token）。名字不在名单里 → 422 |
 
 启动后交互式文档在 `http://127.0.0.1:8020/docs`。
 

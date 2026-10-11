@@ -8,7 +8,7 @@
 """
 import os
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 import configs.settings as settings
 from pipelines import capabilities as capability_registry
@@ -55,3 +55,21 @@ def health() -> dict:
         # 能力清单：每项带 available / reason / detail，前端据此置灰不可用项
         "capabilities": capability_registry.snapshot(),
     }
+
+
+@router.post("/test/{capability}/{provider}", summary="真实测试一个扩展提供商")
+def test_provider(capability: str, provider: str) -> dict:
+    """
+    主动测一次某个提供商现在到底能不能用。
+
+    功能：侧车走 `GET <origin>/health`（本机、不花钱）；API 真发一次最小请求
+          （会花掉极小的 token）。前端「测试」按钮调它，通过后该项即可选。
+    应用场景：侧车是后起的、或想确认一个 API key 现在还有效时。
+    输入：路径参数 capability 与 provider（名单见 `configs/extensions.py`）。
+    输出：{available, reason, detail}。
+    异常：HTTPException 422 — 名字不在名单里。
+    """
+    result = capability_registry.test_provider(capability, provider)
+    if result is None:
+        raise HTTPException(status_code=422, detail=f"未登记的扩展提供商：{capability}/{provider}")
+    return {"available": result.available, "reason": result.reason, "detail": result.detail}
