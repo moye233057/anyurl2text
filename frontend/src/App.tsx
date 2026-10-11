@@ -139,6 +139,9 @@ export default function App() {
               <div className="field">
                 <label className="field-label">选择本地文件</label>
                 <input type="file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+                {/* 预设样例直接写入 file 状态，而浏览器不允许脚本改 file input 的显示，
+                    所以这里自己报一次已选文件——否则点完预设，上面还写着「未选择任何文件」。 */}
+                {file && <p className="hint">已选：{file.name}</p>}
               </div>
             )}
 
