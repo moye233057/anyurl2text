@@ -72,8 +72,13 @@ def shared_httpx_client() -> httpx.Client:
     with _lock:
         if _httpx_client is not None:
             return _httpx_client
-        # 不在这里定死 timeout：每次 post 仍按预算传 timeout
-        _httpx_client = httpx.Client()
+        # 不在这里定死 timeout：每次 post 仍按预算传 timeout。
+        # trust_env=False 是**本机服务必须的**：这个客户端只连 127.0.0.1 上的侧车，
+        # 而 httpx 默认会读 HTTP_PROXY / ALL_PROXY 之类的环境变量、把请求发给代理——
+        # 代理连不上侧车时回的是 502 Bad Gateway，把「侧车没起」伪装成「上游网关错误」，
+        # 排查时会被带偏（2026-10-11 实测：trust_env=True 报 ReadTimeout / 502，
+        # trust_env=False 如实报连接被拒）。
+        _httpx_client = httpx.Client(trust_env=False)
         return _httpx_client
 
 
