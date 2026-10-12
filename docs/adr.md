@@ -7,9 +7,9 @@
 - 编号不复用：删掉一条就不再出现该编号。
 - 日期是该条**内容最后一次实质变更**的日期。
 
-## ADR-0001 · 2026-10-10 · 响应契约另起一套，摘要不与正文混放
+## ADR-0001 · 2026-10-10 · 响应字段约定另起一套，摘要不与正文混放
 
-响应恒为 7 个字段 `type / content / summary / meta / usage / timings / error`：`summary` 只由 **LLM 扩展**在启用且可用时产出；`content` 不被摘要覆盖、也不追加实现细节前缀；`error` 恒存在（成功为 `null`）。`error` 非空时是结构化 `{code, message, param}`：`message` 给人看、`code` 给程序看（码表在 `configs/errors.py`）。否掉带 query 时用摘要覆盖正文、成功/失败不同键集、以及把引擎细节写进正文的旧契约。
+响应恒为 7 个字段 `type / content / summary / meta / usage / timings / error`：`summary` 只由 **LLM 扩展**在启用且可用时产出；`content` 不被摘要覆盖、也不追加实现细节前缀；`error` 恒存在（成功为 `null`）。`error` 非空时是结构化 `{code, message, param}`：`message` 给人看、`code` 给程序看（码表在 `configs/errors.py`）。否掉带 query 时用摘要覆盖正文、成功/失败不同键集、以及把引擎细节写进正文的旧字段约定。
 
 ## ADR-0002 · 2026-10-10 · 单一转换接口复用抽取内核；扩展只做增量
 
@@ -38,21 +38,21 @@
 
 ## ADR-0007 · 2026-10-02 · 后端按「流程步骤 + 功能域」分包
 
-处理流程按序号排成步骤文件；管线只做按序调度；一种格式一个文件收在 `pipelines/processors/`；静态清单进 `configs/formats.py`；通用件进 `utils/`；契约做叶子模块。落点见 [architecture.md](./architecture.md)。否掉独立 `contracts/` 包、保留空洞的 `core/`、以及十来个文件不值的四层 `api/service/domain/infra`。
+处理流程按序号排成步骤文件；处理流程只做按序调度；一种格式一个文件收在 `pipelines/processors/`；静态清单进 `configs/formats.py`；通用件进 `utils/`；字段约定做叶子模块。落点见 [architecture.md](./architecture.md)。否掉独立 `contracts/` 包、保留空洞的 `core/`、以及十来个文件不值的四层 `api/service/domain/infra`。
 
 ## ADR-0008 · 2026-10-10 · 音视频：结构信息默认；ASR 扩展启用时转写并进 content
 
 确定性侧报告音轨参数（时长 / 采样率 / 声道 / 格式），`content` 为空。ASR 扩展开启且可用时，音轨交本仓 ASR 模块，转写进 `meta.asr_text` **并并进 `content`**（与 OCR 同源策略，ADR-0011/0014）。音轨只转码一次；送字节不送 URL 代下载；`ASR_MAX_AUDIO_SECONDS` 防静默截断。否掉「只为音频接 ASR、视频继续降级」与「转写复用 `meta.ocr_text`」。
 
-## ADR-0010 · 2026-10-10 · 废除单文件行数门禁；processors 一格式族一文件；共享按是否调扩展分流
+## ADR-0010 · 2026-10-10 · 废除单文件行数限制；processors 一类格式一个文件；共享按是否调扩展分流
 
-废除结构判据 2；`pipelines/processors/` 只保留格式族文件。表格公共 → `utils/excel/`；契约 → `utils/processor_schema.py` / `convert_contract.py`；扩展侧公共 → `extensions/`（或蓝图敲定的出口包名）。否掉「只对 processors 豁免」「抬高上限仍留门禁」「新建 `pipelines/shared/`」。
+废除结构检查规则 2；`pipelines/processors/` 只保留同一类格式文件。表格公共 → `utils/excel/`；字段约定 → `utils/processor_schema.py` / `convert_contract.py`；扩展侧公共 → `extensions/`（或蓝图敲定的出口包名）。否掉「只对 processors 豁免」「抬高上限仍留门禁」「新建 `pipelines/shared/`」。
 
 ## ADR-0011 · 2026-10-10 · 扩展转写可并进 content；双池并发与全链路预算
 
-**正文**：在确定性段之上，把本次实际跑过的 OCR/ASR/页面识别/语义描述等转写并进 `content`（`utils/delivery_content`）；并双写 `meta.ocr_text` / `meta.asr_text`。纯代码已完整交付时，不开扩展则 `content` 保持该段。扩展不可用时不伪造正文，走降级与 `meta.notes`。
+**正文**：在确定性段之上，把本次实际跑过的 OCR/ASR/页面识别/语义描述等转写并进 `content`（`utils/delivery_content`）；并同时写入 `meta.ocr_text` / `meta.asr_text`。纯代码已完整交付时，不开扩展则 `content` 保持该段。扩展不可用时不伪造正文，走降级与 `meta.notes`。
 
-**编排**：扩展分派在统一管线显式进行，不在 `step4_extract` 自动发现。
+**调度**：扩展分派在统一处理流程里显式进行，不在 `step4_extract` 自动发现。
 
 **预算**：`REQUEST_BUDGET_SEC` 全链路；`DOWNLOAD_BUDGET_SEC` 仅下载；单次调用超时取 `min(配置上限, 剩余预算)`。
 
@@ -78,21 +78,21 @@
 
 **否掉**：双栏对比主路径；权重进 git；默认依赖外部 ModelServer 仓；旧路由长期别名；看图只开 `ocr` 或只开 `llm` 仍强行半跑。
 
-## ADR-0015 · 2026-10-11 · 扩展按「能力 → 提供商」注册；OCR 改为提供商单选，探活决定谁能用
+## ADR-0015 · 2026-10-11 · 扩展按「能力 → 提供商」注册；OCR 改为提供商单选，健康检查决定谁能用
 
-**背景**：扩展既有本机侧车（Paddle OCR / Qwen3-ASR），也有第三方 API（DeepSeek）。此前「谁能干这件事」是写死的：`ocr` 只是个布尔，独立文字图一律交本机 Paddle——于是配了 API key 也绕不开侧车，侧车没起就整条路失败；而「某项现在能不能用」只能等用户点了运行、由失败信息告诉他。
+**背景**：扩展既有本机独立服务（Paddle OCR / Qwen3-ASR），也有第三方 API（DeepSeek）。此前「谁能干这件事」是写死的：`ocr` 只是个布尔，独立文字图一律交本机 Paddle——于是配了 API key 也绕不开本机独立服务，本机独立服务没起就整条路失败；而「某项现在能不能用」只能等用户点了运行、由失败信息告诉他。
 
 **决定**：
 
-1. 能力与提供商的**名字**在 `configs/extensions.py` 声明一次（能力 `llm` / `ocr` / `asr`；OCR 有两家：`deepseek` 模型视觉、`paddle` 本机侧车）；探活、单选与能力快照在 `extensions/registry.py`。名单放 `configs/` 是因为契约层与路由层按依赖单向（ADR-0010）都到不了 `extensions/`。
-2. 请求契约里 `ocr` 变成**提供商单选**：`false` / `true`（用默认）/ 提供商 id；同一请求只能选一个，非法名字当场 422。
+1. 能力与提供商的**名字**在 `configs/extensions.py` 声明一次（能力 `llm` / `ocr` / `asr`；OCR 有两家：`deepseek` 模型视觉、`paddle` 本机独立服务）；健康检查、单选与能力快照在 `extensions/registry.py`。名单放 `configs/` 是因为字段约定层与路由层按依赖单向（ADR-0010）都到不了 `extensions/`。
+2. 请求字段约定里 `ocr` 变成**提供商单选**：`false` / `true`（用默认）/ 提供商 id；同一请求只能选一个，非法名字当场 422。
 3. `/probe/health` 增加 `capabilities`（每个提供商的 `available` / `reason` / `detail`），前端据此把不可用项置灰并写明原因。
-4. **探活口径**：侧车探 `GET <origin>/health`（本机、不花钱）；API 只看密钥是否配置，**绝不发模型请求**——「探针不带副作用」优先于「显示最真实状态」。API 的真实可用性另用记忆的上次调用结果提示，并留出用户主动「测试连接」的位置。
-5. **门闩拆开**：看图（判型、语义描述、扫描页、内嵌图）只看 `llm`；`ocr` 只管独立文字图的转写交给谁。
+4. **健康检查口径**：本机独立服务探 `GET <origin>/health`（本机、不花钱）；API 只看密钥是否配置，**绝不发模型请求**——「探针不带副作用」优先于「显示最真实状态」。API 的真实可用性另用记忆的上次调用结果提示，并留出用户主动「测试连接」的位置。
+5. **开关条件拆开**：看图（判型、语义描述、扫描页、内嵌图）只看 `llm`；`ocr` 只管独立文字图的转写交给谁。
 6. 文字转写按**方案 B**：选模型提供商时，文字由判型那次调用一并返回（图本来就在那次调用里），不再单发一次转录请求；只有「被要求转写」时才在提示里要它，选本机 OCR 时不白花这份 token。
 
 **后果**：
 
-- 只配 `DEEPSEEK_API_KEY` 就能覆盖读图的大部分路径，不必起 OCR 侧车；选 `paddle` 则完全不花 token。
-- 新增一家实现只需在 `configs/extensions.py` 加一条、在 `extensions/registry.py` 补一个探活分支；路由、界面、契约都不再各写一份名字。
-- 侧车的 502 类误报暴露出一件事：本地调用不能走代理。`utils/egress.shared_httpx_client()` 已改为 `trust_env=False`——httpx 在 Windows 上会经 `urllib.request.getproxies()` 读到注册表里的 WinINET 代理（且不认它的 `ProxyOverride` 例外表），把「本机侧车没起」伪装成「上游 502」。
+- 只配 `DEEPSEEK_API_KEY` 就能覆盖读图的大部分路径，不必起 OCR 本机独立服务；选 `paddle` 则完全不花 token。
+- 新增一家实现只需在 `configs/extensions.py` 加一条、在 `extensions/registry.py` 补一个健康检查分支；路由、界面、字段约定都不再各写一份名字。
+- 本机独立服务的 502 类误报暴露出一件事：本地调用不能走代理。`utils/egress.shared_httpx_client()` 已改为 `trust_env=False`——httpx 在 Windows 上会经 `urllib.request.getproxies()` 读到注册表里的 WinINET 代理（且不认它的 `ProxyOverride` 例外表），把「本机独立服务没起」伪装成「上游 502」。

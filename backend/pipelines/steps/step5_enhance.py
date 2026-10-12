@@ -8,7 +8,7 @@
 摘要只进 `summary`，**不动 `content`**——`content` 只在步骤 4 的 `extract_*` 里产生（ADR 0002/0007）。
 
 本步也是**模型侧上界**的报告点：送模型的输入被 `max_model_input_chars` 截断、或模型输出被
-`llm_max_tokens` 截断（账本上的 `output_truncated`）时，把名字交回调用方进 `meta.limits_hit`。
+`llm_max_tokens` 截断（用量记账上的 `output_truncated`）时，把名字交回调用方进 `meta.limits_hit`。
 """
 from typing import List, Optional, Tuple
 
@@ -37,7 +37,7 @@ def summarize(
     输出：(摘要文本 或 None, 本次模型阶段命中的上界名列表)。
     异常：LlmError — 调用失败，由调用方转成 notes。
     """
-    # 输出被截断是账本上的事实（`finish_reason == "length"`），与本次是否又调了一次无关
+    # 输出被截断是用量记账上的事实（`finish_reason == "length"`），与本次是否又调了一次无关
     hits = ["llm_max_tokens"] if client.ledger.output_truncated else []
     if image_description and not query:
         return image_description, hits

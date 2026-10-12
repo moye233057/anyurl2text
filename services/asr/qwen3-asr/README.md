@@ -1,6 +1,6 @@
 # qwen3-asr（默认端口 8022）
 
-最小侧车：`main.py` + `engine.py`。核心只调 `POST /asr-b64`。
+最小本机服务：`main.py` + `engine.py`。核心只调 `POST /asr-b64`。
 
 ```powershell
 # 独立环境（建议 Python 3.12 + CUDA torch）

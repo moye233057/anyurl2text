@@ -1,10 +1,10 @@
-# 接口与响应契约
+# 接口与响应字段约定
 
 > **用途**：怎么调、响应每个字段是什么意思、失败长什么样。  
-> **目标态**：`POST /convert` + `ocr` / `asr` / `llm`（ADR-0014）；`ocr` 为提供商单选（ADR-0015）。  
+> **目标设计**：`POST /convert` + `ocr` / `asr` / `llm`（ADR-0014）；`ocr` 为提供商单选（ADR-0015）。  
 > **现行**：仅 `/convert`·`/convert/file`；旧双路已删除。  
 > **关联**：[architecture.md](./architecture.md) · [adr.md](./adr.md) · [CONTEXT.md](../CONTEXT.md)  
-> **基线**：2026-10-02 · **目标态修订**：2026-10-10
+> **基线**：2026-10-02 · **目标设计修订**：2026-10-10
 
 ---
 
@@ -14,8 +14,8 @@
 |---|---|---|---|
 | POST | `/convert` | JSON | 统一转换 |
 | POST | `/convert/file` | multipart | 同上，上传文件 |
-| GET | `/probe/health` | `refresh` | 自身与扩展 readiness；`capabilities` 给每个提供商的 `available` / `reason` / `detail`。探活结果缓存 `EXTENSION_PROBE_CACHE_SEC` 秒，`refresh=true` 强制重探 |
-| POST | `/probe/test/{capability}/{provider}` | — | 真实测一次这个名字：侧车探 `/health`，API 真发一次最小请求（花极小 token）。名字不在名单里 → 422 |
+| GET | `/probe/health` | `refresh` | 自身与扩展是否就绪；`capabilities` 给每个提供商的 `available` / `reason` / `detail`。健康检查结果缓存 `EXTENSION_PROBE_CACHE_SEC` 秒，`refresh=true` 强制重探 |
+| POST | `/probe/test/{capability}/{provider}` | — | 真实测一次这个名字：本机独立服务探 `/health`，API 真发一次最小请求（花极小 token）。名字不在名单里 → 422 |
 
 启动后交互式文档在 `http://127.0.0.1:8020/docs`。
 
@@ -41,14 +41,14 @@
 | 行为 | 需要什么 |
 |---|---|
 | 独立图片：判型 | `llm` |
-| 独立图片：文字转写 | `ocr` 选一个提供商。选 `deepseek` 时由判型那次调用一并返回文字（省一次请求）；选 `paddle` 时交给本机侧车，不需要 `llm` |
+| 独立图片：文字转写 | `ocr` 选一个提供商。选 `deepseek` 时由判型那次调用一并返回文字（省一次请求）；选 `paddle` 时交给本机独立服务，不需要 `llm` |
 | 独立图片：语义描述 | `llm` |
 | 扫描件整页渲染识别 | `llm` |
 | 文档内嵌图转写 | `llm` |
 | 音视频转写 | `asr` |
 | 摘要 / query 回答 | `llm` |
 
-看图（判型、语义描述、扫描页、内嵌图）只看 `llm`；`ocr` 只决定**独立文字图**的转写交给谁——本机侧车与模型的视觉能力是同一能力的两家实现。
+看图（判型、语义描述、扫描页、内嵌图）只看 `llm`；`ocr` 只决定**独立文字图**的转写交给谁——本机独立服务与模型的视觉能力是同一能力的两家实现。
 
 ## 2. 响应结构
 
@@ -74,7 +74,7 @@
 ## 4. `content`：交付文本
 
 - **文档类**：始终可含确定性抽取段；按 §1.1 实际跑过的转写并入。
-- **图片 / 音视频**：看图或 ASR 未实际跑时多为空串（基础信息在 `meta`）；跑过后转写/描述并入，并双写 `meta.ocr_text` / `meta.asr_text`。
+- **图片 / 音视频**：看图或 ASR 未实际跑时多为空串（基础信息在 `meta`）；跑过后转写/描述并入，并同时写入 `meta.ocr_text` / `meta.asr_text`。
 - 摘要只进 `summary`，不替换 `content`。
 
 表格格内换行写成 `<br>`（与 anydoc 口径一致）。
@@ -111,7 +111,7 @@ LLM 可为远程 DeepSeek 或本机 OpenAI 兼容端点（同一客户端，靠 
 
 响应体始终带 `error` 字段。
 
-## 10. 样例（目标态语义）
+## 10. 样例（目标设计语义）
 
 ### 图片 · `llm=true`
 

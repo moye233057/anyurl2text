@@ -3,7 +3,7 @@
 图片抽取：只给结构信息，不给文字（ADR 0004）。
 
 纯代码对一张图拿不到任何文字，能确定拿到的是格式、尺寸、色彩模式与拍摄参数。
-认字是 understand 的职责——两条管线的边界在这里最清楚，也是「取舍」叙事的支点。
+认字是 understand 的职责——两条处理流程的边界在这里最清楚，也是「取舍」叙事的支点。
 
 模型增强走本文件的 `enhance_image`（ADR 0007 的「按格式聚合处理器」）：一次视觉调用同时判型、
 给语义描述，并在需要时**顺手把文字图片转写掉**（方案 B：图本来就在那次调用里，省掉第二次请求）；
@@ -106,7 +106,7 @@ def extract_image(path: Path, ext: str) -> ExtractResult:
     应用场景：dispatch 分派 image 组时调用。
     输入：path — 文件路径；ext — 已识别的小写扩展名。
     输出：ExtractResult，content 为空字符串（图片没有可抽取的文本），
-          meta.image 由管线从 result.image_meta 填入。
+          meta.image 由处理流程从 result.image_meta 填入。
     异常：不抛——解码失败时返回降级说明，让调用方拿到可读原因而不是 500。
     """
     if ext == "svg":
@@ -171,7 +171,7 @@ SEMANTIC_KIND = "semantic"
 
 def _paddle_outcome(prepared: PreparedSource) -> EnhanceOutcome:
     """
-    本机 OCR 分支：把图交给 Paddle 侧车读字。
+    本机 OCR 分支：把图交给 本机 Paddle 服务读字。
 
     功能：出口（`extensions/paddle_ocr.py`）只负责发图收字，分流与说明放在这里。
     应用场景：请求选了 paddle 提供商时调用（判不判型由调用方决定）。
@@ -231,7 +231,7 @@ def _text_outcome(
     输入：prepared — 图片；parsed — 判型结果（本机 OCR 分支用不到）；provider — 提供商 id；
           encode_hits — 编码阶段命中的上界名。
     输出：EnhanceOutcome。
-    异常：LlmError — 侧车调用失败。
+    异常：LlmError — 本机独立服务调用失败。
     """
     if provider is None:
         return EnhanceOutcome(
@@ -263,7 +263,7 @@ def enhance_image(
     输入：client — 模型客户端，未开 llm 时为 None；prepared — 已落盘并识别过的图片；
           provider — OCR 提供商 id，None 表示不做文字转写。
     输出：EnhanceOutcome：语义图片给 description，文字图片给 ocr_text，分支说明进 notes。
-    异常：LlmError — 模型调用或侧车调用失败。
+    异常：LlmError — 模型调用或本机独立服务调用失败。
     """
     if client is None:
         if provider and not ext.needs_model(CAPABILITY_OCR, provider):

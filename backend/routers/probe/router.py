@@ -3,7 +3,7 @@
 探针：报告本服务的自身状态，以及各扩展提供商现在能不能用。
 
 **不调用模型、不发会产生费用的请求**：探针被高频访问，一旦它带副作用，健康检查本身就会
-变成成本与故障源。侧车（本机 OCR / ASR）用短超时的 `GET /health` 探活——它们在本机、
+变成成本与故障源。本机独立服务（本机 OCR / ASR）用短超时的 `GET /health` 健康检查——它们在本机、
 不花钱；第三方 API 只查密钥是否配置，真实可用性见 `extensions/registry.note_api_call()`。
 """
 import os
@@ -23,10 +23,10 @@ def health(refresh: bool = False) -> dict:
     功能：返回模型名、是否配了 API key、几个影响行为的配置值，外加一份能力清单
           （能力 → 提供商 → available / reason / detail），供前端把不可用项置灰并说明原因，
           而不是等用户点了运行才失败。能力清单走缓存，`refresh=true` 强制重探一遍。
-    应用场景：前端启动自检、`start.py` 的就绪探测、用户手动刷新、本地排查。
-    输入：refresh — 是否忽略探活缓存强制重探（默认 false，只读缓存）。
+    应用场景：前端启动自检、`start.py` 的启动就绪检查、用户手动刷新、本地排查。
+    输入：refresh — 是否忽略健康检查缓存强制重探（默认 false，只读缓存）。
     输出：状态字典。
-    注意：这条接口会被就绪探测反复调用，所以**必须快**（调用方只等 2 秒）——见
+    注意：这条接口会被启动就绪检查反复调用，所以**必须快**（调用方只等 2 秒）——见
           `extensions/registry.py` 模块文档的两条性能约束。
     """
     return {
@@ -64,9 +64,9 @@ def test_provider(capability: str, provider: str) -> dict:
     """
     主动测一次某个提供商现在到底能不能用。
 
-    功能：侧车走 `GET <origin>/health`（本机、不花钱）；API 真发一次最小请求
+    功能：本机独立服务走 `GET <origin>/health`（本机、不花钱）；API 真发一次最小请求
           （会花掉极小的 token）。前端「测试」按钮调它，通过后该项即可选。
-    应用场景：侧车是后起的、或想确认一个 API key 现在还有效时。
+    应用场景：本机独立服务是后起的、或想确认一个 API key 现在还有效时。
     输入：路径参数 capability 与 provider（名单见 `configs/extensions.py`）。
     输出：{available, reason, detail}。
     异常：HTTPException 422 — 名字不在名单里。

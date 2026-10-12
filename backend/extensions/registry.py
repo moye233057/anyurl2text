@@ -1,22 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-扩展可用性：探活、选择与快照。
+扩展可用性：健康检查、选择与快照。
 
 - `probe()` —— 这个提供商现在能不能用，连原因一起给。
-- `resolve()` —— 请求里选的是谁就定谁（`True` 走默认提供商）；**这一层有意不探活**，理由见函数注释。
+- `resolve()` —— 请求里选的是谁就定谁（`True` 走默认提供商）；**这一层有意不做健康检查**，理由见函数注释。
 - `snapshot()` —— 给 `/probe/health` 的能力清单，前端据此把不可用项置灰。
 - `note_api_call()` —— 记下最后一次真实 API 调用结果，供界面区分「已配置」与「已验证可用」。
 
-探活口径（2026-10-11 与用户确认）：
-- 侧车（本机 8021 / 8022）：`GET <origin>/health`，短超时；服务没起就是不可用，原因写清地址。
+健康检查口径（2026-10-11 与用户确认）：
+- 本机独立服务（本机 8021 / 8022）：`GET <origin>/health`，短超时；服务没起就是不可用，原因写清地址。
 - API：**只看密钥是否配置**，绝不在这里发模型请求——`routers/probe/router.py` 定下的规矩是
   「探针不带副作用」，健康检查一旦会花钱，它自己就成了成本与故障源。真实可用性靠
   `note_api_call()` 记住的上一次调用，以及用户在界面上主动点的「测试连接」。
 
 两条性能约束（踩过才知道）：
-- **并发探**：一个一个探时总耗时是各家超时之和，而 `/probe/health` 的调用方（`start.py` 的就绪探测）
-  只等 2 秒——串行探两个没起的侧车就足以让它判「后端没起」。
-- **缓存**：健康检查会被就绪探测与前端反复调用，`EXTENSION_PROBE_CACHE_SEC` 内直接复用上次结果。
+- **并发探**：一个一个探时总耗时是各家超时之和，而 `/probe/health` 的调用方（`start.py` 的启动就绪检查）
+  只等 2 秒——串行探两个没起的本机独立服务就足以让它判「后端没起」。
+- **缓存**：健康检查会被启动就绪检查与前端反复调用，`EXTENSION_PROBE_CACHE_SEC` 内直接复用上次结果。
 """
 import os
 import time
@@ -33,7 +33,7 @@ from utils.errors import LlmError
 
 class ProbeResult(NamedTuple):
     """
-    一次探活的结果。
+    一次健康检查的结果。
 
     属性：
         available — 现在能不能用。
@@ -55,7 +55,7 @@ def note_api_call(ok: bool, message: str = "") -> None:
     """
     记下最后一次真实 API 调用的结果。
 
-    功能：给探活提供「上次到底成没成」这条事实，而不必自己再发一次请求。
+    功能：给健康检查提供「上次到底成没成」这条事实，而不必自己再发一次请求。
     应用场景：`extensions/deepseek.py` 的 chat() 在成功与失败两个分支各调一次。
     输入：ok — 是否成功；message — 失败原因（截断到 200 字）。
     输出：无。
@@ -65,7 +65,7 @@ def note_api_call(ok: bool, message: str = "") -> None:
 
 
 # 进程内缓存：{能力/提供商: ProbeResult} 与它的取样时刻。
-# 存在的理由见模块文档的两条性能约束——健康检查的调用方只等 2 秒，探活不能每次都真跑。
+# 存在的理由见模块文档的两条性能约束——健康检查的调用方只等 2 秒，健康检查不能每次都真跑。
 _cache: Dict[str, ProbeResult] = {}
 _cache_at: float = 0.0
 _cache_lock = Lock()
@@ -112,7 +112,7 @@ def _probe_all(force: bool = False) -> Dict[str, ProbeResult]:
 
 
 def _sidecar_url(capability: str, provider_id: str) -> Optional[str]:
-    """侧车的业务端点；健康端点由它推出来。"""
+    """本机独立服务的业务端点；健康端点由它推出来。"""
     if capability == ext.CAPABILITY_OCR and provider_id == "paddle":
         return settings.OCR_API_URL
     if capability == ext.CAPABILITY_ASR and provider_id == "qwen3":
@@ -121,13 +121,13 @@ def _sidecar_url(capability: str, provider_id: str) -> Optional[str]:
 
 
 def _health_url(service_url: str) -> str:
-    """侧车契约是 `GET /health` + `POST /xxx-b64`，把路径换成 /health 即健康端点。"""
+    """本机服务约定是 `GET /health` + `POST /xxx-b64`，把路径换成 /health 即健康端点。"""
     parsed = urlsplit(service_url)
     return urlunsplit((parsed.scheme, parsed.netloc, "/health", "", ""))
 
 
 def _probe_sidecar(provider: ext.Provider) -> ProbeResult:
-    """侧车探活：连不上或非 2xx 都算不可用。"""
+    """本机服务健康检查：连不上或非 2xx 都算不可用。"""
     service_url = _sidecar_url(provider.capability, provider.id)
     if not service_url:
         return ProbeResult(False, f"{provider.label} 没有配服务地址")
@@ -144,7 +144,7 @@ def _probe_sidecar(provider: ext.Provider) -> ProbeResult:
 
 
 def _probe_api(provider: ext.Provider) -> ProbeResult:
-    """API 探活：只看密钥是否配置，不发请求（见模块文档的探活口径）。"""
+    """API 健康检查：只看密钥是否配置，不发请求（见模块文档的健康检查口径）。"""
     if not os.getenv("DEEPSEEK_API_KEY", "").strip():
         return ProbeResult(False, "未配置 DEEPSEEK_API_KEY（见项目根 .env）")
     if _last_api_call is None:
@@ -155,7 +155,7 @@ def _probe_api(provider: ext.Provider) -> ProbeResult:
 
 
 def probe(provider: ext.Provider) -> ProbeResult:
-    """按类别探活：侧车发 HTTP、API 看密钥。"""
+    """按类别做健康检查：本机独立服务发 HTTP、API 看密钥。"""
     if provider.kind == ext.KIND_SIDECAR:
         return _probe_sidecar(provider)
     return _probe_api(provider)
@@ -205,8 +205,8 @@ def test_provider(capability: str, provider_id: str) -> Optional[ProbeResult]:
     """
     真实测一次这个提供商；名字不在名单里返回 None（调用方转 422）。
 
-    与 `snapshot()` 的分工：快照要便宜、可高频调用，所以侧车只探 `/health`、API 只看密钥；
-    这里是真的跑一遍——侧车打 `/health`，API 发一次最小请求（会花极小的 token）。
+    与 `snapshot()` 的分工：快照要便宜、可高频调用，所以本机独立服务只探 `/health`、API 只看密钥；
+    这里是真的跑一遍——本机独立服务打 `/health`，API 发一次最小请求（会花极小的 token）。
     因此它只该由用户点「测试」触发，不能挂在健康检查里。
 
     结果会写进缓存：用户测完就该在界面上看到它变成可选，不必等缓存过期或再探一遍。
@@ -235,10 +235,10 @@ def resolve(capability: str, choice: Union[bool, str, None]) -> Optional[str]:
     """
     请求里的选择 → 实际用哪个提供商；`False` / `None` 返回 None（这次不用这个能力）。
 
-    **有意不在这里探活**：探活要发 HTTP，挂在每个请求的路径上会引入额外延迟与不确定性
-    （侧车没起时还要等超时）。可用性由前端提交前按 `/probe/health` 置灰来保证；
+    **有意不在这里做健康检查**：健康检查要发 HTTP，挂在每个请求的路径上会引入额外延迟与不确定性
+    （本机独立服务没起时还要等超时）。可用性由前端提交前按 `/probe/health` 置灰来保证；
     后端只按名字分派，真用不了时照常报它自己的错（如 `ocr_unreachable`），
-    错误照样走契约进 `meta.model_error`。
+    错误照样按约定写入 `meta.model_error`。
     """
     if choice is False or choice is None:
         return None

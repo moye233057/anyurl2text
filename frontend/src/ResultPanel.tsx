@@ -43,14 +43,14 @@ function KvGrid({ rows }: { rows: Rows }) {
 }
 
 function buildStatsRows(result: ConvertResponse): Rows {
-  // 文件类型（契约里的 type 字段）是这份结果的第一个事实，比耗时更该先看到
+  // 文件类型（字段约定里的 type 字段）是这份结果的第一个事实，比耗时更该先看到
   const rows: Rows = [
     ['文件类型', result.type],
     ['合计', `${result.timings.total_ms} ms`],
     ['下载', `${result.timings.download_ms} ms`],
     ['解析', `${result.timings.parse_ms} ms`],
   ]
-  // 纯代码管线不调模型，这一行恒为 0；只有真的调用过才值得显示
+  // 纯代码处理流程不调模型，这一行恒为 0；只有真的调用过才值得显示
   if (result.timings.model_ms > 0) rows.push(['模型', `${result.timings.model_ms} ms`])
   rows.push(['content 字符数', String(result.content.length)])
   if (result.meta.ocr_text) rows.push(['识别文本字符数', String(result.meta.ocr_text.length)])

@@ -31,11 +31,11 @@ CLAMP = "clamp"
 # ---------- 写死的上界（原本散在各处理器里，收进这里） ----------
 # 单个表格最多渲染的行数；docx 与 odf 原本各有一份同值常量，合并成这一处
 MAX_TABLE_ROWS = 2000
-# 单个表格的格位展开（跨度额外占用的格位）总量上限
+# 单个表格的逻辑格子展开（跨度额外占用的逻辑格子）总量上限
 # 三条格位预算（展开 / 格位 / 文字）都**沿用 anydoc 的量级**，2026-10-04 用户决定：
 # **不做真实语料校准**——按经验值用，命中时如实报名字（不静默）就够了。
 MAX_GRID_EXPANSION = 200_000
-# 单张表的**格位数**上限：实测一个格位对象约 100 字节，100 万格位约 100 MB，
+# 单张表的**格位数**上限：实测一个逻辑格子对象约 100 字节，100 万格位约 100 MB，
 # 而「行上限 5000 × 200 列」正好落在预算内——它挡的是列数无上限的畸形表。
 MAX_GRID_SLOTS = 1_000_000
 # 单张表的**文字总字符数**上限：它直接界定渲染出的中间字符串（实测 2000×50×500 字符 = 5000 万字符、
@@ -132,9 +132,9 @@ LIMITS: Dict[str, Limit] = {
         "docx._render_table / odf._render_table / html_tables.table_to_tsv / rtf.build_lines",
         "表格超过 {value} 行，其余行未列出"),
     "max_grid_expansion": Limit(MAX_GRID_EXPANSION, "count", TRUNCATE, False, "grid.GridBuilder.place",
-        "表格跨度展开超过 {value} 个格位，超出的合并跨度按 1 格处理"),
+        "表格跨度展开超过 {value} 个逻辑格子，超出的合并跨度按 1 格处理"),
     "max_grid_slots": Limit(MAX_GRID_SLOTS, "count", TRUNCATE, False, "grid.GridBuilder.place",
-        "单张表的格位数超过 {value}，其余单元格未落位"),
+        "单张表的逻辑格子数超过 {value}，其余单元格未落位"),
     "max_grid_text_chars": Limit(MAX_GRID_TEXT_CHARS, "chars", TRUNCATE, False, "grid.GridBuilder.place",
         "单张表的文字超过 {value} 字符，其余单元格未落位"),
     "max_repeated_slots": Limit(MAX_REPEATED_SLOTS, "count", CLAMP, False, "odf._render_table",

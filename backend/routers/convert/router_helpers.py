@@ -13,7 +13,7 @@ T = TypeVar("T")
 
 
 def run_with_limits(pool: str, source: str, runner: Callable[[], PipelineResult]) -> PipelineResult:
-    """占槽 → 开始预算 → 执行管线；池满返回 429。"""
+    """占槽 → 开始预算 → 执行处理流程；池满返回 429。"""
     try:
         with acquire_slot(pool):
             request_budget.begin_request_budget()

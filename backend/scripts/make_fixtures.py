@@ -2,7 +2,7 @@
 """
 生成本地评测与演示用的样例文件。
 
-职责：用纯代码造出一批体量适中、可离线复现的样例，覆盖两条管线要验证的每种输入。
+职责：用纯代码造出一批体量适中、可离线复现的样例，覆盖两条处理流程要验证的每种输入。
 输出目录：backend/data/（与随仓库提供的文本类样例同级，不再多套一层子目录）
 
 步骤：
@@ -18,14 +18,14 @@
     step10_make_odf          odt / odp 最小可用文档（标准库拼 ODF 包，不依赖 odfpy）
     step11_make_audio        16kHz 单声道 wav 样本，验证音频的结构信息与「送本机 ASR」
     step12_make_video        把音频样本封成 mp4，验证视频要先抽音轨那条链
-    step13_make_merged       含合并单元格的 docx / xlsx / pptx，验证表格格位建模
+    step13_make_merged       含合并单元格的 docx / xlsx / pptx，验证表格逻辑格子建模
     step14_make_repeated_images  同一张图被引多次的 docx / pptx / pdf，验证内嵌图按来源部件去重
     step15_make_structured_odt   带合并表格与两级列表的 odt，验证 ODT 按结构抽取
     step16_make_docx_hyperlinks  含超链接的 docx，验证链接的文字与地址都进交付文本
-    step17_make_epub             三章 EPUB（manifest 与 zip 顺序都反着 spine），验证按 spine 拼章节与文档级链接消歧
+    step17_make_epub             三章 EPUB（manifest 与 zip 顺序都反着 spine），验证按 spine 拼章节与文档级链接区分清楚
     step18_make_ofd              两页 OFD（页序取自文档根、zip 写入顺序相反），验证按页序逐页取正文
     step19_make_tsv              制表符分隔的表格（一格含逗号与分号），验证 .tsv 按制表符分列
-    step20_make_table_edge_cases 行尾缺格的 3x3 表 + .ods / .xls 的合并区，验证格位网格的边界形状
+    step20_make_table_edge_cases 行尾缺格的 3x3 表 + .ods / .xls 的合并区，验证表格逻辑格子的边界形状
     step21_make_hidden_fixtures  隐藏工作表与隐藏行列（xlsx / xls / ods），验证隐藏内容照抽 + notes 登记
     step22_make_header_fixtures  源自己标出表头行的样例（docx 的 w:tblHeader / odt 的表头行组），验证 meta.table_header_rows
 
@@ -136,7 +136,7 @@ MERGED_TAIL = "尾列合并"
 MERGED_COLUMNS = 3
 
 # 内嵌图重复引用样例：同一张图被引 3 次，再引另一张一次（共 4 处引用、2 张不同的图）。
-# 用来验证「按来源部件去重」——修前重复引用会按出现次序占满 MAX_EMBEDDED_IMAGES 名额，
+# 用来验证「按来源部件去重」——修前重复引用会按出现次序占满 MAX_EMBEDDED_IMAGES 张数上限，
 # 后面的图因此一次都读不到，而落下的 3 份文件内容一模一样。
 REPEATED_IMAGE_REPEATS = 3
 
@@ -690,7 +690,7 @@ def step12_make_video() -> None:
 
 def step13_make_merged() -> None:
     """
-    造三个含合并单元格的样例，用于验证表格格位建模。
+    造三个含合并单元格的样例，用于验证表格逻辑格子建模。
 
     功能：docx 与 pptx 各一张 3x3 表（A1:B1 横向合并、A2:A3 纵向合并）；xlsx 两张表——
           第一张 4x3 同构（纵向跨 3 行），第二张只有 A1:C1 一处合并且覆盖列没有任何别的值。
@@ -756,7 +756,7 @@ def step14_make_repeated_images() -> None:
     功能：三个格式各造一份，photo.png 被引 `REPEATED_IMAGE_REPEATS` 次、screenshot.png 被引 1 次
           （共 4 处引用、2 张不同的图）。pptx 那份把重复引用分在同一页与跨页两处——
           python-pptx 的 rId 只在页内唯一、跨页复用同一个 image part，按 rId 去重会漏。
-    应用场景：验证重复引用不占 `MAX_EMBEDDED_IMAGES` 名额、也不落内容重复的文件。
+    应用场景：验证重复引用不占 `MAX_EMBEDDED_IMAGES` 张数上限、也不落内容重复的文件。
     输入：无（写 data/repeated.docx、repeated.pptx、repeated.pdf）。
     输出：无返回值；文件路径打印到 stdout。
     """
@@ -844,13 +844,13 @@ def step16_make_docx_hyperlinks() -> None:
 
 def step17_make_epub() -> None:
     """
-    造一个三章的 EPUB 样例，用于验证「按 spine 顺序拼章节」与文档级链接消歧。
+    造一个三章的 EPUB 样例，用于验证「按 spine 顺序拼章节」与文档级链接区分清楚。
 
     功能：写一个合规的 EPUB 包——`mimetype` 是第一个条目且不压缩（EPUB 规范要求，别的阅读器
            也这么判）；OPF 放在 `OEBPS/` 子目录下（href 相对它解析）；第一/二/三章分别自带
            `<title>`、只有 h1、两者都没有，用来验章标题的三条分支；链接覆盖跨章引用、章内
            自链、`../` 跨目录回指与外部 http(s)，另有一条 `mailto:` 应被跳过。
-    应用场景：验证 epub 的阅读顺序、链接消歧与「CSS 不进交付文本」。
+    应用场景：验证 epub 的阅读顺序、链接区分清楚与「CSS 不进交付文本」。
     输入：无（写 data/sample.epub）。
     输出：无返回值；文件路径打印到 stdout。
     """
@@ -1010,12 +1010,12 @@ def _ods_cell(text: str = "", col_span: int = 1, row_span: int = 1, repeat: int 
 
 def step20_make_table_edge_cases() -> None:
     """
-    造「表格边界形状」样例，用于验证格位网格在缺格与不同容器上的行为。
+    造「表格边界形状」样例，用于验证表格逻辑格子在缺格与不同容器上的行为。
 
     功能：`merged_tail.docx`——3x3 表（A1:B1 横向合并、A2:A3 纵向合并），再把最后一行行尾的
            `w:tc` 删掉，制造「这一行比网格少一格」的真实形状（OOXML 允许行提前结束）。
            `merged.ods`——用 odfpy 写（pyexcel-ods 走的就是 odfpy 的解析器），首行用
-           `number-columns-repeated` 补三个空格位，随后是横向合并与跨两行的纵向合并。
+           `number-columns-repeated` 补三个空逻辑格子，随后是横向合并与跨两行的纵向合并。
            `merged.xls`——用 xlwt 写（老版 .xls 没有别的可用写出器），横向与纵向合并各一处。
     应用场景：验证行尾缺格补齐与 .xls / .ods 的合并区（判据：合并文本只出现一次 + 同一张表
            每行制表符个数相同）。
@@ -1049,7 +1049,7 @@ def step20_make_table_edge_cases() -> None:
     spreadsheet = OpenDocumentSpreadsheet()
     sheet = Table(name=ODS_SHEET_NAME)
     row = TableRow()
-    row.addElement(_ods_cell(repeat=3))  # 首行：repeated 补三个空格位（验证重复列参与列游标）
+    row.addElement(_ods_cell(repeat=3))  # 首行：repeated 补三个空逻辑格子（验证重复列参与列游标）
     sheet.addElement(row)
     row = TableRow()
     row.addElement(_ods_cell(MERGED_TITLE, col_span=2))

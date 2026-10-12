@@ -1,5 +1,5 @@
 // 与后端 routers/convert/schema.py 一一对应的类型定义。
-// 契约只有一处事实源在 Python 侧；这里保持同名字段，改动时两边一起改。
+// 字段约定只有一处事实源在 Python 侧；这里保持同名字段，改动时两边一起改。
 
 export type Modality =
   | 'document'
@@ -83,7 +83,7 @@ export interface Timings {
 }
 
 export interface ErrorInfo {
-  /** 稳定错误码，见后端 configs/errors.py；是契约的一部分，不随文案改 */
+  /** 稳定错误码，见后端 configs/errors.py；是字段约定的一部分，不随文案改 */
   code: string
   /** 面向使用者的说明，措辞可能随时变 */
   message: string
@@ -104,12 +104,12 @@ export interface ConvertResponse {
 /**
  * 一个扩展提供商的可用性，来自 `/probe/health` 的 capabilities。
  *
- * 名单与探活口径的唯一事实源在 Python 侧 `configs/extensions.py` 与 `extensions/registry.py`。
+ * 名单与健康检查口径的唯一事实源在 Python 侧 `configs/extensions.py` 与 `extensions/registry.py`。
  */
 export interface ProviderStatus {
   id: string
   label: string
-  /** api = 第三方接口（看密钥是否配置）；sidecar = 本机侧车（探 /health） */
+  /** api = 第三方接口（看密钥是否配置）；sidecar = 本机独立服务（探 /health） */
   kind: 'api' | 'sidecar'
   available: boolean
   /** 不可用的原因；可用时为 null */

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-处理器层的输入与产出契约（ADR-0010：落在 `utils/`，与路由契约 `routers/convert/schema.py` 区分开）。
+处理器层的输入与产出字段约定（ADR-0010：落在 `utils/`，与路由字段约定 `routers/convert/schema.py` 区分开）。
 
 也放 Detector / ImageMeta / AudioMeta / ErrorInfo：它们既是 HTTP meta 碎片，也被处理器产出引用；
 放在 utils 才能让本文件不依赖 routers（依赖单向：routers → utils，不是反过来）。
@@ -64,7 +64,7 @@ class ErrorInfo(BaseModel):
     没有明确归属时为 null。
     """
 
-    code: str = Field(..., description="稳定错误码，见 configs/errors.py；是契约的一部分，不随文案改")
+    code: str = Field(..., description="稳定错误码，见 configs/errors.py；是字段约定的一部分，不随文案改")
     message: str = Field(..., description="面向使用者的说明，可能随时改措辞")
     param: Optional[str] = Field(None, description="出错的是哪个入参或字段；无明确归属时为 null")
 
@@ -117,7 +117,7 @@ class EmbeddedAsset:
 
 @dataclass
 class ExtractResult:
-    """一个处理器的确定性产出。字段与响应契约的 meta 对齐，由管线合并。"""
+    """一个处理器的确定性产出。字段与响应字段约定的 meta 对齐，由处理流程合并。"""
 
     content: str = ""
     engines: List[str] = field(default_factory=list)
@@ -164,8 +164,8 @@ class EnhanceOutcome:
         ocr_text — 模型从图像里读出的文字；只有它进 `meta.ocr_text`。
         asr_text — 本机语音识别服务从音轨转写出的文字；只有它进 `meta.asr_text`。
         description — 独立图片的客观描述；图里没有文字时它就是摘要的来源。
-        notes — 过程说明（几页判为空白、几页重试过），由管线放进 `meta.notes`。
-        limits_hit — 增强阶段命中的上界名（如送模型前 `max_long_edge`），由管线并进 `meta.limits_hit`。
+        notes — 过程说明（几页判为空白、几页重试过），由处理流程放进 `meta.notes`。
+        limits_hit — 增强阶段命中的上界名（如送模型前 `max_long_edge`），由处理流程并进 `meta.limits_hit`。
     五项都不碰 content：content 只在 `extract_*` 里产生，这是两条路可对比的前提。
     """
 
@@ -186,7 +186,7 @@ class GridSpan:
 @dataclass
 class CoveredSlot:
     """
-    被某个跨度覆盖的格位，指回覆盖它的 origin。
+    被某个跨度覆盖的逻辑格子，指回覆盖它的 origin。
 
     它**不持有文本**——这就是「每个逻辑格位恰好出现一次」的全部含义：合并只影响坐标。
     """
@@ -194,6 +194,6 @@ class CoveredSlot:
     origin_row: int
     origin_col: int
 
-# 一个格位要么是 origin 要么是被覆盖者；一张表就是一个格位矩阵（构造与渲染见 `utils/excel/grid.py`）
+# 一个逻辑格子要么是 origin 要么是被覆盖者；一张表就是一个逻辑格子矩阵（构造与渲染见 `utils/excel/grid.py`）
 CellSlot = Union[GridSpan, CoveredSlot]
 TableGrid = List[List[CellSlot]]

@@ -148,7 +148,7 @@ def _specs(cells_by_row: List[List[CellSpec]], clusters: List[int]) -> List[list
           是纵向合并区就够。
     应用场景：`build_lines` 的最后一步。
     输入：cells_by_row — 已归一化右边界的格；clusters — 全表列簇。
-    输出：每行的格位规格，可直接交给 `fill_from_specs`。
+    输出：每行的逻辑格子规格，可直接交给 `fill_from_specs`。
     """
     specs_by_row = []
     active: Set[Tuple[int, int]] = set()  # 上一行的纵向合并区：(col_l, col_r)
@@ -176,7 +176,7 @@ def build_lines(rows: List[RtfRow]) -> Tuple[str, List[str], int, List[str]]:
     """
     把一张表的行规格渲成制表符块。
 
-    功能：右边界归一化 → 全表边界聚类 → 逐行折叠横向合并 → 逐行接纵向合并 → 交给格位网格；
+    功能：右边界归一化 → 全表边界聚类 → 逐行折叠横向合并 → 逐行接纵向合并 → 交给表格逻辑格子；
           行数超 `limits.MAX_TABLE_ROWS` 时只渲前若干行，并在末行说明还剩多少行。
     应用场景：`rtf.py` 收完一张表的**全部**行后调用一次（聚类要看到全表边界，不能一行一行渲）。
     输入：rows — 每行是 RtfRow（格规格 + 源标的表头标记）。

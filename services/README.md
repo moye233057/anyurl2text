@@ -1,4 +1,4 @@
-# services · 仓内第三方侧车
+# services · 仓内本机独立服务
 
 独立进程，不进核心 `uv` 环境。`backend/extensions/` 只放 HTTP 客户端。
 

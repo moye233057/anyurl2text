@@ -1,7 +1,7 @@
 # 运行 · 配置 · 验收
 
 > **用途**：首次启动见 [README 的启动方式](../README.md#启动方式)；这份讲跑起来之后的配置项、样例生成、验收清单与故障处置。
-> **关联**：[architecture.md](./architecture.md)（模块与落点） · [API.md](./API.md)（字段契约）
+> **关联**：[architecture.md](./architecture.md)（模块与落点） · [API.md](./API.md)（字段约定）
 > **基线**：2026-09-12
 
 ---
@@ -33,7 +33,7 @@
 
 ### 成本相关
 
-想控花费时按这个顺序调。单价表与第三方成本闸在 `extensions/deepseek.py`（2026-10-10 按官方 Flash 价核对）。
+想控花费时按这个顺序调。单价表与单次请求费用上限在 `extensions/deepseek.py`（2026-10-10 按官方 Flash 价核对）。
 
 | 变量 | 默认 | 影响 |
 |---|---|---|
@@ -53,7 +53,7 @@
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `ANYURL2TEXT_HOST` | `127.0.0.1` | 监听地址；要让局域网访问改成 `0.0.0.0` |
-| `RELOAD` | `true` | 自动重载：改 `backend/` 下的 `.py` 立即生效。`cd backend` 后 `uv run python app.py`，或仓库根 `uv run python start.py`，都认这个开关 | 不想多一个监督进程就设 `false`（那时改完要手动重启）。注意它只监视 `.py`：改 `.env` 仍要重启 |
+| `RELOAD` | `false` | 自动重载：设 `true` 后改 `backend/` 下的 `.py` 立即生效，代价是多一个监督进程。`cd backend` 后 `uv run python app.py`，或仓库根 `uv run python start.py`，都认这个开关 | 2026-10-12 起默认关：开着它时改任何 `.py` 都会重启服务，撞上正在跑的 HTTP 接口用例就成批报连接被拒 / 读超时（见第 6 节）。它只监视 `.py`，改 `.env` 仍要重启 |
 | `REQUEST_BUDGET_SEC` | 120 | 单请求全链路时间预算（下载+解析+模型） |
 | `DOWNLOAD_BUDGET_SEC` | 20 | 下载层单独上限（不超过全链路剩余） |
 | `CONCURRENCY_FAST` / `CONCURRENCY_MEDIA` | 32 / 8 | 文档类等快池与图片/音视频慢池并发；满员 HTTP 429 |
@@ -96,11 +96,11 @@ DEEPSEEK_API_KEY=ollama
 | `MAX_ROWS_PER_SHEET` | 5000 | `backend/configs/limits.py` | 单张表最多渲染的行数 |
 | `MAX_ROWS_TO_READ` | 5001（`MAX_ROWS_PER_SHEET + 1`） | `backend/configs/limits.py` | 读取上限比渲染上限多一行，用来区分「还有后续行」与「这是最后一行」 |
 | `MAX_TABLE_ROWS` | 2000 | `backend/configs/limits.py` | 单个表格最多渲染的行数（docx 与 odf 共用这一处，不再各写一份） |
-| `MAX_GRID_EXPANSION` | 200000 | `backend/configs/limits.py` | 表格跨度展开的格位总量上限 |
-| `MAX_GRID_SLOTS` | 1000000 | `backend/configs/limits.py` | 单张表的格位数上限（实测一个格位约 100 字节，100 万格位约 100 MB） |
+| `MAX_GRID_EXPANSION` | 200000 | `backend/configs/limits.py` | 表格跨度展开的逻辑格子总量上限 |
+| `MAX_GRID_SLOTS` | 1000000 | `backend/configs/limits.py` | 单张表的逻辑格子数上限（实测一个逻辑格子约 100 字节，100 万逻辑格子约 100 MB） |
 | `MAX_GRID_TEXT_CHARS` | 5000000 | `backend/configs/limits.py` | 单张表的文字量上限（交付侧的 `max_content_chars` 是组装时事后截断，峰值已经发生） |
 | `MAX_REPEATED_SLOTS` | 100 | `backend/configs/limits.py` | odf 的 `number-*-repeated` 重复次数上限 |
-| `MAX_VISIBILITY_RANGES` | 24 | `backend/configs/limits.py` | 隐藏行列的**登记段数**上限：只钳 `notes` 篇幅，隐藏工作表与隐藏行列的内容一律照抽 |
+| `MAX_VISIBILITY_RANGES` | 24 | `backend/configs/limits.py` | 隐藏行列的**登记段数**上限：只压住 `notes` 篇幅，隐藏工作表与隐藏行列的内容一律照抽 |
 | `MAX_TEXT_BYTES` | 20971520（20 MB） | `backend/configs/limits.py` | 文本类文件的体积上限，超过则只读头部，避免超级大的日志整份进内存 |
 | `MAX_ZIP_UNCOMPRESSED_BYTES` | 20971520（20 MB） | `backend/configs/limits.py` | EPUB / OFD / ODT·ODP 一次请求内 ZIP 成员解压字节总量；读前预检声明体积，再用流式封顶 |
 | `MAX_LONG_EDGE` | 1600 | `backend/configs/limits.py` | 送模型前图片长边缩到多少像素 |
@@ -132,19 +132,19 @@ uv run python start.py   # 项目根目录执行；无参数
 
 ### 对外部署（下载者自配）
 
-本仓默认按**本机开发**起：`RELOAD` 默认 `true`、单进程、`start.py` 拉 Vite 开发服。公开仓库**不附带** Dockerfile、systemd 单元或一整套反代配置——生产环境由谁下载谁在自己的机器 / 编排里配（ADR-0012）。
+本仓默认按**本机开发**起：`RELOAD` 默认 `false`（改完后端 `.py` 要手动重启）、单进程、`start.py` 拉 Vite 开发服。公开仓库**不附带** Dockerfile、systemd 单元或一整套反代配置——生产环境由谁下载谁在自己的机器 / 部署里配（ADR-0012）。
 
 运维常见做法是：在生产机上设一个「当前是生产」的环境变量（名字由你们的规范定，例如 `APP_ENV=production`），再据此加载另一份 `.env` 或注入下列项。**本服务代码不读「是不是生产」这个开关**；它只认下面这些已有配置。
 
 | 你要什么 | 怎么做 |
 |---|---|
-| 关掉改代码自动重启 | `.env` 设 `RELOAD=false`，再启后端（改 `.env` 本身也不触发重载） |
+| 改代码立即生效（本机开发） | `.env` 设 `RELOAD=true`，再启后端（改 `.env` 本身不触发重载）。默认 `false`，改完 `.py` 要手动重启 |
 | 多进程扛并发 | 不要用 `start.py`；`cd backend` 后 `uv run uvicorn app:app --host 0.0.0.0 --port 8020 --workers 4`。worker 数按 CPU 与内存自定 |
 | 非本机访问 | `ANYURL2TEXT_HOST=0.0.0.0`（并自行处理网络暴露面；本仓默认不做鉴权，见 architecture「明确不做」） |
 | 前端静态托管 | `cd frontend && npm run build`，用 nginx / Caddy 等托管 `frontend/dist/`；API 反代到后端。不要把 Vite `npm run dev` 当生产前端 |
 | 请求体再挡一道 | 反代设体积上限，见下文「请求返回 413」里的 `client_max_body_size` 示例 |
 
-验收：生产配置下进程日志不应再出现「自动重载已打开」；前端用的是 build 产物而不是 5173 开发服。
+验收：生产配置下进程日志不应出现「自动重载已打开」（默认已是关；只有显式设了 `RELOAD=true` 才会打开）；前端用的是 build 产物而不是 5173 开发服。
 
 ## 3. 生成样例
 
@@ -154,7 +154,7 @@ uv run python scripts/make_fixtures.py
 ```
 
 输出到 `backend/data/`，与随仓库提供的文本类样例同级：`plain.txt`、`table.csv`、`sample.json`、`feed.xml`、`page.html`、`sample.rtf`、`notes.md` 这 7 个是**仓库自带的手写样例**，脚本既不生成也不覆盖它们（`notes.md` 还是 `/convert` 验收用例的必需样例）。需要后端依赖已安装（脚本用到 python-docx / python-pptx / openpyxl / pymupdf / pillow）。
-生成的东西：带表格与内嵌图的 docx、含空单元格的 xlsx、六页 pptx、**含合并单元格的 docx / xlsx / pptx（`merged.*`，横向与纵向各一处）**、**表格边界形状（阶段 20：`merged_tail.docx` 行尾缺格；`merged.ods` / `merged.xls` 横纵合并各一处，各带一张只有尾部合并的表）**、**隐藏工作表与隐藏行列（阶段 21：`hidden.xlsx` 隐藏第 2、4-5 行与 B 列 + hidden / veryHidden 各一张表；`hidden.xls` 同形状走 BOUNDSHEET；`hidden.ods` 的隐藏表走样式 `table:display="false"`）**、**源标表头（阶段 22：`header.docx` 首行带 `w:tblHeader`；`header.odt` 首行在 `table:table-header-rows` 行组里）**、**同一张图被引 3 次的 docx / pptx / pdf（`repeated.*`，另有一张只引 1 次）**、**带合并表格与两级列表的 `structured.odt`**、**含超链接的 `hyperlink.docx`（同一地址写两次 + 一条没有文字的链接，验证链接去重与截断）**、**三章的 `sample.epub`（spine 顺序与 manifest / zip 顺序都故意不同，另带跨章与章内引用、样式表）**、三页有文字层的 PDF（标题加六节、两节一页，正文逐页不同）、**三页无文字层的扫描件**、odt、odp、**两页的 `sample.ofd`（页序取自文档根、zip 写入顺序相反，第 2 页带一个图像对象）**、**制表符分隔的 `sample.tsv`（一格含逗号与分号）**、压缩包、APK 结构样本、老版 `.doc` 头样本、16kHz 单声道 wav、由它封装的 mp4。
+生成的东西：带表格与内嵌图的 docx、含空单元格的 xlsx、六页 pptx、**含合并单元格的 docx / xlsx / pptx（`merged.*`，横向与纵向各一处）**、**表格边界形状（阶段 20：`merged_tail.docx` 行尾缺格；`merged.ods` / `merged.xls` 横纵合并各一处，各带一张只有尾部合并的表）**、**隐藏工作表与隐藏行列（阶段 21：`hidden.xlsx` 隐藏第 2、4-5 行与 B 列 + hidden / veryHidden 各一张表；`hidden.xls` 同形状走 BOUNDSHEET；`hidden.ods` 的隐藏表走样式 `table:display="false"`）**、**源文件里标明的表头（阶段 22：`header.docx` 首行带 `w:tblHeader`；`header.odt` 首行在 `table:table-header-rows` 行组里）**、**同一张图被引 3 次的 docx / pptx / pdf（`repeated.*`，另有一张只引 1 次）**、**带合并表格与两级列表的 `structured.odt`**、**含超链接的 `hyperlink.docx`（同一地址写两次 + 一条没有文字的链接，验证链接去重与截断）**、**三章的 `sample.epub`（spine 顺序与 manifest / zip 顺序都故意不同，另带跨章与章内引用、样式表）**、三页有文字层的 PDF（标题加六节、两节一页，正文逐页不同）、**三页无文字层的扫描件**、odt、odp、**两页的 `sample.ofd`（页序取自文档根、zip 写入顺序相反，第 2 页带一个图像对象）**、**制表符分隔的 `sample.tsv`（一格含逗号与分号）**、压缩包、APK 结构样本、老版 `.doc` 头样本、16kHz 单声道 wav、由它封装的 mp4。
 
 `.apk` 与 `.doc` 只是**结构样本**，用来验证类型识别与降级分支，不是真的安装包与 Word 文档。
 音视频样例是一段**正弦音、没有说话声**，只用于验证结构信息与「抽音轨 → 送本机 ASR」这条链；要验收转写质量请自备一段真实录音。
@@ -166,7 +166,7 @@ mp4 那一份需要 `imageio-ffmpeg`（可选依赖），没装时脚本跳过�
 
 - **输入**：切「远程 URL / 本地文件」，可点预设样例：本仓样例走本地上传，远程条目填入 URL（并尝试复制到剪贴板）。
 - **能力选择**：`LLM` / `ASR` 是开关，`OCR` 是提供商单选（模型视觉 / 本机 Paddle），同一能力只能选一个。看图（判型、语义描述、扫描页、内嵌图）只要 LLM；音视频转写要 ASR；摘要要 LLM。不可用项在界面上置灰，标题上给「可用 N / M」。矩阵见 [API.md](./API.md) §1.1。
-- **「测试」按钮**：展开「扩展能力」后每行右侧有它，调 `POST /probe/test/{capability}/{provider}`——**点下去会真发一次调用**：侧车只是本机 `GET /health`（不花钱），API 会发一次最小请求（花极小 token，视觉提供商还带一张 64×64 的图，验的就是「这家 API 收不收图」）。通过后该行变为可选并自动选上；失败原因显示在该行下面，悬停也能看到。
+- **「测试」按钮**：展开「扩展能力」后每行右侧有它，调 `POST /probe/test/{capability}/{provider}`——**点下去会真发一次调用**：本机独立服务只是本机 `GET /health`（不花钱），API 会发一次最小请求（花极小 token，视觉提供商还带一张 64×64 的图，验的就是「这家 API 收不收图」）。通过后该行变为可选并自动选上；失败原因显示在该行下面，悬停也能看到。
 - **运行**：一次请求打 `POST /convert`（或 `/convert/file`），开关随请求带上。
 
 预设样例由 `frontend/public/presets.config.js` 配置：一个带注释的顶层文件，页面启动时按 URL 取回来，
@@ -181,8 +181,8 @@ mp4 那一份需要 `imageio-ffmpeg`（可选依赖），没装时脚本跳过�
 
 | # | 做什么 | 判据 |
 |---|---|---|
-| 0a | 后端在跑时 `cd backend` 后 `uv run python -m pytest tests -q` | 自检缝全过：**5 条结构判据 + 2 条自检 = 7 项**（`tests/test_structure.py`；单文件行数门禁已按 ADR-0010 废除）+ 各格式抽取 + 判型 + 通用件（不联网下载、不调模型、不花钱）。**这一条里有 13 条 HTTP 用例（`tests/test_extract_contract.py`），所以后端必须在跑**；只要进程内自检、不起服务时加 `--ignore=tests/test_extract_contract.py` |
-| 0b | 起服务后 `cd backend` 后 `uv run python -m pytest tests -m model -q` | 贵缝全过：ADR-0011 正文对比、模型增强产出、独立图片判型分流、音视频转写（真调模型，且本机 OCR（8021）/ ASR（8022）在跑） |
+| 0a | 后端在跑时 `cd backend` 后 `uv run python -m pytest tests -q` | 进程内自检全过：**5 条结构检查规则 + 2 条自检 = 7 项**（`tests/test_structure.py`；单文件行数限制已按 ADR-0010 废除）+ 各格式抽取 + 判型 + 通用件（不联网下载、不调模型、不花钱）。**这一条里有 13 条 HTTP 用例（`tests/test_extract_contract.py`），所以后端必须在跑**；只要进程内自检、不起服务时加 `--ignore=tests/test_extract_contract.py` |
+| 0b | 起服务后 `cd backend` 后 `uv run python -m pytest tests -m model -q` | 要花钱的模型测试全过：ADR-0011 正文对比、模型增强产出、独立图片判型分流、音视频转写（真调模型，且本机 OCR（8021）/ ASR（8022）在跑） |
 
 **别为了跑测试另起一个后端**：端口只有一个，第二个起不来（`10048`）或者两个互相抢端口。改完后端代码时，开着自动重载的那个服务会自己加载新代码（见第 6 节），直接在它上面跑 0a/0b 就行；服务没开就先按第 2 节起一个，再跑。
 
@@ -192,54 +192,54 @@ pytest 的缓存是关掉的（`backend/pytest.ini` 里的 `-p no:cacheprovider`
 
 ### 怎么看测试结果
 
-**这套测试分三缝，先认清自己要跑哪一缝**（每一条的 docstring 开头就写着它的「行为 / 来源 / 预期值来源」）：
+**这套测试分三类测试入口，先认清自己要跑哪一类**（每一条的 docstring 开头就写着它的「行为 / 来源 / 预期值来源」）：
 
-| 缝 | 覆盖什么 | 前置 | 命令（cwd=`backend/`） |
+| 测试入口 | 覆盖什么 | 前置 | 命令（cwd=`backend/`） |
 |---|---|---|---|
-| 自检缝 | 处理器产出、判型、通用件、结构判据、错误码 | 无（几秒） | `cd backend` → `uv run python -m pytest tests --ignore=tests/test_extract_contract.py` |
-| HTTP 缝 | 真实服务上的代表格式 + 契约形状（13 条） | **后端在 8020 应答** | `cd backend` → `uv run python -m pytest tests/test_extract_contract.py -v` |
-| 贵缝 | `/convert` 开关矩阵、模型增强、音视频转写 | 真模型 + 本机 8021/8022 | `cd backend` → `uv run python -m pytest tests -m model` |
+| 进程内自检 | 处理器产出、判型、通用件、结构检查规则、错误码 | 无（几秒） | `cd backend` → `uv run python -m pytest tests --ignore=tests/test_extract_contract.py` |
+| HTTP 接口测试 | 真实服务上的代表格式 + 响应字段形状（13 条） | **后端在 8020 应答** | `cd backend` → `uv run python -m pytest tests/test_extract_contract.py -v` |
+| 要花钱的模型测试 | `/convert` 开关矩阵、模型增强、音视频转写 | 真模型 + 本机 8021/8022 | `cd backend` → `uv run python -m pytest tests -m model` |
 
-**按能力域看**（跑完的汇总就照这个口径给，别再只数条数）：
+**按能力类别看**（跑完的汇总就照这个口径给，别再只数条数）：
 
-| 能力域（`-m` 直接用） | 覆盖项 | 观测信号（断言的是什么，不是状态码） |
+| 能力类别（`-m` 直接用） | 覆盖点 | 观测信号（断言的是什么，不是状态码） |
 |---|---|---|
 | `capability_detect` | 105 | `(扩展名, 判据来源, 模态)`——决定这个文件送哪个处理器、响应的 `type` |
 | `capability_document` | 30 | 正文内容 / 页数 / 内嵌图数 / 文本框节 |
-| `capability_table` | 74 | 合并单元格不重复、行宽一致、分隔符、数值格式、网格不变式与边界形状、网页/EPUB/docx/ODF/RTF 的源标表头行数、表类型（data / layout）、隐藏工作表与隐藏行列照抽、ODF 行内空列与行尾空格、xlsx 覆盖位与 ODS 重复列坐标、PPTX 残留文字 |
-| `capability_media` | 7 | 图片结构信息、内嵌图去重与名额、音轨参数 |
+| `capability_table` | 74 | 合并单元格不重复、行宽一致、分隔符、数值格式、表格格子必须始终成立的规则与边界形状、网页/EPUB/docx/ODF/RTF 的源文件里标明的表头行数、表类型（data / layout）、隐藏工作表与隐藏行列照抽、ODF 行内空列与行尾空格、xlsx 覆盖位与 ODS 重复列坐标、PPTX 残留文字 |
+| `capability_media` | 7 | 图片结构信息、内嵌图去重与张数上限、音轨参数 |
 | `capability_container` | 2 | 压缩包 / 安装包的条目清单 |
 | `capability_links` | 3 | 链接是否进交付文本、去重与上限 |
-| `capability_epub` | 8 | spine 顺序、章节标记、内部引用消歧、CSS 不进正文 |
+| `capability_epub` | 8 | spine 顺序、章节标记、内部引用区分清楚、CSS 不进正文 |
 | `capability_degrade` | 18 | 降级码是不是那一个、HTTP 仍是 200 |
 | `capability_limits` | 16 | 命的哪条上界、文案是否来自同一模板 |
 | `capability_errors` | 14 | 码表白名单、`error` 对象、模型失败通道、`internal` 兜底 |
-| `capability_http` | 13 | 真实服务上的代表格式 + 契约形状（**只抽查代表，不重复进程内矩阵**） |
-| `capability_utils` | 34 | 解码顺序、峰谷计价、账本累计、第三方成本闸 |
-| `capability_structure` | 7 | 依赖方向、扩展名覆盖、`__init__` 无逻辑、上界值只准写一处、前端契约镜像（另含 2 条自检；行数门禁已废） |
-| `capability_understand` | 16 | 进程内 + 假客户端：`/convert` 开关矩阵、合并 OCR、记账、模型失败通道、跳过扩展 |
+| `capability_http` | 13 | 真实服务上的代表格式 + 响应字段形状（**只抽查代表，不重复进程内矩阵**） |
+| `capability_utils` | 34 | 解码顺序、按官方价算输入/输出成本、用量累计记账、单次请求费用上限 |
+| `capability_structure` | 7 | 依赖方向、扩展名覆盖、`__init__` 无逻辑、上界值只准写一处、前端字段约定镜像（另含 2 条自检；单文件行数限制已废） |
+| `capability_understand` | 16 | 进程内 + 模拟的模型客户端：`/convert` 开关矩阵、合并 OCR、记账、模型失败通道、跳过扩展 |
 
 ```powershell
 cd backend
-uv run python -m pytest tests -m capability_epub -v          # 只跑 EPUB 这一个能力域
+uv run python -m pytest tests -m capability_epub -v          # 只跑 EPUB 这一个能力类别
 uv run python -m pytest tests -m "capability_table or capability_limits" -v
 ```
 
-**别只报条数**：15 种格式各一条是**清单驱动的覆盖**，它算 1 个能力点里的 15 个覆盖项。汇报与验收按「**能力域 × 覆盖项**」说（跑完的汇总就是按域给的）。加能力域要同时登记进 `backend/pytest.ini` 的 `markers`，否则 `--strict-markers` 会挡下。
+**别只报条数**：15 种格式各一条是**清单驱动的覆盖**，它算 1 个能力点里的 15 个覆盖点。汇报与验收按「**能力类别 × 覆盖点**」说（跑完的汇总就是按类别给的）。加能力类别要同时登记进 `backend/pytest.ini` 的 `markers`，否则 `--strict-markers` 会挡下。
 
 **跑完一次会留三份东西给人看**（不是只有 `passed` 的数量）：
 
-1. 终端结尾的「按能力域汇总」：每个能力域一行「N 个覆盖项：通过 x、未通过 y」——**先看哪个域红了**；紧接「没通过的用例」逐条列出用例名 + **「这条在测什么」** + 用时；
+1. 终端结尾的「按能力类别汇总」：每个能力类别一行「N 个覆盖点：通过 x、未通过 y」——**先看哪个类别红了**；紧接「没通过的用例」逐条列出用例名 + **「这条在测什么」** + 用时；
 2. `--durations=5` 标出最慢的五条——「跑了十几分钟」时一眼看出是谁；
-3. **全量清单落盘**到 `backend/data/debug/last_test_run.txt`：**按能力域分组**，每条给状态、用时、用例名与「这条在测什么」（`data/debug/` 在 `.gitignore` 里）。`-ra` 另会把跳过/失败的原因收尾列出。
+3. **全量清单落盘**到 `backend/data/debug/last_test_run.txt`：**按能力类别分组**，每条给状态、用时、用例名与「这条在测什么」（`data/debug/` 在 `.gitignore` 里）。`-ra` 另会把跳过/失败的原因收尾列出。
 
 想看每条用例的实时名字加 `-v`（注意 `-q` 与 `-v` 相抵，别一起用）；只想跑一条用 `-k 关键字`，例如 `uv run python -m pytest tests -k epub -v`（须先 `cd backend`）。
 
-**卡住、或只看到一行行 `F` 与一个数字**：先探后端，`Invoke-WebRequest http://127.0.0.1:8020/probe/health -TimeoutSec 5 -UseBasicParsing`。两种坏法要分清——**没在听**（连接被拒，用例立刻失败）与**连着却不回话**（半死的旧进程占着端口，每条 HTTP 用例都要等满超时才红）。后者用 `Get-NetTCPConnection -LocalPort 8020 -State Listen | Select-Object OwningProcess` 找到占用进程，结束掉再按第 2 节重起。HTTP 缝现在有启动探活前置：后端不应答会**当场**用一条可读消息点明，不会让你等十几分钟；单次请求上限也压到 20 秒（本地上传口正常 1 秒内返回）。
+**卡住、或只看到一行行 `F` 与一个数字**：先探后端，`Invoke-WebRequest http://127.0.0.1:8020/probe/health -TimeoutSec 5 -UseBasicParsing`。两种坏法要分清——**没在听**（连接被拒，用例立刻失败）与**连着却不回话**（半死的旧进程占着端口，每条 HTTP 用例都要等满超时才红）。后者用 `Get-NetTCPConnection -LocalPort 8020 -State Listen | Select-Object OwningProcess` 找到占用进程，结束掉再按第 2 节重起。HTTP 接口测试现在有启动健康检查前置：后端不应答会**当场**用一条可读消息点明，不会让你等十几分钟；单次请求上限也压到 20 秒（本地上传口正常 1 秒内返回）。
 
 | # | 做什么 | 判据 |
 |---|---|---|
-| 1 | 访问 `/probe/health` | `model_key_configured` 为 `true`；启动日志里配置文件路径指向项目根目录的 `.env`。**它还必须在 2 秒内返回**——`start.py` 的就绪探测是 `urlopen(timeout=2)`，健康检查慢过它就会被判成「后端没起」，而后端其实每次都是 200（2026-10-11 踩到）。侧车探活因此是并发的、带缓存的，超时只有 `EXTENSION_PROBE_TIMEOUT_SEC`（默认 0.5 秒） |
+| 1 | 访问 `/probe/health` | `model_key_configured` 为 `true`；启动日志里配置文件路径指向项目根目录的 `.env`。**它还必须在 2 秒内返回**——`start.py` 的启动就绪检查是 `urlopen(timeout=2)`，健康检查慢过它就会被判成「后端没起」，而后端其实每次都是 200（2026-10-11 踩到）。本机服务健康检查因此是并发的、带缓存的，超时只有 `EXTENSION_PROBE_TIMEOUT_SEC`（默认 0.5 秒） |
 | 2 | `/convert` 纯文本样例，三开关全关 | `type` 为 `document`，`content` 非空，`usage` 为 `null` |
 | 3 | `/convert` 含文字图（如 `screenshot.png`），`ocr`+`llm` 开（需 `services/ocr/paddle-ocr`） | `meta.ocr_text` 非空，`meta.notes` 说明判为文字图片；`usage` 非 `null` |
 | 3b | `/convert` 无文字图（如 `photo.png`），`ocr`+`llm` 开 | `meta.ocr_text` 为 `null`、`summary` 是图像客观描述，`meta.notes` 说明判为语义图片 |
@@ -254,16 +254,18 @@ uv run python -m pytest tests -m "capability_table or capability_limits" -v
 
 ### 改了后端代码没生效
 
-后端**默认开了自动重载**（`RELOAD` 默认 `true`）：改完 `backend/` 下的 `.py` 会自动重载，日志里出现 `Reloading...`，直接在这个服务上跑验收就行。别拿还在跑的旧进程当成新代码已通过。
+后端**默认关了自动重载**（`RELOAD` 默认 `false`，2026-10-12 起）：改完 `backend/` 下的 `.py` **要手动重启后端**才生效。别拿还在跑的旧进程当成新代码已通过。
 
-想退回手动重启就把 `RELOAD` 设成 `false`，再重启（`cd backend` 后 `uv run python app.py`，或仓库根 `uv run python start.py`）。两种情况下的四条边界一样：
+要让改动自动生效就把 `RELOAD` 设成 `true`，再重启（`cd backend` 后 `uv run python app.py`，或仓库根 `uv run python start.py`），之后日志里出现 `Reloading...`。两种情况下的四条边界一样：
 
 - **只监视 `.py`**：改 `.env`、`frontend/`、样例文件都不触发重载，仍要手动重启。
 - **它多起一个监督进程**（父进程看文件、子进程才是服务）。`start.py` 用 `taskkill /T` 收树，Ctrl+C 仍能一次收干净；手工起的进程要按 Ctrl+C 停，别只关窗口。
 - **`RELOAD` 自身改了也要重启**：它是在启动时读的。
 - 本机没装 `watchfiles` 时 uvicorn 走 `StatReload`（轮询 `mtime`），照样生效，只是比事件式慢一点；装了 `watchfiles`（`uvicorn[standard]` 自带）才支持 include/exclude 过滤。
 
-开了自动重载之后，改完后端就**直接在这个服务上跑验收**（第 5 节的 0a/0b），不要再起第二个后端——端口只有一个，第二个会因 `10048` 起不来。
+**默认关着自动重载，别指望开着重载去跑验收**：`RELOAD=true` 时改任何 `.py` 都会重启服务，正在跑的 HTTP 接口用例会成批报连接被拒 / 读超时（看起来像「后端被测试打掉」，2026-10-12 实际踩过）。要么保持默认 `false`、改完代码先重启再跑验收，要么重载开着时别同时跑用例。
+
+不管重载开不开，改完后端都**直接在这个服务上跑验收**（第 5 节的 0a/0b），不要再起第二个后端——端口只有一个，第二个会因 `10048` 起不来。
 
 ### `start.py` 说端口已被占用
 
@@ -271,7 +273,7 @@ uv run python -m pytest tests -m "capability_table or capability_limits" -v
 
 ### 结构自查报「文件超预算」或「依赖方向不对」
 
-结构判据在 `backend/tests/test_structure.py`；依赖方向见 [architecture.md](./architecture.md) 第 4 节。单文件行数门禁已废除（ADR-0010）：`processors/` 按「一格式族一文件」收拢，不为过门禁拆文件。加东西前先想清楚它属于哪一层，别往 `pipelines/` 里塞跨格式公共逻辑（表格公共进 `utils/excel/`，模型侧进 `extensions/`）。
+结构检查规则在 `backend/tests/test_structure.py`；依赖方向见 [architecture.md](./architecture.md) 第 4 节。单文件行数限制已废除（ADR-0010）：`processors/` 按「一类格式一个文件」收拢，不为过门禁拆文件。加东西前先想清楚它属于哪一层，别往 `pipelines/` 里塞跨格式公共逻辑（表格公共进 `utils/excel/`，模型侧进 `extensions/`）。
 
 ### 改了前端代码，页面行为还是旧的
 
@@ -284,14 +286,14 @@ uv run python -m pytest tests -m "capability_table or capability_limits" -v
 ### 含文字的图报「Paddle OCR 服务不可达」
 
 独立图片判型为文字图片后要调本机 OCR 服务（`OCR_API_URL`，默认 `http://127.0.0.1:8021/ocr-b64`，实现见 `services/ocr/paddle-ocr`）。
-客户端契约见 `backend/extensions/paddle_ocr.py`：先确认服务已起且 `GET /health` 返回 `"code": "200"`；
+客户端调用约定见 `backend/extensions/paddle_ocr.py`：先确认服务已起且 `GET /health` 返回 `"code": "200"`；
 端口不同就改 `.env` 的 `OCR_API_URL`。服务没起不会让请求 500——那一张图的模型增强失败，
 原因写进 `meta.notes`，`summary` 相应缺失。
 
 ### 音频/视频报「Qwen3-ASR 服务不可达」
 
 音频与视频的音轨要交给本机 ASR 服务（`ASR_API_URL`，默认 `http://127.0.0.1:8022/asr-b64`，实现见 `services/asr/qwen3-asr`）。
-客户端契约见 `backend/extensions/qwen3_asr.py`：先确认服务已起（模型加载可能要十几秒）且 `GET /health` 返回 `"code": "200"`；
+客户端调用约定见 `backend/extensions/qwen3_asr.py`：先确认服务已起（模型加载可能要十几秒）且 `GET /health` 返回 `"code": "200"`；
 端口不同就改 `.env` 的 `ASR_API_URL`。服务没起不会让请求 500——这一类源的转写失败，原因写进 `meta.notes`，
 `summary` 相应缺失，`meta.audio` 仍然有值（音轨参数是纯代码读出来的，不依赖服务）。
 

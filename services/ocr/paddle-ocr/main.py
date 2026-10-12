@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""paddle-ocr 侧车：GET /health · POST /ocr-b64。由仓库根 start.py 或本目录 python main.py 拉起。"""
+"""paddle-ocr 本机服务：GET /health · POST /ocr-b64。由仓库根 start.py 或本目录 python main.py 拉起。"""
 from __future__ import annotations
 
 import asyncio

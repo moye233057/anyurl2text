@@ -1,7 +1,7 @@
 # 想改东西？先看这里
 
 > **用途**：最常见的六类改动各自该动哪些文件、按什么顺序、怎么算改完。
-> **关联**：[architecture.md](./architecture.md)（模块落点与四条铁律） · [adr.md](./adr.md)（别推翻的为什么） · [API.md](./API.md)（契约） · [PIPELINES.md](./PIPELINES.md)（现有各类型的处理链路）
+> **关联**：[architecture.md](./architecture.md)（模块落点与四条铁律） · [adr.md](./adr.md)（别推翻的为什么） · [API.md](./API.md)（字段约定） · [PIPELINES.md](./PIPELINES.md)（现有各类型的处理链路）
 > **基线**：2026-09-12
 
 ---
@@ -13,11 +13,11 @@
 ```bash
 cd backend
 cd backend
-uv run python -m pytest tests -q            # 默认含 HTTP 缝（13 条），**后端须在 8020 应答**；只要进程内自检则加 --ignore=tests/test_extract_contract.py
-uv run python -m pytest tests -m model -q   # 贵缝：扩展开启时的转写/摘要（服务与扩展已起；迁移后改为开关矩阵）
+uv run python -m pytest tests -q            # 默认含 HTTP 接口测试（13 条），**后端须在 8020 应答**；只要进程内自检则加 --ignore=tests/test_extract_contract.py
+uv run python -m pytest tests -m model -q   # 要花钱的模型测试：扩展开启时的转写/摘要（服务与扩展已起；迁移后改为开关矩阵）
 ```
 
-进程内自检（结构判据 + 各格式抽取 + 判型 + 通用件）本身不联网、不调模型；但 `pytest tests -q` 若不加 `--ignore`，会连同 HTTP 缝一起跑。
+进程内自检（结构检查规则 + 各格式抽取 + 判型 + 通用件）本身不联网、不调模型；但 `pytest tests -q` 若不加 `--ignore`，会连同 HTTP 接口测试一起跑。
 
 ---
 
@@ -34,13 +34,13 @@ uv run python -m pytest tests -m model -q   # 贵缝：扩展开启时的转写/
    如果这种格式的**模型处理与通用素材读取不同**（例如独立图片要先判型），再在同一个文件里写
    `enhance_<格式>(client, …) -> EnhanceOutcome`；通用情况不用写，`extensions/reading.py` 的 `enhance_assets()` 已经覆盖。
 2. `backend/pipelines/steps/step4_extract.py` 的 `dispatch()` —— 在对应分组里加一行指向 `extract_*`。
-3. 若该格式有**专属**扩展逻辑（与 `image.enhance_image` / `media.enhance_media` / `enhance_assets` 不同），在统一编排的扩展分派里**显式加一支**（迁移完成前可能仍在 `pipelines/understand.py`）；出现第 4 个这类分支时再考虑注册表。
+3. 若该格式有**专属**扩展逻辑（与 `image.enhance_image` / `media.enhance_media` / `enhance_assets` 不同），在统一调度的扩展分派里**显式加一支**（迁移完成前可能仍在 `pipelines/understand.py`）；出现第 4 个这类分支时再考虑注册表。
 4. `backend/configs/formats.py` —— 把扩展名加进对应的格式集合；容器格式补魔数与内部指纹（ZIP / OLE），否则会被判成容器本身（ADR-0003）。
 
 **完成标准**：
 
 - `cd backend` 后 `uv run python -m pytest tests -q` 全过（或加 ignore 只跑进程内）。
-- 用真实文件：扩展全关时文档类有确定性 `content`、图片类可为空；对应扩展开时转写并进 `content` 且双写 `meta.*`（ADR-0014）。
+- 用真实文件：扩展全关时文档类有确定性 `content`、图片类可为空；对应扩展开时转写并进 `content` 且同时写入 `meta.*`（ADR-0014）。
 - `meta.ext` 是具体格式而不是 `zip` / `ole`。
 - 在 `backend/tests/test_processors_by_format.py` 补样例行与断言。
 
@@ -51,8 +51,8 @@ uv run python -m pytest tests -m model -q   # 贵缝：扩展开启时的转写/
 **动三个地方**：
 
 1. `backend/extensions/prompts/` —— 加一个提示词模板文件。要求模型输出 JSON 时，模板里**必须出现 `json` 字样并给结构示例**，否则模型可能一直吐空白。
-2. 统一编排或处理器的 `enhance_*`——调扩展出口，产出进 `EnhanceOutcome`；组装前由交付合并并进 `content`，并双写 `meta.ocr_text` / `meta.asr_text`（ADR-0011 / 0014）。
-3. 需要新字段就按第 3 节走契约改动流程。
+2. 统一调度或处理器的 `enhance_*`——调扩展出口，产出进 `EnhanceOutcome`；组装前由交付合并并进 `content`，并同时写入 `meta.ocr_text` / `meta.asr_text`（ADR-0011 / 0014）。
+3. 需要新字段就按第 3 节按约定返回改动流程。
 
 **注意**：
 
@@ -65,7 +65,7 @@ uv run python -m pytest tests -m model -q   # 贵缝：扩展开启时的转写/
 - LLM 调用后 `usage.calls` 加一（本机 OCR/ASR 不强制进 usage）。
 - 不要改 `ExtractResult.content` 的语义；扩展正文合并只在组装前做。
 
-## 3. 改响应契约
+## 3. 改响应字段约定
 
 **顺序不能颠倒**，否则会留下半套新名。
 
@@ -88,12 +88,12 @@ frontend/src/ResultPanel.tsx 界面渲染
 
 ## 4. 改界面
 
-先读 [architecture.md](./architecture.md) 的四条铁律。界面**只渲染契约字段**，不发明字段、不改写 `content`。
+先读 [architecture.md](./architecture.md) 的四条铁律。界面**只渲染约定字段**，不发明字段、不改写 `content`。
 
 本项目界面约束：
 
 - **固定区域 + 单滚动条**：区域按屏幕分配高度、底色铺满，整页不滚动；只有真的超出时才出滚动条。
-- **单路 + 能力开关**（目标态）：不要恢复双栏对比主路径；一次运行对应一套开关组合。
+- **单路 + 能力开关**（目标设计）：不要恢复双栏对比主路径；一次运行对应一套开关组合。
 
 **完成标准**：在浏览器里量几何而不是凭印象——整页不滚动、每个区域只在自己溢出时出滚动条、零横向溢出；每个改动的交互都真点过一遍。
 
@@ -121,16 +121,16 @@ frontend/src/ResultPanel.tsx 界面渲染
 
 **动两个地方**：
 
-1. `backend/extensions/<模型>.py`（新建）—— 一个模型一个文件，这是 ADR 0007 定的形态。它只做出口该做的事：把输入发给服务、拿回结果、出错时抛 `utils/errors.py` 的 `LlmError`。**不写业务编排**——什么时候调它是处理器的事。
+1. `backend/extensions/<模型>.py`（新建）—— 一个模型一个文件，这是 ADR 0007 定的形态。它只做出口该做的事：把输入发给服务、拿回结果、出错时抛 `utils/errors.py` 的 `LlmError`。**不写业务调度**——什么时候调它是处理器的事。
    计价与记账写在该模型文件里（DeepSeek 即 `deepseek.py`）；本机服务不计 token 费用（如 OCR）时不记账、也不伪造 token 数，`usage` 只反映 DeepSeek 调用。
 2. `backend/pipelines/processors/<格式>.py` 的 `enhance_*()` —— 由它决定什么时候调这个出口，并把「走了哪条分支」写进 `EnhanceOutcome.notes`。
 
-**已接好的 Paddle OCR**：出口在 `backend/extensions/paddle_ocr.py`（本机 `POST /ocr-b64`，纵向超长图在本地切片并发识别；地址与超时见 `.env` 的 `OCR_API_URL` / `OCR_TIMEOUT_SEC`）；编排在 `pipelines/processors/image.py` 的 `enhance_image()`——独立图片先用视觉模型判型（提示词 `extensions/prompts/classify_image.txt`）：判为语义图片就用那次调用给出的描述，判为文字图片就交 Paddle OCR 读字；判型输出解析不出来时按文字图片处理。
+**已接好的 Paddle OCR**：出口在 `backend/extensions/paddle_ocr.py`（本机 `POST /ocr-b64`，纵向超长图在本地切片并发识别；地址与超时见 `.env` 的 `OCR_API_URL` / `OCR_TIMEOUT_SEC`）；调度在 `pipelines/processors/image.py` 的 `enhance_image()`——独立图片先用视觉模型判型（提示词 `extensions/prompts/classify_image.txt`）：判为语义图片就用那次调用给出的描述，判为文字图片就交 Paddle OCR 读字；判型输出解析不出来时按文字图片处理。
 
-**已接好的 Qwen3-ASR（音视频）**：出口在 `backend/extensions/qwen3_asr.py`（本机 `POST /asr-b64`，自己抽音轨后传字节；地址与超时见 `.env` 的 `ASR_API_URL` / `ASR_TIMEOUT_SEC`）；编排在 `pipelines/processors/media.py`：`extract_media()` 取到音轨（音频直接读，视频与容器音频用 `utils/ffmpeg.py` 抽）并报出 `meta.audio`，音轨同时登记进 `result.assets`（`kind="audio_track"`），`enhance_media()` 拿它转写，文字进 `meta.asr_text`。抽音轨靠 `imageio-ffmpeg`，缺它或抽不出音轨时退回降级（`meta.degraded` 为 `true`）并在 `meta.notes` 里说明；ASR 服务没起只是转写失败，原因同样写进 `meta.notes`，`meta.degraded` 仍为 `false`。
+**已接好的 Qwen3-ASR（音视频）**：出口在 `backend/extensions/qwen3_asr.py`（本机 `POST /asr-b64`，自己抽音轨后传字节；地址与超时见 `.env` 的 `ASR_API_URL` / `ASR_TIMEOUT_SEC`）；调度在 `pipelines/processors/media.py`：`extract_media()` 取到音轨（音频直接读，视频与容器音频用 `utils/ffmpeg.py` 抽）并报出 `meta.audio`，音轨同时登记进 `result.assets`（`kind="audio_track"`），`enhance_media()` 拿它转写，文字进 `meta.asr_text`。抽音轨靠 `imageio-ffmpeg`，缺它或抽不出音轨时退回降级（`meta.degraded` 为 `true`）并在 `meta.notes` 里说明；ASR 服务没起只是转写失败，原因同样写进 `meta.notes`，`meta.degraded` 仍为 `false`。
 
 **完成标准**：
 
-- `cd backend` 后 `uv run python -m pytest tests -q` 全过：结构判据（`tests/test_structure.py`）查依赖方向等；**不再**查单文件行数（ADR-0010）。新格式进 `processors/` 一族一文件，跨格式表格逻辑进 `utils/excel/`。
+- `cd backend` 后 `uv run python -m pytest tests -q` 全过：结构检查规则（`tests/test_structure.py`）查依赖方向等；**不再**查单文件行数（ADR-0010）。新格式进 `processors/` 一族一文件，跨格式表格逻辑进 `utils/excel/`。
 - 外部服务连不上不该让整条请求 500：`tests/test_understand_contract.py` 里已有独立图片判型与音视频转写两类用例；再手工把服务停掉打一张含文字的图 / 一段音频，`meta.notes` 应说明原因且 HTTP 仍是 200。
-- 确认 understand 的正文合并符合 ADR-0011：纯代码段保留，模型转写并进 `content` 且双写 `meta.ocr_text` / `meta.asr_text`。
+- 确认 understand 的正文合并符合 ADR-0011：纯代码段保留，模型转写并进 `content` 且同时写入 `meta.ocr_text` / `meta.asr_text`。

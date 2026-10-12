@@ -16,48 +16,48 @@
 
 ## 2026-09-12 · 后端按 `core/` + `extractors/` 分层
 
-- **背景**：最早的后端只有两个包：`core/` 装契约、下载、识别与编排，`extractors/` 装各格式实现。
-- **原因**：按「技术角色」分包是最省事的起手式——先堆工具函数，再往上搭管线。
-- **做法**：`core/pipeline.py`（约 739 行）里同时住着数据结构、工具函数、两个管线类与全部模型侧逻辑；`llm/client.py` 里 HTTP 客户端、计价、记账、图片编码、JSON 解析五件事混在一个文件；`extractors/__init__.py` 里放着 `dispatch()`；契约、下载、识别、编排同名 `core`，且与 `extractors/` 互为包级循环依赖。
-- **意义**：第一版跑通了端到端，格式覆盖范围与响应契约的结论都是在那时定下来的。
+- **背景**：最早的后端只有两个包：`core/` 装字段约定、下载、识别与调度，`extractors/` 装各格式实现。
+- **原因**：按「技术角色」分包是最省事的起手式——先堆工具函数，再往上搭处理流程。
+- **做法**：`core/pipeline.py`（约 739 行）里同时住着数据结构、工具函数、两个处理流程类与全部模型侧逻辑；`llm/client.py` 里 HTTP 客户端、计价、记账、图片编码、JSON 解析五件事混在一个文件；`extractors/__init__.py` 里放着 `dispatch()`；字段约定、下载、识别、编排同名 `core`，且与 `extractors/` 互为包级循环依赖。
+- **意义**：第一版跑通了端到端，格式覆盖范围与响应字段约定的结论都是在那时定下来的。
 - **废弃原因**：从 `routers/convert` 进去没有一条能顺下来的脉络，改一处得先在几个大文件里找它在哪；`core` 这个名字不提供任何信息。后继 [ADR-0007](./adr.md)，落点与状态见 [architecture.md](./architecture.md)。
 
-## 2026-10-10 · 单文件行数门禁（总行 500 / 代码行 300）
+## 2026-10-10 · 单文件行数限制（总行 500 / 代码行 300）
 
-- **背景**：结构判据 2 限制生产模块体积，意图是逼「一事一文件」、防止巨石。
+- **背景**：结构检查规则 2 限制生产模块体积，意图是逼「一事一文件」、防止巨石。
 - **原因**：预算从 250/150 抬到 500/300 后，贴边的格式（尤其表格 / RTF）仍被逼拆成 `ods_*` / `xlsx_*` / `docx_links` 等碎片，与「一格式一文件」打架。
 - **做法**：静态门禁数行；超限则测试红。
 - **意义**：短期内让依赖方向与体积有机器守门。
-- **废弃原因**：守门手段扭曲了落点。后继 [ADR-0010](./adr.md)：废除行数门禁，processors 按格式族收拢，共享按是否调模型进 `utils/` 或 `extensions/`。
+- **废弃原因**：守门手段扭曲了落点。后继 [ADR-0010](./adr.md)：废除单文件行数限制，processors 按同一类格式收拢，共享按是否调模型进 `utils/` 或 `extensions/`。
 
 ## 2026-10-10 · 两路 content 必须逐字节相同
 
-- **背景**：ADR-0002 曾要求 understand 的模型产出只进 `summary` / `meta.*`，`content` 与 extract 完全一致；结构判据 4 用 AST 拦 `enhance_*` 改 `content`。
+- **背景**：ADR-0002 曾要求 understand 的模型产出只进 `summary` / `meta.*`，`content` 与 extract 完全一致；结构检查规则 4 用 AST 拦 `enhance_*` 改 `content`。
 - **原因**：图片等源在 extract 下正文为空、在 understand 下应有可读正文，才能体现「有无模型」的对比；文档类则应在纯代码段之上追加 OCR/ASR 转写。
-- **做法**：贵缝与 README 强调逐字节一致；OCR/ASR 不进 `content`。
+- **做法**：要花钱的模型测试与 README 强调逐字节一致；OCR/ASR 不进 `content`。
 - **废弃原因**：与产品对比目标冲突。后继 [ADR-0011](./adr.md)；合并逻辑在 `utils/delivery_content.py`；判据 4（enhance 不碰 content）废除。
 
 ## 2026-10-10 · 通用 usage.py + settings 单价表
 
-- **背景**：计价与账本曾放在 `utils/usage.py`，单价表又在 `configs/settings.py`，与「一种模型一个文件」不一致。
+- **背景**：计价与用量记账曾放在 `utils/usage.py`，单价表又在 `configs/settings.py`，与「一种模型一个文件」不一致。
 - **原因**：成本口径实际只服务第三方 DeepSeek；本机 OCR/ASR 不计费。分散两处容易让人以为全仓统一计费。
-- **做法**：`UsageLedger` / `PRICE_TABLE` / 峰谷折算进 `extensions/deepseek.py`；单请求费用与 token 上限用开关 + 阈值控制（默认关）。
+- **做法**：`UsageLedger` / `PRICE_TABLE` / 按时段折算进 `extensions/deepseek.py`；单请求费用与 token 上限用开关 + 阈值控制（默认关）。
 - **意义**：换价与调闸只改 DeepSeek 一处；文档改称「第三方成本控制」。
 - **废弃原因**：落点迁走后删除 `utils/usage.py`，settings 不再持单价表。
 
-## 2026-10-10 · RAG 抽取独立契约（原 ADR-0009）与 utils/rag
+## 2026-10-10 · RAG 抽取独立字段约定（原 ADR-0009）与 utils/rag
 
 - **背景**：检索入库需要页列表与印刷目录区间，ConvertResponse 的 `content` 不能为入库改形状。
-- **原因**：手册 PDF 入库曾挂在本仓，需要独立于 extract / understand 的契约。
-- **做法**：`POST /rag/extract/file`；编排 `pipelines/rag_extract.py`；分页与目录在 `utils/rag/`；依赖 `pymupdf4llm`。
+- **原因**：手册 PDF 入库曾挂在本仓，需要独立于 extract / understand 的字段约定。
+- **做法**：`POST /rag/extract/file`；调度 `pipelines/rag_extract.py`；分页与目录在 `utils/rag/`；依赖 `pymupdf4llm`。
 - **意义**：对比接口保持可对比；入库口单独吐 pages / catalogue_ranges。
-- **废弃原因**：手册抽取交还 self-rag 本仓实现，两仓抽取解耦。本仓删除 RAG 路由 / 编排 / `utils/rag/` / `pymupdf4llm`；普通 PDF 仍用 `pymupdf`。
+- **废弃原因**：手册抽取交还 self-rag 本仓实现，两仓抽取解耦。本仓删除 RAG 路由 / 调度 / `utils/rag/` / `pymupdf4llm`；普通 PDF 仍用 `pymupdf`。
 
 ## 2026-10-10 · 双路对比接口（/extract 与 /understand）
 
 - **背景**：产品用两条 URL 表达「纯代码 vs 模型」代价，前端三栏比正文。
 - **原因**：希望同一源两种代价可逐字节对比，并从 URL 看出是否调模型。
-- **做法**：`POST /extract*` 与 `POST /understand*` 共用契约与抽取内核；understand 叠加模型；ADR-0002 曾否掉「单一接口 + mode」。
+- **做法**：`POST /extract*` 与 `POST /understand*` 共用字段约定与抽取内核；understand 叠加模型；ADR-0002 曾否掉「单一接口 + mode」。
 - **意义**：早期把「可对比」做成项目存在理由，并逼出共用内核。
 - **废弃原因**：改为能力开关控制 OCR/ASR/LLM，取消双路对比产品身份。后继 [ADR-0014](./adr.md)；ADR-0002 / 0004 / 0008 / 0011 已按新目标重写。
 

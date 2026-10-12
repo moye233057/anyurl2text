@@ -214,7 +214,7 @@ def step7_open_browser() -> None:
 
 
 def run() -> int:
-    """只做编排：逐步检查与启动，Ctrl+C 时把子进程一起收掉。"""
+    """只做按序启动：逐步检查与启动，Ctrl+C 时把子进程一起收掉。"""
     if not step1_check_python() or not step2_check_frontend() or not step3_check_ports():
         return 1
 

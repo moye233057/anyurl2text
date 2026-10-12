@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 r"""
-缝 A：按文件类型的确定性抽取。
+A 组：按文件类型的确定性抽取。
 
-缝：`pipelines/steps/step4_extract.dispatch(ext, path, ctx)`——类型识别之后、响应组装之前，
+测的是：`pipelines/steps/step4_extract.dispatch(ext, path, ctx)`——类型识别之后、响应组装之前，
 决定「这个文件交给哪个处理器、产出什么」。不调模型、不联网、不起服务。
 
 为什么选它：项目按「一种格式一个处理器」组织，`dispatch()` 是这张表唯一的入口，
 也是 `docs/EXTENDING.md` 让加格式时改的那个函数。类型识别的行为在 `test_detect.py` 里验，
-响应契约与状态码在 `test_extract_contract.py`（HTTP 缝）里验，这里只管处理器产出。
+响应字段约定与状态码在 `test_extract_contract.py`（HTTP 接口测试）里验，这里只管处理器产出。
 
 预期值来源（都不是「跑一遍看输出」）：
 - `README.md`「支持哪些输入」表：承诺完整解析的格式、只给结构信息的格式、降级的格式
@@ -271,7 +271,7 @@ def test_archive_family_lists_entries_without_extracting(name, entries, ctx, fix
     assert result.content.strip(), "条目清单应作为交付文本给出"
 
 
-# ---------- 合并单元格：格位不变式 ----------
+# ---------- 合并单元格：表格逻辑格子必须始终成立的规则 ----------
 
 # 样例生成参数：三个样例都是 3 列，横向合并在第一行、纵向合并在第一列；
 # 合并文本是脚本阶段 13 写死的固定串（见 `scripts/make_fixtures.py`）。
@@ -293,7 +293,7 @@ def test_merged_text_appears_exactly_once(name, ctx, fixture_copy):
     行为：合并区的文本在交付文本里只出现一次——合并只影响坐标，不复制内容。
 
     来源：CONTEXT「交付文本」+ 样例生成参数（A1:B1 横向、A2:A3 纵向各一处）。
-    实测（2026-10-02）：docx 走 `row.cells` 时同一个格位被返回多次，合并标题与纵向合并各出现
+    实测（2026-10-02）：docx 走 `row.cells` 时同一个逻辑格子被返回多次，合并标题与纵向合并各出现
     两次，下游看到的是「两列同一个值」，列对应关系因此失真。pptx 侧 python-pptx 对覆盖格返回
     空串、本来就正确，这条用例在它上面是回归锁。
     """
@@ -323,7 +323,7 @@ def test_grid_invariant_holds_for_a_real_merged_docx(fixture_copy):
     行为：真实样例（最后一行还有缺格）构造出的网格满足不变式——每个 origin 声明的每个位置都有
           一个指回它的覆盖位。
 
-    来源：`01-表格格位建模.md` 的 D.1 把 `check_grid` 列为「必须抄的一件」；本条把它变成可核查判据。
+    来源：`01-表格逻辑格子建模.md` 的 D.1 把 `check_grid` 列为「必须抄的一件」；本条把它变成可核查判据。
     预期值来源：样例生成参数（A1:B1 横向、A2:A3 纵向各一处）——网格若错，跨度就没有覆盖位背书。
     """
     from docx import Document
@@ -353,17 +353,17 @@ def test_grid_invariant_checker_reports_a_contradictory_grid():
     assert check_grid(contradictory), "跨度声明了 2 列却没有覆盖位，校验函数必须报出来"
 
 
-# ---------- 格位网格的边界形状（01 号专题列的五个「难构造」用例）----------
+# ---------- 表格逻辑格子的边界形状（01 号专题列的五个「难构造」用例）----------
 
 @pytest.mark.capability_table
 def test_late_span_is_clamped_to_positions_it_can_own():
     """
-    行为：同一行里晚到的跨度不得盖住已被认领的位置——重叠时就地钳制，而不是产出矛盾网格。
+    行为：同一行里晚到的跨度不得盖住已被认领的位置——重叠时就地压到上限内，而不是产出矛盾网格。
 
-    来源：`01-表格格位建模.md` 列的 `overlapping_spans_clamp_the_late_origin`
-          （anydoc `src/model/table.rs:399-413`）；它的注释说明「重叠会破坏『每个格位恰好出现一次』，
+    来源：`01-表格逻辑格子建模.md` 列的 `overlapping_spans_clamp_the_late_origin`
+          （anydoc `src/model/table.rs:399-413`）；它的注释说明「重叠会破坏『每个逻辑格子恰好出现一次』，
           存储的跨度必须与覆盖位一一对应」。
-    预期值来源：手搭的格位序列（两处纵向跨度认领了第 1 行的第 0 / 第 2 列，晚到的横向跨度只能落 1 列）。
+    预期值来源：手搭的逻辑格子序列（两处纵向跨度认领了第 1 行的第 0 / 第 2 列，晚到的横向跨度只能落 1 列）。
     """
     builder = GridBuilder()
     builder.next_row()
@@ -391,7 +391,7 @@ def test_nested_spans_and_a_stray_covered_marker_stay_consistent():
     来源：anydoc 的 `covered()` 语义（`src/model/table.rs:216-232`）：`false` 表示「没有跨度认领这个
           位置，孤立的标记就变成空格子」；本仓 `GridBuilder.covered()` 同构，返回值改成**认领到的
           origin**（None = 没人认领），并多记一个计数。
-    预期值来源：手搭的格位序列（第 1 行的第 0 列无人认领、第 2 列被上方的纵向跨度认领）。
+    预期值来源：手搭的逻辑格子序列（第 1 行的第 0 列无人认领、第 2 列被上方的纵向跨度认领）。
     """
     builder = GridBuilder()
     builder.next_row()
@@ -420,7 +420,7 @@ def test_trailing_covered_rows_stay_backed_and_render_nothing():
     来源：anydoc 用 `keep_covered_tail` 让电子表格保住这类行、其余来源裁掉
           （`src/model/table.rs:137-143`、`:258-266`）；本仓刻意只保留在网格里、渲染层跳过整行无文字的
           行（`render_tsv`）——这是 `00-总览` §4.3-4 记下的有意差异。
-    预期值来源：手搭的格位序列（一处跨 3 行的纵向跨度，后两行只被它认领）。
+    预期值来源：手搭的逻辑格子序列（一处跨 3 行的纵向跨度，后两行只被它认领）。
     """
     builder = GridBuilder()
     builder.next_row()
@@ -438,12 +438,12 @@ def test_trailing_covered_rows_stay_backed_and_render_nothing():
 def test_huge_span_is_rejected_before_expanding():
     """
     行为：巨大跨度在**展开之前**就被预算拒掉——退化成 1×1 并记 `table_expansion`，不会真的去建
-          百万个格位。
+          百万个逻辑格子。
 
     来源：anydoc 的 `huge_span_hits_the_expansion_budget_before_expanding`
           （`src/model/table.rs:446-452`，`u32::MAX × u32::MAX` 的跨度在展开前被拒）；本仓
           `GridBuilder.place` 先按面积记账、超限即退化成 1×1。
-    预期值来源：手搭的格位序列（100 万 × 100 万的跨度）与 `MAX_GRID_EXPANSION` 的默认值。
+    预期值来源：手搭的逻辑格子序列（100 万 × 100 万的跨度）与 `MAX_GRID_EXPANSION` 的默认值。
     """
     builder = GridBuilder()
     builder.next_row()
@@ -464,7 +464,7 @@ def test_covered_tail_behind_a_short_row_gap_materializes():
 
     来源：anydoc 的 `covered_tail_behind_short_row_gap_materializes`（`src/model/table.rs:466-483`）：
           该行的长度必须补到 6，且第 5 位是指回 origin 的覆盖位——「补位」不是渲染层的事，是网格的事。
-    预期值来源：手搭的格位序列（第 0 行 6 列、第 1 行 1 列 + 一处纵向跨度）。
+    预期值来源：手搭的逻辑格子序列（第 0 行 6 列、第 1 行 1 列 + 一处纵向跨度）。
     """
     builder = GridBuilder()
     builder.next_row()
@@ -481,7 +481,7 @@ def test_covered_tail_behind_a_short_row_gap_materializes():
     assert check_grid(grid) == [], f"网格不自洽：{check_grid(grid)}"
 
 
-# ---------- 网页与 EPUB 的表格：走格位网格，不再拉平 ----------
+# ---------- 网页与 EPUB 的表格：走表格逻辑格子，不再拉平 ----------
 
 @pytest.mark.capability_table
 def test_html_table_is_rendered_as_columns(ctx, fixture_copy):
@@ -505,10 +505,10 @@ def test_html_table_is_rendered_as_columns(ctx, fixture_copy):
 @pytest.mark.capability_table
 def test_html_table_spans_go_through_the_grid(ctx, work_dir):
     """
-    行为：`colspan` / `rowspan` 交给格位网格——合并文本只出现一次，被吞掉的格位占列位（行首空列保住）。
+    行为：`colspan` / `rowspan` 交给表格逻辑格子——合并文本只出现一次，被吞掉的逻辑格子占列位（行首空列保住）。
 
     来源：`html_tables.table_to_tsv` 的 docstring（`rowspan="0"` 按「跨到本行组末尾」处理）；
-          `01-表格格位建模.md` 的不变式（内容与跨度只挂在 origin 上）。
+          `01-表格逻辑格子建模.md` 的不变式（内容与跨度只挂在 origin 上）。
     预期值来源：本用例自己写的 HTML（横向合并一处、跨两行的纵向合并一处）。
     """
     path = work_dir / "spanned.html"
@@ -534,7 +534,7 @@ def test_epub_chapter_table_goes_through_the_grid():
     """
     行为：EPUB 章节里的 `<table>` 与网页同一条路——`_chapter_body` 交出制表符块，而不是拉平的文本。
 
-    来源：`html_tables.py` 是网页与 EPUB 共用的那一份（同一能力只在最靠近它的缝验一次，
+    来源：`html_tables.py` 是网页与 EPUB 共用的那一份（同一能力只在最靠近它的测试入口验一次，
           所以这里直接测章节处理器，不另起一个 epub 样例）。
     预期值来源：本用例自己写的章节 XHTML（表 2 行 × 2 列，前后各一段）。
     """
@@ -563,7 +563,7 @@ def test_table_header_rows_come_from_the_source_markup(ctx, fixture_copy, work_d
           各一条：标的（1）、没标的（0）、表不止一张（null）。
 
     来源：`routers/convert/schema.py` 的 `table_header_rows` 字段说明（null 与 0 的区别就写在那里）
-          + ADR-0001（字段契约只有一个事实源）。
+          + ADR-0001（字段约定只有一个事实源）。
     预期值来源：`page.html` 的表首行是 `<th>`（1 行表头）；本用例另写两张页：一张全 `<td>`、一张两张表。
     """
     marked, _ = fixture_copy("page.html")
@@ -591,8 +591,8 @@ def test_docx_header_rows_come_from_tbl_header(ctx, fixture_copy):
     """
     行为：docx 的 `w:trPr/w:tblHeader` 行算表头——`header.docx` 报 1，且这一行的文字照旧在正文里。
 
-    来源：`01-表格格位建模.md` §1.1 的剩余项（anydoc 的表是 `{grid, header_rows, kind}`，本仓只缺
-          「其余格式的源标表头」）；`routers/convert/schema.py` 的字段说明（只认源自己标的）。
+    来源：`01-表格逻辑格子建模.md` §1.1 的剩余项（anydoc 的表是 `{grid, header_rows, kind}`，本仓只缺
+          「其余格式的源文件里标明的表头」）；`routers/convert/schema.py` 的字段说明（只认源自己标的）。
     预期值来源：`scripts/make_fixtures.py` 阶段 22 的生成参数——3 行表、只把首行标上 `w:tblHeader`。
     """
     path, ext = fixture_copy("header.docx")
@@ -619,7 +619,7 @@ def test_odt_header_row_group_is_rendered_and_counted(ctx, fixture_copy):
     """
     行为：ODF 的表头是**行组**（`table:table-header-rows`）——那一组的文字进正文，且报成 1 行表头。
 
-    来源：`01-表格格位建模.md` §1.1 的剩余项。修前 `odf._render_table` 只取 `table:table` 的
+    来源：`01-表格逻辑格子建模.md` §1.1 的剩余项。修前 `odf._render_table` 只取 `table:table` 的
           **直属** `table:table-row`，整个表头行组连同文字一起消失（实测 `header.odt` 的
           `项目\t数量` 一个字都没进正文，字段也恒为 null）。
     预期值来源：阶段 22 的生成参数——3 行表、首行放进表头行组。
@@ -702,7 +702,7 @@ def test_xlsx_without_a_covered_cell_element_keeps_its_column(ctx, work_dir):
     """
     行为：产出方**不给覆盖位写 `<c>`** 时，合并区后面的值仍落在源列上（`合并标题\\t\\tc1`）。
 
-    来源：`01-表格格位建模.md` §4.1 的未核实项——本仓 `_sheet_grid` 按列号落位，隐含依赖
+    来源：`01-表格逻辑格子建模.md` §4.1 的未核实项——本仓 `_sheet_grid` 按列号落位，隐含依赖
           「覆盖位在值矩阵里占一个位置」。实测：openpyxl 自己写出来的 xlsx **就不写** B1 的 `<c>`
           （本用例先断言这一前提），而读取侧仍按合并矩形把 B1 标成覆盖位，所以列位不左移。
     预期值来源：本用例写 A1:B1 合并 + C1、A2/B2，形状即预期（第一行第 3 列是 c1）。
@@ -735,7 +735,7 @@ def test_ods_repeated_columns_keep_the_merge_coordinates(ctx, work_dir):
     行为：多张表 + `number-columns-repeated` 补位时，合并区坐标仍按展开后的列号算——
           「补位」重复 3 次后，后面的文字落在第 4 列；跨列表的覆盖位不左移。
 
-    来源：`01-表格格位建模.md` §4.5 的未核实项（ODS 合并区的重复列游标假设）；`align_ods_values`
+    来源：`01-表格逻辑格子建模.md` §4.5 的未核实项（ODS 合并区的重复列游标假设）；`align_ods_values`
           依赖 `read_merge_rects` 的坐标与 pyexcel-ods 的展开口径一致。
     预期值来源：本用例写两张表——表一「A1:B1 合并 + C1」，表二「3 个重复空格 + 四列」「尾合并 跨 2 列 + d2」。
     """
@@ -789,7 +789,7 @@ def test_hidden_docx_text_is_extracted_and_registered(ctx, work_dir):
     """
     行为：docx 的隐藏文字（`w:rPr/w:vanish`）照进正文，并在 `notes` 里登记处数与字数。
 
-    来源：用户 2026-10-04 拍板「隐藏内容一律照抽」（`01-表格格位建模.md` §1.2）；
+    来源：用户 2026-10-04 拍板「隐藏内容一律照抽」（`01-表格逻辑格子建模.md` §1.2）；
           python-docx 的 `run.font.hidden = True` 写的就是 `w:vanish`。
     预期值来源：本用例写 1 段普通文字 + 1 处隐藏文字「隐藏文字样本XYZ」（9 字）。
     """
@@ -961,9 +961,9 @@ def test_odf_trailing_empty_cells_do_not_consume_the_slot_budget(monkeypatch, ct
     """
     行为：ODF 行尾的空单元格不落格位——同样的表把 `max_grid_slots` 压到 30 也不命中。
 
-    来源：`01-表格格位建模.md` §1.4 的省法（anydoc 的 `flush_gap`）；`odf._render_table` 现在按
+    来源：`01-表格逻辑格子建模.md` §1.4 的省法（anydoc 的 `flush_gap`）；`odf._render_table` 现在按
           「行内缓冲、行尾丢弃」落格。
-    预期值来源：本用例写 3 行、每行「1 个有字格 + 20 个行尾空格」= 修前 63 个格位、修后 3 个；
+    预期值来源：本用例写 3 行、每行「1 个有字格 + 20 个行尾空格」= 修前 63 个逻辑格子、修后 3 个；
           预算 30 卡在两者之间，所以命中与否直接区分两种实现。
     """
     import configs.limits as limits
@@ -1119,7 +1119,7 @@ def test_pptx_text_left_in_a_covered_cell_is_merged_back(ctx, work_dir):
     """
     行为：合并区非左上格（续格）里若被产出方留下文字，文字并回合并单元格并在 `notes` 里登记。
 
-    来源：`01-表格格位建模.md` §4.4 的未核实项——anydoc 直接丢弃续格文字，本仓取向是「尽量抽出来」。
+    来源：`01-表格逻辑格子建模.md` §4.4 的未核实项——anydoc 直接丢弃续格文字，本仓取向是「尽量抽出来」。
     预期值来源：本用例写 2×2 表、把 A1:B1 合并，再把续格单独写上「续格残留字」（并清掉 origin 里的
           同名文字），所以正文里必须出现这两段、且 notes 报 1 处。
     """
@@ -1143,7 +1143,7 @@ def test_pptx_text_left_in_a_covered_cell_is_merged_back(ctx, work_dir):
     assert any("残留文字已并入合并单元格（1 处）" in note for note in result.notes), result.notes
 
 
-# ---------- 格内多段：一个格位里的换行写成 `<br>`（anydoc 的 render_cell 口径） ----------
+# ---------- 格内多段：一个逻辑格子里的换行写成 `<br>`（anydoc 的 render_cell 口径） ----------
 
 @pytest.mark.capability_table
 def test_docx_multi_paragraph_cell_keeps_its_line_break(ctx, work_dir):
@@ -1275,7 +1275,7 @@ def test_docx_continuation_cell_text_is_merged_back(ctx, work_dir):
     """
     行为：纵向合并的**继续格**自带文字时，文字并回合并起点并在 `notes` 报处数（不再静默丢掉）。
 
-    来源：`01-表格格位建模.md` §2.1 的决定（用户 2026-10-04：直接改代码兜底）——产出方
+    来源：`01-表格逻辑格子建模.md` §2.1 的决定（用户 2026-10-04：直接改代码兜底）——产出方
           （WPS / LibreOffice）有时把文字留在续格里；PPTX 那条早已改成并回，这里把 docx 对齐。
     预期值来源：本用例写 2 行 2 列、左列纵向合并（起点在第一行），再往第二行（继续格）单独写
           「写在继续格里的字」——所以它必须出现在第一行那一格里，且 notes 报「1 处」。
@@ -1337,7 +1337,7 @@ def test_odf_covered_cell_without_a_span_is_reported(ctx, work_dir):
 
     来源：同 §2.1——孤儿计数在 `GridBuilder` 上，四条表格路径共用，所以 ODF 侧也报得出来。
     预期值来源：本用例写一张单列表，第一格直接是 `table:covered-table-cell`（没有起点），所以
-          第一行第一列是空格位、notes 报 1 个孤儿。
+          第一行第一列是空逻辑格子、notes 报 1 个孤儿。
     """
     from odf.opendocument import OpenDocumentText
     from odf.table import CoveredTableCell, Table, TableCell, TableRow
@@ -1377,7 +1377,7 @@ def test_repeated_image_is_saved_once_and_does_not_starve_others(name, asset_ctx
 
     来源：`docs/PIPELINES.md`「内嵌图：一次请求带上全部图（受 MAX_EMBEDDED_IMAGES 限制）」
     + 样例生成参数（阶段 14：4 处引用、2 张不同的图，上限 3）。
-    实测（2026-10-04）：修前三个格式都按「出现次序」占名额——前 3 处引用全是同一张 photo.png，
+    实测（2026-10-04）：修前三个格式都按「出现次序」占张数上限——前 3 处引用全是同一张 photo.png，
     于是落下 3 份内容完全相同的文件，而 screenshot.png 一次都没被读到。
     `images` 仍是**引用次数**（docx 数 `a:blip`、pdf 数 `get_images`、pptx 数图片形状），
     这不在本轮改动范围内，用第一条断言把它钉住。
@@ -1398,7 +1398,7 @@ def test_merge_rect_normalises_row_first_half_open_input():
     行为：`grid.merge_rect` 把「行在前、开区间」的输入原样归一成半开矩形，起止写反时对调，
           退化矩形返回 None。
 
-    来源：`01-表格格位建模.md` 的 D.2——openpyxl 是闭区间且列在前、xlrd 是开区间且行在前，
+    来源：`01-表格逻辑格子建模.md` 的 D.2——openpyxl 是闭区间且列在前、xlrd 是开区间且行在前，
           两条路径不能共用一个换算，所以统一到 `grid.merge_rect` 的半开形态。
     预期值来源：手算常量（xlrd 的 `(rlo, rhi, clo, chi) = (1, 3, 0, 1)` 表示 A2:A3）。
     """
@@ -1429,7 +1429,7 @@ def test_odt_table_keeps_columns_instead_of_one_paragraph_per_line(ctx, fixture_
     （跨度 → `place(span)`、`covered-table-cell` → `covered()`、
     `number-columns-repeated` → 循环落位并记账）。
     实测（2026-10-04）：原来全局 `root.iter()` 收 `text:p`，每个单元格各自成一行、不含制表符，
-    列对应关系完全丢失；接上格位网格后同一张表每行都是 3 列。
+    列对应关系完全丢失；接上表格逻辑格子后同一张表每行都是 3 列。
     """
     result = run(ODT_STRUCTURED_FIXTURE, ctx, fixture_copy)
     table_lines = [line for line in _table_lines(result.content) if "\t" in line]
@@ -1509,7 +1509,7 @@ def test_spreadsheet_reports_the_row_limit(ctx, work_dir):
 @pytest.mark.capability_limits
 def test_pptx_reports_the_image_limit_instead_of_failing(monkeypatch, asset_ctx, fixture_copy):
     """
-    行为：PPTX 的不同内嵌图超过名额时，命中名字进 `limits_hit`，抽取照常完成而不是崩。
+    行为：PPTX 的不同内嵌图超过张数上限时，命中名字进 `limits_hit`，抽取照常完成而不是崩。
 
     来源：`configs/limits.py` 的 `max_embedded_images` + 「命中上界必须机器可读」。
     预期值来源：样例 `repeated.pptx` 的生成参数（阶段 14：photo 被引 2 次 + screenshot 1 次，
@@ -1532,7 +1532,7 @@ def test_grid_expansion_limit_is_reported(monkeypatch, ctx, fixture_copy):
     """
     行为：格位展开超过上限时只停展开、把名字记进 `limits_hit`，抽取仍是正常结果（不降级）。
 
-    来源：`01-表格格位建模.md` 的 D.6-4（「把上限临时调成 1 跑一次」）+ ADR-0003（降级是能力边界，
+    来源：`01-表格逻辑格子建模.md` 的 D.6-4（「把上限临时调成 1 跑一次」）+ ADR-0003（降级是能力边界，
           网格超限不该让整条请求变成错误）。
     预期值来源：样例 `merged.docx` 有横向与纵向各一处跨度（各多占一个覆盖位），上限压到 1 必然命中。
     """
@@ -1560,11 +1560,11 @@ def test_grid_expansion_limit_is_absent_when_not_hit(ctx, fixture_copy):
 @pytest.mark.capability_limits
 def test_grid_slot_budget_is_reported(monkeypatch, ctx, fixture_copy):
     """
-    行为：单张表的格位数超过 `max_grid_slots` 时，其余单元格不落位、名字进 `limits_hit`，请求仍正常。
+    行为：单张表的逻辑格子数超过 `max_grid_slots` 时，其余单元格不落位、名字进 `limits_hit`，请求仍正常。
 
-    来源：`configs/limits.py` 的 `max_grid_slots`（2026-10-04 新增：实测一个格位约 100 字节，
-          100 万格位约 100 MB；它挡的是列数无上限的畸形表）+ ADR-0003（降级是能力边界）。
-    预期值来源：`merged.xlsx` 第一张表是 4 行 × 3 列 = 12 个格位，把预算压到 3 必然命中。
+    来源：`configs/limits.py` 的 `max_grid_slots`（2026-10-04 新增：实测一个逻辑格子约 100 字节，
+          100 万逻辑格子约 100 MB；它挡的是列数无上限的畸形表）+ ADR-0003（降级是能力边界）。
+    预期值来源：`merged.xlsx` 第一张表是 4 行 × 3 列 = 12 个逻辑格子，把预算压到 3 必然命中。
     """
     import configs.limits as limits
 
@@ -1597,7 +1597,7 @@ def test_spreadsheet_and_slide_paths_report_the_grid_expansion_limit(monkeypatch
     """
     行为：`.xlsx` 与 `.pptx` 的表格也要上报 `max_grid_expansion`——今天只有 docx / odf 报。
 
-    来源：`01-表格格位建模.md` 的 D.5「命中上限必须机器可读」；实测（2026-10-04）发现
+    来源：`01-表格逻辑格子建模.md` 的 D.5「命中上限必须机器可读」；实测（2026-10-04）发现
           `_sheet_grid` 与 `_table_text` 只交网格、不交命中的名字，于是这两条路的上界**静默**。
     预期值来源：两个样例各有合并区（各一处跨度），把展开预算压到 1 必然命中。
     """
@@ -1616,7 +1616,7 @@ def test_hidden_sheets_are_still_extracted(ctx, fixture_copy):
     """
     行为：整表隐藏（hidden / veryHidden）的工作表里的文字照样进正文——隐藏只是界面上没显示。
 
-    来源：用户 2026-10-04 拍板（`01-表格格位建模.md` §1.2）。修前 `excel.py` 会整张跳过
+    来源：用户 2026-10-04 拍板（`01-表格逻辑格子建模.md` §1.2）。修前 `excel.py` 会整张跳过
           `sheet_state != "visible"` 的表：`hidden.xlsx` 的 3 张表只抽到 1 张。
     预期值来源：`scripts/make_fixtures.py` 阶段 21 写死的内容——两张隐藏表各一格文字 + 表数 3。
     """
@@ -1668,7 +1668,7 @@ def test_hidden_ods_table_content_survives(ctx, fixture_copy):
     行为：ODS 的隐藏是**样式**说了算（整表 `table:display="false"`、行列 `table:visibility="collapse"`）——
           隐藏表与隐藏行列的内容照样进正文，可见性同样登记进 `notes`。
 
-    来源：用户 2026-10-04 拍板「隐藏内容一律照抽」（`01-表格格位建模.md` §1.2）；
+    来源：用户 2026-10-04 拍板「隐藏内容一律照抽」（`01-表格逻辑格子建模.md` §1.2）；
           `pyexcel-ods` 只给值矩阵、样式一概丢掉，所以可见性由 `excel.read_ods_visibility`
           解 `content.xml` 的自动样式表读出来。
     预期值来源：阶段 21 的生成参数——与 `hidden.xlsx` / `hidden.xls` 同一组常量（隐藏第 2、4-5 行与 B 列、
@@ -1938,12 +1938,12 @@ def test_limits_hit_reaches_meta_with_the_templated_note(ctx, work_dir):
 @pytest.mark.capability_limits
 def test_model_side_limits_are_reported_by_step5(monkeypatch):
     """
-    行为：模型侧的两条上界都交回调用方——输出被 `llm_max_tokens` 截断（账本的
+    行为：模型侧的两条上界都交回调用方——输出被 `llm_max_tokens` 截断（用量记账的
           `output_truncated`）、送模型的输入被 `max_model_input_chars` 截断。
 
     来源：`configs/limits.py` 的两条 + ADR-0003「边界要机器可读」。这两条以前接不上：
-    强制点在模型层与步骤 5 里，拿不到 `result`；现在由账本标记、`summarize` 一次交回。
-    做法：假客户端 + 压小输入上限；不联网、不调模型。
+    强制点在模型层与步骤 5 里，拿不到 `result`；现在由用量记账标记、`summarize` 一次交回。
+    做法：模拟的模型客户端 + 压小输入上限；不联网、不调模型。
     """
     from pathlib import Path
 
@@ -1980,7 +1980,7 @@ def test_model_side_limits_are_reported_by_step5(monkeypatch):
     assert hits == ["llm_max_tokens", "max_model_input_chars"]
 
 
-# ---------- EPUB：按 spine 顺序拼章节 + 文档级链接消歧 ----------
+# ---------- EPUB：按 spine 顺序拼章节 + 文档级链接区分清楚 ----------
 
 # 样例生成参数（`scripts/make_fixtures.py` 阶段 17）：三章，manifest 的声明顺序与 zip 的写入顺序
 # 都反着 spine（ch1 → ch2 → ch3）；每章一个独有的特征串，用来验「到底按哪个顺序拼」。
@@ -2083,8 +2083,8 @@ def test_epub_content_is_identical_on_both_paths(ctx, asset_ctx, fixture_copy):
 
     来源：ADR-0002「understand 复用 extract 的抽取内核，只做增量」。
     预期值来源：同一个源的两次抽取；本格式没有模型素材，差异只可能来自「感知调用方是谁」。
-    做法：缝 A 里各跑一次 `dispatch` + `build_response`——`tests/test_extract_contract.py`
-    只覆盖 extract 那一口，epub 没有 HTTP 双路用例（understand 那一路要真模型，属贵缝）。
+    做法：A 组 里各跑一次 `dispatch` + `build_response`——`tests/test_extract_contract.py`
+    只覆盖 extract 那一口，epub 没有 HTTP 双路用例（understand 那一路要真模型，属要花钱的模型测试）。
     """
     from utils.processor_schema import PreparedSource
     from pipelines.steps.step6_assemble import build_response

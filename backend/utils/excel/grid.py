@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-格位网格：合并单元格的唯一表示与唯一渲染实现（机制借自 anydoc 的 `src/model/table.rs`）。
+表格逻辑格子：合并单元格的唯一表示与唯一渲染实现（机制借自 anydoc 的 `src/model/table.rs`）。
 
-**不变式：每个逻辑格位恰好出现一次**——内容与跨度只挂在 origin 上，被跨度覆盖的格位是
+**不变式：每个逻辑格位恰好出现一次**——内容与跨度只挂在 origin 上，被跨度覆盖的逻辑格子是
 `CoveredSlot` 并指回覆盖它的 origin。三类脏输入（显式写覆盖位的 ODF、完全不写覆盖位的
 OOXML、真实重叠的跨度）都由 `GridBuilder` 吸收，下游只按列位置读：「哪一格是重复」这个
 判断因此被结构性消灭，而不是靠每个格式自己小心。
 
-为什么不放进 `schema.py`：三个格式都要填它、而渲染只能有一份实现，塞进契约文件会顶到
+为什么不放进 `schema.py`：三个格式都要填它、而渲染只能有一份实现，塞进字段约定文件会顶到
 （目标迁入 `utils/excel/`，见 ADR-0010）；它与处理器同层、只 import 同层 `schema`，
 依赖方向不受影响（ADR-0007）。
 
 超限不抛异常：命中预算时**不落这一格**（或把跨度退化成 1×1），把上界名记进 `limit_hits`，由处理器写进
 `limits_hit` / `notes`——「降级是正常结果」（ADR-0003），网格超限不该让整条请求变成错误。
-三条预算各管一件事：**展开**（跨度额外占的格位数）、**格位数**（本表落了多少格）、
+三条预算各管一件事：**展开**（跨度额外占的逻辑格子数）、**格位数**（本表落了多少格）、
 **文字量**（落进来的文字总字符数，直接界定渲染出的中间字符串大小）。
 """
 from typing import Dict, List, Optional, Tuple
@@ -22,7 +22,7 @@ import configs.limits as limits
 from utils.processor_schema import CoveredSlot, GridSpan, TableGrid
 
 def _holds_place(slot) -> bool:
-    """这个格位是否占住一个位置：覆盖位、有文字的 origin、带跨度的 origin 都算。"""
+    """这个逻辑格子是否占住一个位置：覆盖位、有文字的 origin、带跨度的 origin 都算。"""
     return isinstance(slot, CoveredSlot) or bool(slot.text) or slot.col_span > 1 or slot.row_span > 1
 
 class GridBuilder:
@@ -80,7 +80,7 @@ class GridBuilder:
         落一个 origin 格位。
 
         功能：面积先记账（超限退化成 1x1 并记 `max_grid_expansion`），与本行或下方已被别的跨度认领的
-              位置重叠时就地钳制，再把跨度覆盖的其余位置登记进待覆盖账本。
+              位置重叠时就地压到不重叠，再把跨度覆盖的其余位置登记进待覆盖登记表。
               另有两条预算：`max_grid_slots`（本表已落格位数）与 `max_grid_text_chars`（落进来的文字
               总字符数）——任一超限就**不落这一格**，也不登记它认领的位置。
         应用场景：各格式处理器读到非覆盖格时调用。
@@ -114,12 +114,12 @@ class GridBuilder:
         """
         消费一个显式覆盖位，返回**认领到的 origin 格位**（认领不到返回 None）。
 
-        功能：认领成功就把这一位换成指回 origin 的 `CoveredSlot`；没人认领时退化成空格位（列位不串、
+        功能：认领成功就把这一位换成指回 origin 的 `CoveredSlot`；没人认领时退化成空逻辑格子（列位不串、
               内容该空还是空），并把这件事记一笔 `orphan_covered`——它是**唯一一处静默退化**，
               登记出来才能把「文件本来就没内容」与「我们没解析对」分开。
               `text` 是产出方写在**续格**里的文字（PPTX 的残留文字、docx 的 vMerge 继续格）：
               非空时并回 origin（见 `merge_residue`），不丢字、也不改列位。
-        应用场景：`fill_from_specs` 与各处理器的格位循环（odf / excel / pptx）。
+        应用场景：`fill_from_specs` 与各处理器的逻辑格子循环（odf / excel / pptx）。
         输入：text — 续格自带的文字（可空）。
         输出：认领到的 `GridSpan`，或 None（没人认领）。
         """
@@ -161,9 +161,9 @@ class GridBuilder:
 
         功能：把跨度认领过、产出方却没写覆盖位的位置补齐成 `CoveredSlot`（必要时补行补列），
               再裁掉尾部全空行。重复调用是幂等的。
-              **这里的格位预算是软上限**：已认领的覆盖位必须补齐，否则跨度没有背书、不变式就破了；
+              **这里的逻辑格子预算是软上限**：已认领的覆盖位必须补齐，否则跨度没有背书、不变式就破了；
               所以宁可多出一点（最多 `max_grid_expansion` 个），也要保住网格自洽。
-        应用场景：一张表的格位全部落完后调用一次。
+        应用场景：一张表的逻辑格子全部落完后调用一次。
         输出：可直接交给 `render_tsv` 的网格。
         """
         for (row, col), origin in sorted(self._pending.items()):
@@ -291,7 +291,7 @@ def check_grid(grid: TableGrid) -> List[str]:
     应用场景：由 `tests/test_processors_by_format.py` 调用。生产路径**不调它**——`GridBuilder` 是
     唯一构造者、`finish()` 会把跨度认领过而产出方没写的覆盖位补齐，所以线上没有第二个构造来源
     （理由记在 `00-总览与优先级.md` §4.3-1）；若将来出现「构造完成后再改网格」的路径，再接线。
-    输入：grid — 一张表的格位网格。
+    输入：grid — 一张表的表格逻辑格子。
     输出：问题描述列表；空列表表示自洽。
     """
     problems: List[str] = []
@@ -319,7 +319,7 @@ def check_grid(grid: TableGrid) -> List[str]:
 
 def render_tsv(grid: TableGrid, max_rows: int, pad_short_rows: bool = True) -> List[str]:
     """
-    把格位网格渲染成制表符分隔的行（各格式共用这一份）。
+    把表格逻辑格子渲染成制表符分隔的行（各格式共用这一份）。
 
     功能：覆盖位输出空串（占列位不占内容）；列宽取「最后一个有文字或有覆盖位的列」，所以合并区
           覆盖的空列不会被裁掉；整行没有文字的行跳过（保持现有方言）；超过行数上限时截断并说明。
@@ -329,7 +329,7 @@ def render_tsv(grid: TableGrid, max_rows: int, pad_short_rows: bool = True) -> L
           分隔符文本（CSV / TSV）传 `False`：锯齿行是源文件里的真实形状，保真优先——这与结构化
           表格「列位由结构保住」是两种取向，别混。
     应用场景：各处理器的表格渲染段调用。
-    输入：grid — 格位网格；max_rows — 最多渲染多少行；pad_short_rows — 是否把短行补到网格宽度。
+    输入：grid — 表格逻辑格子；max_rows — 最多渲染多少行；pad_short_rows — 是否把短行补到网格宽度。
     输出：行列表；`=== SHEET: 名 ===` 这类分节标记由处理器自己拼。
     """
     width = max(

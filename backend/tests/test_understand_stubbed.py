@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 r"""
-缝 A2：进程内转换管线（**假客户端，免费**）。
+A2 组：进程内转换处理流程（**模拟的模型客户端，免费**）。
 
-缝：`ConvertPipeline.run_from_upload()` —— 真实编排，模型客户端换成脚本化替身。
+测的是：`ConvertPipeline.run_from_upload()` —— 真实处理流程，模型客户端换成脚本化替身。
 能力选择见 docs/API.md §1.1 与 ADR-0015：看图只要 `llm`；`ocr` 是**独立文字图转写**的提供商单选。
 """
 import json
@@ -53,7 +53,7 @@ class _StubClient:
     def chat(self, messages, json_mode: bool = False, thinking=None, **kwargs) -> str:
         self.calls += 1
         if self.fail:
-            raise LlmError("假客户端按脚本失败")
+            raise LlmError("模拟的模型客户端按脚本失败")
         self.ledger.add(dict(STUB_USAGE))
         if json_mode:
             return json.dumps({"images": [{"index": 1, "text": STUB_IMAGE_TEXT}]})
@@ -102,7 +102,7 @@ def test_llm_alone_keeps_code_content(name, stub_client, fixture_copy):
 
 @pytest.mark.parametrize("name", VISION_MERGE_FIXTURES)
 def test_vision_flags_merge_ocr_into_content(name, stub_client, fixture_copy):
-    """看图：只开 llm（不选 ocr）也转写内嵌图并进 content，并双写 meta.ocr_text。"""
+    """看图：只开 llm（不选 ocr）也转写内嵌图并进 content，并同时写入 meta.ocr_text。"""
     path, _ = fixture_copy(name)
     off = upload(path, name)
     on = upload(path, name, llm=True)
@@ -151,7 +151,7 @@ def test_query_only_changes_the_summary(stub_client, fixture_copy):
 
 
 def test_llm_off_skips_vision_with_note(stub_client, fixture_copy):
-    """没开 llm 时看图支路跳过——选不选 ocr 都改变不了这一条（ADR-0015 把门闩拆开了）。"""
+    """没开 llm 时看图支路跳过——选不选 ocr 都改变不了这一条（ADR-0015 把开关条件拆开了）。"""
     path, _ = fixture_copy("report.docx")
     only_ocr = upload(path, "report.docx", ocr=True, llm=False)
     assert stub_client.calls == 0

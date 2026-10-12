@@ -52,7 +52,7 @@ export async function runConvert(input: ConvertInput): Promise<ConvertResponse> 
   return parseResponse(response)
 }
 
-/** 读健康 + 能力清单。refresh=true 时忽略后端探活缓存强制重探（点「刷新可用性」才用）。 */
+/** 读健康 + 能力清单。refresh=true 时忽略后端健康检查缓存强制重探（点「刷新可用性」才用）。 */
 export async function fetchHealth(refresh = false): Promise<Health> {
   const response = await fetch(`${BASE}/probe/health${refresh ? '?refresh=true' : ''}`)
   return (await response.json()) as Health
@@ -64,7 +64,7 @@ export interface ProviderTestResult {
   detail?: string | null
 }
 
-/** 主动测一次某个提供商。API 那一条会真发一次最小请求（花极小 token），侧车只探 /health。 */
+/** 主动测一次某个提供商。API 那一条会真发一次最小请求（花极小 token），本机独立服务只探 /health。 */
 export async function testProvider(capability: string, provider: string): Promise<ProviderTestResult> {
   const response = await fetch(`${BASE}/probe/test/${capability}/${provider}`, { method: 'POST' })
   if (!response.ok) {

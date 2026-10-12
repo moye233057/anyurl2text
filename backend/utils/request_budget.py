@@ -30,7 +30,7 @@ def remaining_sec() -> Optional[float]:
 
 
 def assert_request_budget(stage: str) -> None:
-    """剩余时间耗尽时抛 TimeoutError，由管线转成 FetchError / 504。"""
+    """剩余时间耗尽时抛 TimeoutError，由处理流程转成 FetchError / 504。"""
     deadline = request_deadline()
     if deadline is not None and time.monotonic() > deadline:
         raise TimeoutError(f"{stage} 超出单请求总时间预算")
@@ -51,7 +51,7 @@ def call_timeout(cap_sec: float, *, stage: str = "call") -> float:
     单次外部调用超时：min(配置上限, 全链路剩余)。
 
     无请求预算上下文时退回 cap（进程内单测、无路由入口时）。
-    剩余 ≤ 0 抛 TimeoutError，由管线转成 504 / model_error。
+    剩余 ≤ 0 抛 TimeoutError，由处理流程转成 504 / model_error。
     """
     remaining = remaining_sec()
     if remaining is None:

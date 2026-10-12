@@ -2,7 +2,7 @@
 
 本仓（anyurl2text）的例外与禁令。这里只放**本仓特有、且从代码与文档里查不到**的部分。
 
-事实源指针：跑法 [docs/RUNBOOK.md](docs/RUNBOOK.md) ｜ 叫法 [CONTEXT.md](CONTEXT.md) ｜ 目标态 [docs/architecture.md](docs/architecture.md) ｜ 为什么 [docs/adr.md](docs/adr.md)
+事实源指针：跑法 [docs/RUNBOOK.md](docs/RUNBOOK.md) ｜ 叫法 [CONTEXT.md](CONTEXT.md) ｜ 目标设计 [docs/architecture.md](docs/architecture.md) ｜ 为什么 [docs/adr.md](docs/adr.md)
 
 ## 环境：用 uv，不用随便哪个 conda/pip
 
@@ -16,9 +16,9 @@
 Invoke-WebRequest http://127.0.0.1:8020/probe/health -TimeoutSec 5 -UseBasicParsing   # 200 = 在跑
 ```
 
-没在听就停下来说明，请维护者启动。端口唯一、自动重载、HTTP 用例要写仓内临时目录等边界见 RUNBOOK 第 5–6 节；默认开 `RELOAD` 时改完 `.py` 会自己生效。
+没在听就停下来说明，请维护者启动。`RELOAD` 默认 `false`（2026-10-12 起）：改完后端 `.py` 不会自己生效，要等维护者重启；端口唯一、HTTP 用例要写仓内临时目录等边界见 RUNBOOK 第 5–6 节。
 
-## 验收：可跑自检缝
+## 验收：可跑进程内自检
 
 ```powershell
 # 仓库根先 uv sync；再：
@@ -26,7 +26,7 @@ cd backend
 uv run python -m pytest tests -q    # 需要后端在跑
 ```
 
-本仓既定验收标准是「用例通过才算过」。贵缝 `-m model` 真调模型花钱，**由维护者决定何时跑**。
+本仓既定验收标准是「用例通过才算过」。要花钱的模型测试 `-m model` 真调模型花钱，**由维护者决定何时跑**。
 
 ## 临时探针与可写落点
 
@@ -41,7 +41,7 @@ uv run python -m pytest tests -q    # 需要后端在跑
 
 一律按 **能力 → 触发场景 → 可观测指标（前 → 后）→ 靠什么验证** 写，指标要能被复核。
 
-- 能用数字就用数字：支持的格式数 / 抽出多少章·页·列·张·条 / 落盘或调模型次数 / 耗时 / 成本 / 契约字段数。
+- 能用数字就用数字：支持的格式数 / 抽出多少章·页·列·张·条 / 落盘或调模型次数 / 耗时 / 成本 / 约定字段数。
 - **禁用没有数字的形容**：「重构了 X」「优化了 Y 模块」「完善了机制」「提升了代码质量」。
 - 给不出指标的改动（纯文档、纯重命名）就直说「这次没有能力或指标变化」。
 - 没有性能改动就不要写性能。
@@ -50,17 +50,17 @@ uv run python -m pytest tests -q    # 需要后端在跑
 
 1. **一条用例 = 一个用户可见事实**：断言「这份 CSV 出来是 3 列」，而不是「函数返回了某类型」。
 2. **预期值必须有独立来源**：样例生成参数 / 文档声明 / 手算常量；**禁止**「跑一遍看输出」当预期。
-3. **清单驱动的覆盖**（每个扩展名 / 魔数 / 时段各一条）允许参数化，但 docstring 要写明它覆盖的是「清单里的每一项」；**汇报时按「能力点 + 覆盖项数」说**。
-4. **同一能力只在最靠近它的缝验一次**：HTTP 缝只抽查代表格式，不重复进程内的格式矩阵。
+3. **清单驱动的覆盖**（每个扩展名 / 魔数 / 时段各一条）允许参数化，但 docstring 要写明它覆盖的是「清单里的每一项」；**汇报时按「能力点 + 覆盖点数」说**。
+4. **同一能力只在最靠近它的测试入口验一次**：HTTP 接口测试只抽查代表格式，不重复进程内的格式矩阵。
 5. **状态码只是附加断言**，主断言必须是业务事实（正文内容、字段值、降级码、命中的上界名）。
 6. 每条用例的 docstring 第一行会被 `tests/conftest.py` 收进留痕文件（`backend/data/debug/last_test_run.txt`）——写成一句人能读懂的话。
-7. **能力域标记**：每条用例打一个 `@pytest.mark.capability_*`，并同步登记进 `backend/pytest.ini` 的 `markers`。按域跑：`pytest tests -m capability_epub`；清单见 `docs/RUNBOOK.md` 第 5 节。
+7. **能力类别标记**：每条用例打一个 `@pytest.mark.capability_*`，并同步登记进 `backend/pytest.ini` 的 `markers`。按类别跑：`pytest tests -m capability_epub`；清单见 `docs/RUNBOOK.md` 第 5 节。写 docstring 时用「测试入口 / 能力类别 / 覆盖点」，不要写「缝 / 能力域」。
 
 ## 改代码时的三条硬约束
 
-1. **`processors/` 一格式族一文件**（ADR-0010 / ADR-0007）：不为过行数门禁再拆碎片文件；表格公共进 `utils/excel/`，契约进 `utils/processor_schema.py`，扩展调用公共进 `extensions/`。
+1. **`processors/` 一类格式一个文件**（ADR-0010 / ADR-0007）：不为过单文件行数限制再拆碎片文件；表格公共进 `utils/excel/`，字段约定进 `utils/processor_schema.py`，扩展调用公共进 `extensions/`。
 2. **上界与错误码各只有一个定义处**：`backend/configs/limits.py`、`backend/configs/errors.py`。
-3. **`content` 跟能力开关走**（ADR-0014 / 0011）：确定性段只来自 `extract_*`；OCR/ASR/视觉转写仅在对应扩展实际启用时并进 `content`，并双写 `meta.*`。不要恢复双路对比产品身份；不要把权重提交进 git。
+3. **`content` 跟能力开关走**（ADR-0014 / 0011）：确定性段只来自 `extract_*`；OCR/ASR/视觉转写仅在对应扩展实际启用时并进 `content`，并同时写入 `meta.*`。不要恢复双路对比产品身份；不要把权重提交进 git。
 
 ## Git
 

@@ -9,13 +9,13 @@ r"""
 用例之间不靠换目录隔离，靠每条用例前后清空这个目录。
 
 跑法（在 `backend/` 下，用项目自己的环境）：
-    python -m pytest tests -q                 # 全套（HTTP 缝要后端在跑）
-    python -m pytest tests --ignore=tests/test_extract_contract.py -q   # 只跑免费的自检缝
-    python -m pytest tests -m model -q       # 贵缝（要真模型 + 8021/8022）
+    python -m pytest tests -q                 # 全套（HTTP 接口测试要后端在跑）
+    python -m pytest tests --ignore=tests/test_extract_contract.py -q   # 只跑免费的进程内自检
+    python -m pytest tests -m model -q       # 要花钱的模型测试（要真模型 + 8021/8022）
 
 **最后那两个 hook 是给人看的**：`-q` 只给一行行点和最后一行数字，人无法据此判断
 「哪条在测什么、慢在哪、为什么红」。所以每跑一次都会：
-1. 在开头打印这套测试的分缝与跑法（`pytest_report_header`）；
+1. 在开头打印这套测试的分三类测试入口与跑法（`pytest_report_header`）；
 2. 在结尾把**没通过**的用例连同「这条在测什么」打出来，并把**全量清单**
    （状态 / 用时 / 用例名 / 这条在测什么）写到 `backend/data/debug/last_test_run.txt`（`pytest_terminal_summary`）。
 """
@@ -38,7 +38,7 @@ if str(BACKEND) not in sys.path:
 
 # nodeid → 该用例 docstring 的第一句（本仓每条用例都写了「行为：…」）
 _BEHAVIOR = {}
-# nodeid → 能力域标记名（`capability_*`，见 AGENTS.md「测试用例怎么写」）
+# nodeid → 能力类别标记名（`capability_*`，见 AGENTS.md「测试用例怎么写」）
 _CAPABILITY = {}
 # [(状态, nodeid, 用时秒)]，跑完由 terminal summary 汇总
 _RESULTS = []
@@ -103,7 +103,7 @@ def _behavior_of(item) -> str:
 
 
 def _capability_of(item) -> str:
-    """该用例的能力域标记名（`capability_*`）；漏打的返回 `-`，在按域汇总里会显形。"""
+    """该用例的能力类别标记名（`capability_*`）；漏打的返回 `-`，在按域汇总里会显形。"""
     for marker in item.iter_markers():
         if marker.name.startswith("capability_"):
             return marker.name
@@ -111,7 +111,7 @@ def _capability_of(item) -> str:
 
 
 def pytest_collection_modifyitems(session, config, items):
-    """收集每个用例的「这条在测什么」与能力域，供跑完的清单与按域汇总使用。"""
+    """收集每个用例的「这条在测什么」与能力类别，供跑完的清单与按域汇总使用。"""
     for item in items:
         _BEHAVIOR[item.nodeid] = _behavior_of(item)
         _CAPABILITY[item.nodeid] = _capability_of(item)
@@ -123,6 +123,7 @@ def pytest_runtest_logreport(report):
 
     setup / teardown 阶段失败不是「用例断言失败」而是 ERROR（夹具没起来、收尾炸了），
     标签要分清——人看到 FAILED 会去读断言，看到 ERROR 才知道该看夹具。
+    跳过（样例缺失等）单独记成 SKIPPED，汇总里另算一栏，不算未通过。
     """
     if report.when == "call":
         _RESULTS.append((report.outcome, report.nodeid, report.duration))
@@ -132,36 +133,48 @@ def pytest_runtest_logreport(report):
 
 
 def pytest_report_header(config):
-    """开头就告诉人：这套测试分几缝、各自要什么前置、结果会写到哪。"""
+    """开头就告诉人：这套测试分几类测试入口、各自要什么前置、结果会写到哪。"""
     return [
-        "三缝：自检缝（免费、几秒；处理器 / 判型 / 通用件 / 结构判据 / 错误码）"
-        " · HTTP 缝（tests/test_extract_contract.py，**要后端在 8020 上应答**）"
-        " · 贵缝另点名：python -m pytest tests -m model -q（要真模型 + 本机 8021/8022）",
+        "三类测试入口：进程内自检（免费、几秒；处理器 / 判型 / 通用件 / 结构检查规则 / 错误码）"
+        " · HTTP 接口测试（tests/test_extract_contract.py，**要后端在 8020 上应答**）"
+        " · 要花钱的模型测试另点名：python -m pytest tests -m model -q（要真模型 + 本机 8021/8022）",
         f"跑完的完整清单（每条在测什么 + 用时）写到：{REPORT_PATH}",
     ]
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
     """
-    结尾按**能力域**汇总，并把「没通过的是哪条、这条在测什么」讲清楚、把全量清单落盘。
+    结尾按**能力类别**汇总，并把「没通过的是哪条、这条在测什么」讲清楚、把全量清单落盘。
 
-    为什么按能力域报：条数会被参数化放大（13 种格式 = 13 条），而人要的是
+    为什么按能力类别报：条数会被参数化放大（13 种格式 = 13 条），而人要的是
     「这次动了哪块能力、它有几项覆盖、过没过」（AGENTS.md「测试用例怎么写」第 3 条）。
     """
     if not _RESULTS:
         return
 
-    # 能力域 → [(状态, nodeid, 用时)]；普通 dict 保持插入顺序
+    # 能力类别 → [(状态, nodeid, 用时)]；普通 dict 保持插入顺序
     domains = {}
     for status, nodeid, seconds in _RESULTS:
         domains.setdefault(_CAPABILITY.get(nodeid, "-"), []).append((status, nodeid, seconds))
 
+    def _tally(results: list) -> str:
+        """
+        一组的「这本该有几条、过了几、跳了几、没过几」——跳过与失败必须分开报。
+
+        样例缺失（`fixture_copy` 找不到扫描件）会 `pytest.skip`，那是**这本该有、这次没跑**，
+        不是失败；把它算进「未通过」会让人去读一条根本没跑的断言。
+        """
+        passed = sum(1 for status, _, _ in results if status == "passed")
+        skipped = sum(1 for status, _, _ in results if status == "skipped")
+        failed = len(results) - passed - skipped
+        text = f"共 {len(results)} 个覆盖点：通过 {passed}"
+        if skipped:
+            text += f"、跳过 {skipped}"
+        return text + f"、未通过 {failed}"
+
     report_lines = []
     for domain, results in domains.items():
-        passed = sum(1 for status, _, _ in results if status == "passed")
-        report_lines.append(
-            f"== {domain}（{len(results)} 个覆盖项：通过 {passed}、未通过 {len(results) - passed}）"
-        )
+        report_lines.append(f"== {domain}（{_tally(results)}）")
         for status, nodeid, seconds in results:
             report_lines.append(f"{status.upper():<8}{seconds:7.2f}s  {nodeid}")
             behavior = _BEHAVIOR.get(nodeid)
@@ -170,28 +183,25 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     try:
         REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
         REPORT_PATH.write_text("\n".join(report_lines) + "\n", encoding="utf-8")
-        report_hint = f"（按能力域分组、含每条的「这条在测什么」与用时）见 {REPORT_PATH}"
+        report_hint = f"（按能力类别分组、含每条的「这条在测什么」与用时）见 {REPORT_PATH}"
     except OSError as exc:
         report_hint = f"（报告文件没写成：{exc}）"
 
-    terminalreporter.write_sep("-", "按能力域汇总")
+    terminalreporter.write_sep("-", "按能力类别汇总")
     for domain, results in domains.items():
-        passed = sum(1 for status, _, _ in results if status == "passed")
-        failed = len(results) - passed
+        failed = sum(1 for status, _, _ in results if status not in ("passed", "skipped"))
         mark = "OK " if not failed else "!! "
-        terminalreporter.write_line(
-            f"{mark}{domain:<22}{len(results):3} 个覆盖项：通过 {passed}、未通过 {failed}"
-        )
+        terminalreporter.write_line(f"{mark}{domain:<22}{_tally(results)}")
 
-    bad = [(status, nodeid, seconds) for status, nodeid, seconds in _RESULTS if status != "passed"]
+    bad = [
+        (status, nodeid, seconds)
+        for status, nodeid, seconds in _RESULTS
+        if status not in ("passed", "skipped")
+    ]
     if bad:
         terminalreporter.write_sep("-", "没通过的用例")
         for status, nodeid, seconds in bad:
             terminalreporter.write_line(f"{status.upper():<8}{nodeid}  ({seconds:.1f}s)")
             if _BEHAVIOR.get(nodeid):
                 terminalreporter.write_line(f"{'':<8}└─ 这条在测：{_BEHAVIOR[nodeid]}")
-    passed = sum(1 for status, _, _ in _RESULTS if status == "passed")
-    terminalreporter.write_line(
-        f"本次 {len(_RESULTS)} 个覆盖项 / {len(domains)} 个能力域：通过 {passed}、未通过 {len(bad)}。"
-        f"全量清单{report_hint}"
-    )
+    terminalreporter.write_line(f"本次 {len(domains)} 个能力类别：{_tally(_RESULTS)}。全量清单{report_hint}")

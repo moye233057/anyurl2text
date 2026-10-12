@@ -11,7 +11,7 @@ ODF 的正文全在 text:p / text:h 元素里，按文档结构走一遍就能�
 「一段一行」（列对应关系丢失）、嵌套列表的层级也没了。改成从 body 往下走，遇到
 `table:table` 与 `text:list` 就交给各自的渲染：
 
-- 表格 → 格位网格（`grid.py`），与 docx / pptx / xlsx 共用同一份不变式与渲染：
+- 表格 → 表格逻辑格子（`grid.py`），与 docx / pptx / xlsx 共用同一份不变式与渲染：
   合并区文本只出现一次、覆盖位占列位、超行数上限时截断并说明。
 - 列表 → Markdown 记号，每深一层多缩进两个空格。
 
@@ -85,7 +85,7 @@ def _flush_gap(builder, pending: int) -> int:
     「Materialize a buffered empty-cell run in full so the next cell lands on its source column.
     Trailing runs are never flushed and stay elided.」）。
     应用场景：`_render_table` 遇到非平凡格或 `covered-table-cell` 前调用。
-    输入：builder — 格位网格构造器；pending — 缓冲的空格数。
+    输入：builder — 表格逻辑格子构造器；pending — 缓冲的空格数。
     输出：0（缓冲已清空）。
     """
     for _ in range(pending):
@@ -96,7 +96,7 @@ def _render_table(table, hits: list) -> tuple:
     """
     把 ODF 表格渲成制表符分隔的行。
 
-    功能：按 `table:table-row` 逐行、按单元格自己写明的跨度与覆盖位落进格位网格——
+    功能：按 `table:table-row` 逐行、按单元格自己写明的跨度与覆盖位落进表格逻辑格子——
            `number-columns-spanned` / `number-rows-spanned` → `place(span)`、
            `covered-table-cell` → `covered()`、两个 `number-*-repeated` → 循环落位。
            表头行组里的行**照渲**（见 `_table_rows`），另把表头行数交回调用方。

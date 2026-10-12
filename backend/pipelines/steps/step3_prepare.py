@@ -50,7 +50,7 @@ def cleanup(prepared: PreparedSource) -> None:
 
     功能：`DEBUG_ARTIFACTS` 打开时先把临时目录整体复制到 `backend/data/debug/` 下再删除原件——
           默认不留档（省磁盘），需要复现线上问题时把它打开，下载原文件与渲染出的页面图都在。
-    应用场景：两个管线的 finally 里调用。
+    应用场景：两个处理流程的 finally 里调用。
     输入：prepared — 源信息，path.parent 即本次请求的临时目录。
     输出：无。
     """

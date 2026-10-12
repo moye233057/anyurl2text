@@ -24,7 +24,7 @@ anyurl2text 用一条统一接口 `POST /convert` 完成这件事：先将URL或
 | LLM | 摘要、按问题回答；图片判型、语义描述、扫描页与内嵌图转写 | **理解与看图必需**。看图支路只看它 |
 | Web 界面 | 选源、开开关、看结果 | 本机调试与日常使用 |
 
-仓库：https://github.com/moye233057/anyurl2text （镜像：https://gitee.com/osc_74795964/anyurl2text）  
+仓库：https://github.com/moyezq/anyurl2text （镜像：https://gitee.com/osc_74795964/anyurl2text）  
 许可证：[MIT](LICENSE)  
 仓库**不收录** OCR / ASR 模型权重，需自行下载到对应服务目录或准备其它相同类型的服务。
 
@@ -155,8 +155,8 @@ flowchart LR
 ```
 
 - **先确定性，再增强。** 文档正文不依赖模型；扩展失败写进说明，不把失败包装成成功。
-- **选择决定跑哪段。** `llm` 与 `asr` 是开关；`ocr` 是**提供商单选**（`false` / `true` / 提供商 id），只决定独立文字图交给谁。以哪个能用由 `/probe/health` 探活给出，界面据此置灰。
-- **侧车与核心分离。** OCR / ASR 是独立进程，核心只通过本机 HTTP 送字节；权重在各自 `models/`，不进 git。
+- **选择决定跑哪段。** `llm` 与 `asr` 是开关；`ocr` 是**提供商单选**（`false` / `true` / 提供商 id），只决定独立文字图交给谁。以哪个能用由 `/probe/health` 健康检查给出，界面据此置灰。
+- **本机独立服务与核心分离。** OCR / ASR 是独立进程，核心只通过本机 HTTP 送字节；权重在各自 `models/`，不进 git。
 
 | 行为 | 需要什么 |
 |---|---|
@@ -199,13 +199,13 @@ anyurl2text/
 ├── pyproject.toml           # 核心后端依赖（uv）
 ├── uv.lock
 ├── .env.example             # 复制为根目录 .env
-├── services/                # 第三方侧车（独立环境与权重）
+├── services/                # 本机独立服务（OCR/ASR，各自环境与权重）
 │   ├── ocr/paddle-ocr/      # 默认 OCR · 8021
 │   └── asr/qwen3-asr/       # 默认 ASR · 8022
 ├── backend/
 │   ├── app.py               # FastAPI 入口
 │   ├── routers/             # /convert · /probe
-│   ├── pipelines/           # 编排、步骤、各格式处理器
+│   ├── pipelines/           # 处理流程、步骤、各格式处理器
 │   ├── extensions/          # 调用 OCR / ASR / LLM 的客户端
 │   ├── configs/
 │   ├── utils/

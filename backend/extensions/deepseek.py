@@ -2,7 +2,7 @@
 """
 DeepSeek 模型出口：调用、重试、思考模式、JSON 输出，以及**本仓唯一的第三方计价与成本控制**。
 
-一种模型一个文件（ADR 0007）。本机 OCR / ASR 不计费、不走这里的账本与成本闸。
+一种模型一个文件（ADR 0007）。本机 OCR / ASR 不计费、不走这里的用量记账与费用上限。
 
 事实依据（2026-10-10 核对 https://api-docs.deepseek.com/zh-cn/quick_start/pricing）：
 - 模型名用 `deepseek-flash`（DeepSeek-V4.1-Flash）；旧名 `deepseek-v4-flash` /
@@ -85,7 +85,7 @@ def is_peak_hour(now: Optional[datetime] = None) -> bool:
 def compute_cost_cny(
     model: str, cached_tokens: int, miss_tokens: int, output_tokens: int
 ) -> float:
-    """按命中 / 未命中 / 输出三档与峰谷折算人民币；表中无该模型则 0。"""
+    """按命中 / 未命中 / 输出三档与按时段折算人民币；表中无该模型则 0。"""
     table = _price_row(model)
     if not table:
         return 0.0
@@ -101,7 +101,7 @@ def compute_cost_cny(
 
 @dataclass
 class UsageLedger:
-    """一次请求内的 DeepSeek 用量账本（不含本机 OCR/ASR）。"""
+    """一次请求内的 DeepSeek 用量记账（不含本机 OCR/ASR）。"""
 
     model: str = ""
     calls: int = 0
@@ -140,7 +140,7 @@ class UsageLedger:
         )
 
     def snapshot(self) -> Optional[Usage]:
-        """产出契约里的 usage；一次 DeepSeek 都没调过时返回 None。"""
+        """产出字段约定里的 usage；一次 DeepSeek 都没调过时返回 None。"""
         if not self.calls:
             return None
         table = _price_row(self.model) or {}
@@ -187,9 +187,9 @@ class UsageLedger:
 
 class DeepSeekClient:
     """
-    模型调用封装：重试、思考模式、JSON、记账与第三方成本闸都在这里。
+    模型调用封装：重试、思考模式、JSON、记账与单次请求费用上限都在这里。
 
-    OpenAI 传输客户端进程内复用；本对象按请求创建以保住独立账本。
+    OpenAI 传输客户端进程内复用；本对象按请求创建以保住独立用量记账。
     没配 API key 时构造不报错，真正调用时才给出原因。
     """
 
@@ -213,8 +213,8 @@ class DeepSeekClient:
         发起一次对话调用并返回文本内容。
 
         功能：默认关闭思考模式；json_mode 时要求 JSON；空内容与异常会重试；
-              每次把 usage 记进账本；若开启成本/token 上限则在前后检查并可能中止。
-        异常：LlmError — 缺 key、成本闸、重试仍失败或空内容。
+              每次把 usage 记进用量；若开启成本/token 上限则在前后检查并可能中止。
+        异常：LlmError — 缺 key、费用上限、重试仍失败或空内容。
         """
         self.ledger.assert_within_cost_limits()
 
@@ -274,7 +274,7 @@ class DeepSeekClient:
         )
 
     def _record_usage(self, response) -> None:
-        """把 SDK 响应里的 usage 转成 dict 记进账本，并记下输出是否被 max_tokens 截断。"""
+        """把 SDK 响应里的 usage 转成 dict 记进用量，并记下输出是否被 max_tokens 截断。"""
         choices = getattr(response, "choices", None) or []
         if choices and getattr(choices[0], "finish_reason", None) == "length":
             self.ledger.output_truncated = True

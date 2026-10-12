@@ -4,14 +4,14 @@ HTML 表格 → 制表符块：网页与 EPUB 章节共用这一份。
 
 为什么要有它：网页与电子书里的 `<table>` 原本被 `get_text()` 拉平成文本行，列对应关系（谁属于哪一列、
 哪些格被合并吞掉）在那一刻就没了——而这是「尽量保留真实信息」在这一类上最直接的损失。
-实现上不另起一套：`colspan` / `rowspan` 直接交给格位网格（`grid.py`）的 `place()`，
+实现上不另起一套：`colspan` / `rowspan` 直接交给表格逻辑格子（`grid.py`）的 `place()`，
 被合并吞掉的格由网格按 `pending` 规则自动物化，渲染也只有 `render_tsv` 一份。
 
 **回填机制**（顺序不能颠倒）：调用方先让 `render_tables(soup)` 把 `<table>` 换成**哨兵行**，
 再清洗正文（`_clean_text` 会 strip 每一行，制表符行首的空列会被 strip 掉），最后用
 `restore_blocks(text, blocks)` 把哨兵行换回制表符块。
 
-已知边界：单元格里的**嵌套表**的文字会并进外层那个格位（只取直属单元格，不把内层表拆成外层列）。
+已知边界：单元格里的**嵌套表**的文字会并进外层那个逻辑格子（只取直属单元格，不把内层表拆成外层列）。
 """
 from bs4 import BeautifulSoup, NavigableString
 
@@ -79,7 +79,7 @@ def table_to_tsv(table) -> tuple:
     """
     一个 `<table>` → (制表符块, 命中的上界名列表, 表头行数)。
 
-    功能：按 `tr` 逐行、按行内**直属** `td` / `th` 逐格落位；`colspan` / `rowspan` 交给格位网格，
+    功能：按 `tr` 逐行、按行内**直属** `td` / `th` 逐格落位；`colspan` / `rowspan` 交给表格逻辑格子，
            被吞掉的格由网格自动补覆盖位；行数超 `max_table_rows` 时截断并说明。
     应用场景：`html.extract_html` 与 `epub._chapter_body` 处理表格时调用。
     输入：table — BeautifulSoup 的 `<table>` 元素。

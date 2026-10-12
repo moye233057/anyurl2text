@@ -41,7 +41,7 @@ def _table_text(shape) -> tuple:
     把表格形状渲染成制表符分隔的行。
 
     功能：`row.cells` 在演示文稿里是一行一个 `a:tc`、顺序即列序；被覆盖的格由 `is_spanned` 判出
-          交给格位网格，跨度只在合并区左上角取（python-pptx 明确说非 origin 上的跨度不可靠）。
+          交给表格逻辑格子，跨度只在合并区左上角取（python-pptx 明确说非 origin 上的跨度不可靠）。
     应用场景：extract_pptx 遇到表格形状时调用。
     输入：shape — 页上的形状。
     输出：(制表符分隔的多行文本, 命中的上界名列表, 表类型, 网格登记的 notes)；不是表格时返回 ("", [], None, [])。

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 r"""
-缝 B：类型识别与静态格式清单。
+B 组：类型识别与静态格式清单。
 
-缝：`pipelines/steps/step2_detect` 的 `resolve_extension()` 与它用到的几个判定函数，
+测的是：`pipelines/steps/step2_detect` 的 `resolve_extension()` 与它用到的几个判定函数，
 数据来自 `configs/formats.py`。纯函数，不联网、不起服务、不碰模型。
 
 为什么选它：
@@ -41,7 +41,7 @@ from pipelines.steps.step2_detect import (
 )
 from routers.convert.schema import Detector, Modality
 
-# 能力域见 AGENTS.md「测试用例怎么写」；按域跑：python -m pytest tests -m capability_detect
+# 能力类别见 AGENTS.md「测试用例怎么写」；按类别跑：python -m pytest tests -m capability_detect
 pytestmark = pytest.mark.capability_detect
 
 OLE_HEAD = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 16

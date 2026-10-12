@@ -22,9 +22,10 @@ PROMPTS_DIR = BASE_DIR / "extensions" / "prompts"
 # ---------- HTTP 服务 ----------
 API_HOST = os.getenv("ANYURL2TEXT_HOST", "127.0.0.1")
 API_PORT = int(os.getenv("ANYURL2TEXT_PORT", "8020"))
-# 自动重载：改完后端 .py 立即生效，省掉手动重启。uvicorn 的 reload 会额外起一个监督进程
-# （父进程只负责看文件、子进程才是真服务）；本机自用默认打开，不想多这个进程就设 false。
-RELOAD = os.getenv("RELOAD", "true").strip().lower() in ("1", "true", "yes", "on")
+# 自动重载：改完后端 .py 立即生效，但 uvicorn 的 reload 会额外起一个监督进程（父进程看文件、
+# 子进程才是真服务），而且改任何 .py 都会重启——撞上正在跑的 HTTP 接口用例就成批报读超时。
+# 2026-10-12 起默认关：要边改边生效再显式设 RELOAD=true。
+RELOAD = os.getenv("RELOAD", "false").strip().lower() in ("1", "true", "yes", "on")
 
 # ---------- 请求生命周期 ----------
 # 全链路预算（下载 + 解析 + 模型）；任一步超时即终止该请求。
@@ -88,16 +89,16 @@ THINKING_ENABLED = os.getenv("THINKING_ENABLED", "false").strip().lower() in ("1
 THINKING_EFFORT = os.getenv("THINKING_EFFORT", "high")
 
 # ---------- 扩展提供商的选择 ----------
-# 能力 → 提供商的静态名单在 configs/extensions.py；这里只放「默认选谁」与探活超时。
+# 能力 → 提供商的静态名单在 configs/extensions.py；这里只放「默认选谁」与健康检查超时。
 # 留空 = 用名单里声明的默认（is_default=True 的那一个）；请求里传 true 时用这里的值。
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "")
 OCR_PROVIDER = os.getenv("OCR_PROVIDER", "")
 ASR_PROVIDER = os.getenv("ASR_PROVIDER", "")
-# 侧车探活超时（秒）：本机 /health 是毫秒级响应，0.5 秒足够。
-# 不能给大——/probe/health 有**硬性时限**：start.py 的就绪探测是 urlopen(timeout=2)，
+# 本机服务健康检查超时（秒）：本机 /health 是毫秒级响应，0.5 秒足够。
+# 不能给大——/probe/health 有**硬性时限**：start.py 的启动就绪检查是 urlopen(timeout=2)，
 # 健康检查慢过 2 秒就会被判成「后端没起」（2026-10-11 踩到：4 秒的健康检查让 start.py 90 秒后放弃）。
 EXTENSION_PROBE_TIMEOUT_SEC = float(os.getenv("EXTENSION_PROBE_TIMEOUT_SEC", "0.5"))
-# 探活结果的缓存秒数：/probe/health 会被就绪探测与前端反复调用，每次真探一遍既慢又吵。
+# 健康检查结果的缓存秒数：/probe/health 会被启动就绪检查与前端反复调用，每次真探一遍既慢又吵。
 # 缓存到这一刻；用户点「刷新可用性」时带 refresh 强制重探。
 EXTENSION_PROBE_CACHE_SEC = float(os.getenv("EXTENSION_PROBE_CACHE_SEC", "10"))
 
@@ -132,4 +133,4 @@ except Exception:
 # 打开后把中间产物（下载原文件、渲染出的页面图）落到 backend/data/debug/。默认关闭。
 DEBUG_ARTIFACTS = os.getenv("DEBUG_ARTIFACTS", "false").strip().lower() in ("1", "true", "yes", "on")
 
-# DeepSeek 单价表与第三方成本闸在 extensions/deepseek.py（一种模型一个文件）。
+# DeepSeek 单价表与单次请求费用上限在 extensions/deepseek.py（一种模型一个文件）。

@@ -6,7 +6,7 @@
 OCR / ASR 是本机辅服务。因此：
 
 - OpenAI SDK 客户端、httpx 客户端在**进程内复用**（少建连）；
-- 用量账本仍在每次 `DeepSeekClient` 实例上，不进程共用；
+- 用量记账仍在每次 `DeepSeekClient` 实例上，不进程共用；
 - LLM 出口信号量默认很宽，只给「请求量级极大」时当安全网；日常几乎碰不到。
 """
 from __future__ import annotations
@@ -73,9 +73,9 @@ def shared_httpx_client() -> httpx.Client:
         if _httpx_client is not None:
             return _httpx_client
         # 不在这里定死 timeout：每次 post 仍按预算传 timeout。
-        # trust_env=False 是**本机服务必须的**：这个客户端只连 127.0.0.1 上的侧车，
+        # trust_env=False 是**本机服务必须的**：这个客户端只连 127.0.0.1 上的本机独立服务，
         # 而 httpx 默认会读 HTTP_PROXY / ALL_PROXY 之类的环境变量、把请求发给代理——
-        # 代理连不上侧车时回的是 502 Bad Gateway，把「侧车没起」伪装成「上游网关错误」，
+        # 代理连不上本机独立服务时回的是 502 Bad Gateway，把「本机独立服务没起」伪装成「上游网关错误」，
         # 排查时会被带偏（2026-10-11 实测：trust_env=True 报 ReadTimeout / 502，
         # trust_env=False 如实报连接被拒）。
         _httpx_client = httpx.Client(trust_env=False)
@@ -85,9 +85,9 @@ def shared_httpx_client() -> httpx.Client:
 @contextmanager
 def llm_egress_slot() -> Iterator[None]:
     """
-    占一个 LLM 出口名额；满则阻塞等待（不 429——入口池已经会拒）。
+    占一个 LLM 出口并发上限；满则阻塞等待（不 429——入口池已经会拒）。
 
-    默认名额很宽，本机自用几乎不会在这里排队。
+    默认并发上限很宽，本机自用几乎不会在这里排队。
     """
     sem = _llm_semaphore()
     sem.acquire()

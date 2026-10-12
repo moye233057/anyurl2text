@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 r"""
-convert 缝（扩展全关）的契约测试：只打 HTTP，不 import 项目内任何东西。
+convert 接口测试（扩展全关）的接口约定测试：只打 HTTP，不 import 项目内任何东西。
 
-职责：证明**真实服务**上确定性抽取走得通、契约不漂——上传 → 抽取 → 组装 → 响应。
-扩展开启见贵缝 `test_understand_contract.py`。同一能力只在一个缝里验一次。
+职责：证明**真实服务**上确定性抽取走得通、字段约定不漂——上传 → 抽取 → 组装 → 响应。
+扩展开启见要花钱的模型测试 `test_understand_contract.py`。同一能力只在一个测试入口里验一次。
 
 预期值不来自「跑一遍代码看它输出什么」，而来自：
 - `docs/RUNBOOK.md` 的验收清单
@@ -37,7 +37,7 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 # 而人只看到 `F` 与最后那个数字（踩过这个坑，见 docs/RUNBOOK.md「怎么看测试结果」）。
 TIMEOUT = 20.0
 
-# 能力域见 AGENTS.md「测试用例怎么写」；按域跑：python -m pytest tests -m capability_http
+# 能力类别见 AGENTS.md「测试用例怎么写」；按类别跑：python -m pytest tests -m capability_http
 pytestmark = pytest.mark.capability_http
 
 # README「响应形状恒定：7 个固定字段，error 恒存在（成功为 null）」
@@ -97,7 +97,7 @@ def test_representative_documents_extract_text_over_http(name, pages, images, ma
           与样例生成参数一致（不是「状态码 200 就算过」）。
 
     来源：README「支持哪些输入」的文档行 + `scripts/make_fixtures.py` 各阶段的生成参数。
-    为什么只三条：完整格式矩阵在缝 A 逐格式验（免费、进程内），这里只证明真实服务走得通。
+    为什么只三条：完整格式矩阵在 A 组 逐格式验（免费、进程内），这里只证明真实服务走得通。
     """
     status, body = extract(name)
     assert status == 200
@@ -130,7 +130,7 @@ def test_failures_carry_a_structured_error_with_a_stable_code():
     assert body["error"]["message"], "面向使用者的文案不能为空"
 
 
-# ---------- 响应契约：形状与四条通道 ----------
+# ---------- 响应字段约定：形状与四条通道 ----------
 
 def test_response_shape_is_constant():
     """行为：响应恒为那 7 个字段，成功时 error 为 null。来源：README「响应形状恒定」。"""
@@ -170,7 +170,7 @@ def test_extract_never_reports_model_usage():
 
 
 def test_extract_never_produces_summary():
-    """行为：summary 只由 understand 产出，extract 恒为 null。来源：schema.py 契约 docstring。"""
+    """行为：summary 只由 understand 产出，extract 恒为 null。来源：schema.py 字段约定 docstring。"""
     _, body = extract("plain.txt")
     assert body["summary"] is None
 

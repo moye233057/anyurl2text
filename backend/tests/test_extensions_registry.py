@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 r"""
-缝 E：扩展注册与提供商选择（离线，不需要任何服务）。
+E 组：扩展注册与提供商选择（离线，不需要任何服务）。
 
 守 ADR-0015 的三条不变量：
 
 1. 名单只有一处（`configs/extensions.py`）：能力、提供商、谁需要模型都在里面；
-2. 同一能力只能选一个提供商，没登记的名字当场拒绝（HTTP 缝上表现为 422）；
-3. 探活快照给界面的是「能不能用 + 为什么」——不可用时必须有原因，界面才解释得出为什么是灰的。
+2. 同一能力只能选一个提供商，没登记的名字当场拒绝（HTTP 接口测试上表现为 422）；
+3. 健康检查快照给界面的是「能不能用 + 为什么」——不可用时必须有原因，界面才解释得出为什么是灰的。
 
-**不测「侧车到底在不在跑」**：那取决于本机进程状态，测它等于测环境。这里只测形状与规则。
+**不测「本机独立服务到底在不在跑」**：那取决于本机进程状态，测它等于测环境。这里只测形状与规则。
 """
 import pytest
 from pydantic import ValidationError
@@ -35,7 +35,7 @@ def test_every_capability_declares_at_least_one_provider():
 
 
 def test_ocr_offers_both_a_model_and_a_sidecar():
-    """行为：OCR 有模型与侧车两家实现，且侧车不吃模型——没开 llm 也能用它读字。"""
+    """行为：OCR 有模型与本机独立服务两家实现，且本机独立服务不吃模型——没开 llm 也能用它读字。"""
     providers = {provider.id: provider for provider in PROVIDERS[CAPABILITY_OCR]}
     assert set(providers) == {"deepseek", "paddle"}
     assert providers["deepseek"].needs_model is True
@@ -68,7 +68,7 @@ def test_unknown_provider_is_rejected_with_the_valid_names():
 
 
 def test_contract_rejects_unknown_ocr_provider():
-    """行为：请求体里写了没登记的提供商 → 校验失败（HTTP 缝上由 FastAPI 转成 422）。"""
+    """行为：请求体里写了没登记的提供商 → 校验失败（HTTP 接口测试上由 FastAPI 转成 422）。"""
     with pytest.raises(ValidationError):
         ConvertUrlBody(url="https://example.com/", ocr="tesseract")
 
@@ -92,7 +92,7 @@ def test_health_snapshot_always_carries_a_reason_when_unavailable(monkeypatch):
     """
     行为：能力快照里每个提供商都有 available；不可用时必须给出原因，可用时可以带补充说明。
 
-    探活超时压到 0.2 秒、并强制重探：这条只验形状，不该为了等本机侧车超时把套件拖慢，
+    健康检查超时压到 0.2 秒、并强制重探：这条只验形状，不该为了等本机独立服务超时把套件拖慢，
     也不该被别的用例写进缓存的假结果影响。
     """
     monkeypatch.setattr(registry.settings, "EXTENSION_PROBE_TIMEOUT_SEC", 0.2)
@@ -109,8 +109,8 @@ def test_health_snapshot_always_carries_a_reason_when_unavailable(monkeypatch):
 
 def test_snapshot_reuses_the_cache_within_its_ttl(monkeypatch):
     """
-    行为：缓存没过期时不重复探活——`/probe/health` 会被就绪探测与前端反复调用，
-    而它的调用方（`start.py`）只等 2 秒，探活一慢就会被判成「后端没起」。
+    行为：缓存没过期时不重复健康检查——`/probe/health` 会被启动就绪检查与前端反复调用，
+    而它的调用方（`start.py`）只等 2 秒，健康检查一慢就会被判成「后端没起」。
     """
     calls = []
 
@@ -128,14 +128,14 @@ def test_snapshot_reuses_the_cache_within_its_ttl(monkeypatch):
 
 
 def test_sidecar_health_url_is_derived_from_the_service_url():
-    """行为：侧车探活打的是同一个 origin 的 /health（侧车契约），不把业务路径当健康端点。"""
+    """行为：本机服务健康检查打的是同一个 origin 的 /health（本机服务约定），不把业务路径当健康端点。"""
     assert registry._health_url("http://127.0.0.1:8021/ocr-b64") == "http://127.0.0.1:8021/health"
     assert registry._health_url("http://127.0.0.1:8022/asr-b64") == "http://127.0.0.1:8022/health"
 
 
 def test_test_provider_dispatches_by_kind(monkeypatch):
     """
-    行为：真实测试按类别分派——侧车打 /health，API 发一次最小请求。
+    行为：真实测试按类别分派——本机独立服务打 /health，API 发一次最小请求。
 
     两条都换成替身：这条验的是分派，不该为了它联网、更不该为了它花 token。
     """
@@ -157,6 +157,6 @@ def test_test_provider_dispatches_by_kind(monkeypatch):
 
 
 def test_test_provider_rejects_unknown_names():
-    """行为：没登记的名字返回 None（HTTP 缝上由路由转成 422），不为它发任何请求。"""
+    """行为：没登记的名字返回 None（HTTP 接口测试上由路由转成 422），不为它发任何请求。"""
     assert registry.test_provider(CAPABILITY_OCR, "tesseract") is None
     assert registry.test_provider("nope", "deepseek") is None

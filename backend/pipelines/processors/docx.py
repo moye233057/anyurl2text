@@ -132,7 +132,7 @@ def _cell_text(tc) -> str:
     return cell_text.join_lines(parts)
 
 def _row_specs(row, table) -> list:
-    """一行的格位规格：[(文本, 横向跨度, 是否纵向继续格)]，行首缺格补空。"""
+    """一行的逻辑格子规格：[(文本, 横向跨度, 是否纵向继续格)]，行首缺格补空。"""
     tr_pr = row.find(qn("w:trPr"))
     before = 0
     if tr_pr is not None:
@@ -172,7 +172,7 @@ def _render_table(table) -> tuple:
     把表格渲染成制表符分隔的行。
 
     功能：按 `w:tc` 收成格位规格（**不用 `row.cells`**：合并区会被返回多次，文本因此重复），
-          再交给格位网格填充与渲染——纵向合并的行跨度由网格从继续格数出来。
+          再交给表格逻辑格子填充与渲染——纵向合并的行跨度由网格从继续格数出来。
     应用场景：extract_docx 遇到表格时调用。
     输入：table — python-docx 的表格对象。
     输出：(制表符分隔的多行文本, 命中的上界名列表, 源标出的表头行数)；合并区文本只出现一次、覆盖位占列位。

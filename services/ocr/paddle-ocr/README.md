@@ -1,6 +1,6 @@
 # paddle-ocr（默认端口 8021）
 
-最小侧车：`main.py` + `engine.py`。核心只调 `POST /ocr-b64`。
+最小本机服务：`main.py` + `engine.py`。核心只调 `POST /ocr-b64`。
 
 ```powershell
 # 独立环境

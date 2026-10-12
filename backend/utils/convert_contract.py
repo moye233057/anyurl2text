@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-转换接口的 HTTP 契约主体（ConvertResponse / Meta / Usage 等）。
+转换接口的 HTTP 字段约定主体（ConvertResponse / Meta / Usage 等）。
 
 落在 `utils/` 是为了让 `pipelines/` 组装响应时不必 import `routers`（依赖单向，ADR-0010）。
 `routers/convert/schema.py` 再导出本模块，OpenAPI 与旧 import 路径仍可用。
@@ -132,7 +132,7 @@ class Usage(BaseModel):
 
 
 class Timings(BaseModel):
-    """分段墙钟，用于区分「慢在网络上」与「慢在模型上」。"""
+    """分段实际耗时，用于区分「慢在网络上」与「慢在模型上」。"""
 
     download_ms: int = 0
     parse_ms: int = 0

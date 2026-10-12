@@ -6,7 +6,7 @@
 什么时候调用它由处理器决定（`pipelines/processors/image.py` 的 `enhance_image`）。
 OCR 不计 token、也不产生 DeepSeek 账单，所以这里不记账：`usage` 只反映 DeepSeek 调用。
 
-服务契约（本机 OCR，`POST /ocr-b64`）：
+服务字段约定（本机 OCR，`POST /ocr-b64`）：
 请求 `{"file_base64": "..."}`，响应 `{"code": "200", "msg": "success", "data": "文本", "cost": 2.1}`，
 其中 `cost` 是服务端耗时秒数；`code` 不是 "200" 一律当失败。
 

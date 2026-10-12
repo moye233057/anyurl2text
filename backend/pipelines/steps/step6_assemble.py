@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-步骤 6：响应组装（两条管线共用的唯一一处）。
+步骤 6：响应组装（两条处理流程共用的唯一一处）。
 
 响应形状只有这一份定义（ADR 0001）：`content` 按字符上限截断并在 meta 里声明，不静默截断；
 `error` 恒存在，成功为 None，调用方不必判两种响应形状。错误语义在抛出的地方最清楚，
@@ -19,7 +19,7 @@ from utils.processor_schema import ErrorInfo
 
 class PipelineResult(NamedTuple):
     """
-    管线产出：响应体 + HTTP 状态码。
+    处理流程产出：响应体 + HTTP 状态码。
 
     状态码与响应体一起返回（而不是让路由去猜错误类型）：
     错误语义在抛出的地方最清楚，字符串匹配是脆的。
@@ -44,10 +44,10 @@ def build_response(
     delivery_content: Optional[str] = None,
 ) -> ConvertResponse:
     """
-    把抽取结果组装成响应契约。
+    把抽取结果组装成响应字段约定。
 
     功能：统一填 meta 与 timings；按字符上限截断 content 并在 meta 里声明，不静默截断。
-    应用场景：两个管线各自收尾时调用——响应形状只有这一处定义。
+    应用场景：两个处理流程各自收尾时调用——响应形状只有这一处定义。
     输入：prepared — 源信息；result — 抽取产出；各段耗时；
           summary / ocr_text / asr_text / usage / error。
     输出：ConvertResponse。
@@ -114,7 +114,7 @@ def error_response(
 
     功能：error 字段恒存在，成功时才是 None，调用方不必判两种响应形状；错误带上稳定的
            `code`（`configs/errors.py` 的白名单）与可选的 `param`，同时带上语义化状态码供路由直接返回。
-    应用场景：两个管线在入口阶段失败时调用。
+    应用场景：两个处理流程在入口阶段失败时调用。
     输入：source — 原始输入；reason — 面向使用者的原因；total_ms — 已耗时；
           status — HTTP 状态码（入参 422、超限 413、超时 504、上游 502）；
           code — 稳定错误码（必填：每个失败点都得自己声明是哪个码，不给默认值）；
@@ -139,8 +139,8 @@ def internal_error_response(source: str, exc: Exception, started_at: float, stag
     未预期异常的兜底：写日志 + 返回 `internal` 的 500，让失败响应的形状也只有一份。
 
     功能：异常文本只进日志、**不回显给调用方**——那是内部细节（路径、依赖版本），
-          回显等于把实现细节塞进契约；查因看服务日志。
-    应用场景：两个管线的入口阶段各自兜底（`extract.py` / `understand.py`）。没有它，
+          回显等于把实现细节塞进字段约定；查因看服务日志。
+    应用场景：两个处理流程的入口阶段各自兜底（`extract.py` / `understand.py`）。没有它，
           未预期异常会绕过 ConvertResponse 直接冒到框架，调用方拿到的是另一种形状的 500。
     输入：source — 原始输入（URL 或文件名）；exc — 捕获到的异常；started_at — 入口起始的
           `time.monotonic()`；stage — 进日志的阶段名（extract / understand）。

@@ -7,7 +7,7 @@ version = "0.1.0"
 description = "把任意 URL 或本地文件转成尽可能保留原始信息的文本（extract / understand 双路）"
 requires-python = ">=3.12"
 dependencies = [
-    # 服务与契约
+    # 服务与接口约定
     "fastapi",
     "uvicorn[standard]",
     "python-dotenv",

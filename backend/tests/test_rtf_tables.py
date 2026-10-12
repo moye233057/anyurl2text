@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 r"""
-缝 A 的 RTF 表格分支：`\trowd` / `\cellx` / `\cell` / `\row` 还原成制表符分隔的行。
+A 组的 RTF 表格分支：`\trowd` / `\cellx` / `\cell` / `\row` 还原成制表符分隔的行。
 
 为什么单独一个文件：表格列位走的是 `processors/rtf.py` 里那套「全表右边界聚类、一格占几列
 由边界反推」，与 `test_processors_by_format.py` 的按格式矩阵不是一件事；这里的样例是手写 RTF

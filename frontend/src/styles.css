@@ -202,7 +202,7 @@ body {
   font-weight: 600;
 }
 
-/* 运行按钮推到区域标题的右侧：每条管线各有一个，点哪个跑哪个 */
+/* 运行按钮推到区域标题的右侧：每条处理流程各有一个，点哪个跑哪个 */
 .run-button {
   margin-left: auto;
   flex: none;

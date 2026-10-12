@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 r"""
-缝 D：通用件——文本解码与计价记账。
+D 组：通用件——文本解码与计价记账。
 
-缝：`utils/textfile.py` 的两个函数、`extensions/deepseek.py` 的时段判定与三档折算。纯函数，
+测的是：`utils/textfile.py` 的两个函数、`extensions/deepseek.py` 的时段判定与三档折算。纯函数，
 不联网、不起服务、不碰真实模型。
 
 为什么选它：解码顺序与计价口径是两处「错了也不报错、但结果悄悄不对」的地方——
@@ -29,7 +29,7 @@ from utils.body_limit import (
 )
 from utils.zip_read import ZipBudgetExceeded, ZipReadBudget, read_member
 
-# 能力域见 AGENTS.md「测试用例怎么写」；按域跑：python -m pytest tests -m capability_utils
+# 能力类别见 AGENTS.md「测试用例怎么写」；按类别跑：python -m pytest tests -m capability_utils
 pytestmark = pytest.mark.capability_utils
 
 CN = ZoneInfo("Asia/Shanghai")
@@ -90,7 +90,7 @@ def test_undecodable_bytes_do_not_raise(work_dir):
     """
     行为：不是合法 utf-8 也不抛异常，退化成带替换字符的文本。
 
-    来源：`utils/textfile.read_text_file` 的契约「保证不抛异常」——
+    来源：`utils/textfile.read_text_file` 的约定「保证不抛异常」——
     一个坏字节不该让整份文件读不出来。
     """
     path = write(work_dir, "broken.txt", b"\xff\xfe\x00\x01\x02 not utf-8 at all \xff")
@@ -217,7 +217,7 @@ def test_wrap_receive_raises_when_accumulated_body_exceeds_limit():
     asyncio.run(drive())
 
 
-# ---------- 峰谷时段 ----------
+# ---------- 高峰/低谷时段 ----------
 
 @pytest.mark.parametrize(
     ("moment", "expected"),
@@ -282,7 +282,7 @@ def test_model_absent_from_the_price_table_costs_nothing(offpeak):
     assert compute_cost_cny("no-such-model", 1000, 1000, 1000) == 0.0
 
 
-# ---------- 账本累计 ----------
+# ---------- 用量累计记账 ----------
 
 def test_ledger_is_empty_until_a_model_is_called():
     """行为：一次模型都没调过时 usage 为 null。来源：README「没调模型就没有用量，给 0 是噪音」。"""
@@ -341,7 +341,7 @@ def test_snapshot_carries_the_price_effective_date():
     assert ledger.snapshot().price_effective_from == deepseek_billing.PRICE_TABLE[MODEL]["effective_from"]
 
 
-# ---------- 第三方成本闸（默认关；开后用阈值卡住后续 DeepSeek 调用） ----------
+# ---------- 单次请求费用上限（默认关；开后用阈值卡住后续 DeepSeek 调用） ----------
 
 def test_cost_gate_off_by_default_allows_any_spend(offpeak, monkeypatch):
     """行为：费用开关默认关时，哪怕累计费用很高也不拦下一枪。"""

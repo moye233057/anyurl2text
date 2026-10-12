@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 r"""
-缝 C：稳定错误码。
+C 组：稳定错误码。
 
-缝：`step1_download.FetchError` 与 `configs/errors.py` 的白名单——入口阶段失败时，
+测的是：`step1_download.FetchError` 与 `configs/errors.py` 的白名单——入口阶段失败时，
 错误不再是「一句中文」，而是 `{code, message, param}`，`code` 是给程序看的稳定机器名。
 
 为什么选它：文案会改、`code` 不许改。前端按 `code` 分组统计、监控按它告警、验收脚本按它匹配；
@@ -25,7 +25,7 @@ from pathlib import Path
 from pipelines.steps import step1_download
 from test_structure import production_modules, relative
 
-# 能力域见 AGENTS.md「测试用例怎么写」；按域跑：python -m pytest tests -m capability_errors
+# 能力类别见 AGENTS.md「测试用例怎么写」；按类别跑：python -m pytest tests -m capability_errors
 pytestmark = pytest.mark.capability_errors
 
 # 四个「不用联网就该被拒」的入口：地址本身非法，判定发生在 DNS 与连接之前
@@ -190,7 +190,7 @@ def test_http_is_allowed_by_default(monkeypatch):
 # ---------- 第 3 组：模型阶段失败进 meta.model_error ----------
 
 class _FakeLedger:
-    """假用量账本：管线收尾时只读一次，这里恒为「没有用量」。"""
+    """假用量记账：处理流程收尾时只读一次，这里恒为「没有用量」。"""
 
     limits_hit: list = []
 
@@ -199,7 +199,7 @@ class _FakeLedger:
         return None
 
 class _FakeClient:
-    """假模型客户端：不联网、不读 API key，只提供管线要用的那一个入口。"""
+    """假模型客户端：不联网、不读 API key，只提供处理流程要用的那一个入口。"""
 
     ledger = _FakeLedger()
 
@@ -276,7 +276,7 @@ def test_unexpected_failure_after_preparation_becomes_internal(fixture_copy, mon
           （冒上去的默认 500 body 不是 ConvertResponse 形状，调用方得判两种形状）。
 
     来源：`configs/errors.py` 的 `internal` + ADR-0001「error 恒存在」。异常文本**不回显**：
-    它是内部细节，回显等于把路径与依赖版本塞进契约。
+    它是内部细节，回显等于把路径与依赖版本塞进对外约定。
     """
     from pipelines import convert
 

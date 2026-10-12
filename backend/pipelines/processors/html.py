@@ -66,7 +66,7 @@ def extract_html(path: Path, page_url: str = "") -> ExtractResult:
     """
     抽取 HTML 正文。
 
-    功能：剥掉 script/style/noscript 与常见排版包装标签，按段落取文本；表格走格位网格渲成
+    功能：剥掉 script/style/noscript 与常见排版包装标签，按段落取文本；表格走表格逻辑格子渲成
           制表符块后回填到原位置；额外带出标题、meta description 与去重后的链接清单。
     应用场景：dispatch 分派 webpage 组时调用；也用于「URL 无扩展名但内容是 HTML」的情况。
     输入：path — 落盘的 HTML 文件；page_url — 最终 URL，用于把相对链接补成绝对链接。

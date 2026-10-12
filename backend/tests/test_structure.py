@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 r"""
-缝 S：结构判据（静态）。
+S 组：结构检查规则（静态）。
 
-这里接替已删除的 `backend/scripts/check_structure.py`。这 **5 条判据**（另加 2 条自检，共 7 个覆盖项）守的是**行为测不到的东西**——
-类与函数的摆放、依赖朝向、上界值是否只写一处、前端契约是否缺字段。
+这里接替已删除的 `backend/scripts/check_structure.py`。这 **5 条判据**（另加 2 条自检，共 7 个覆盖点）守的是**行为测不到的东西**——
+类与函数的摆放、依赖朝向、上界值是否只写一处、前端字段约定是否缺字段。
 它们是 ADR-0002 与 ADR-0007 的核心不变量，所以从「一个没人跑的脚本」搬成「跟着测试一起跑的用例」。
 原「单文件行数」判据已按 ADR-0010 废除（为贴预算拆文件比巨石更糟）。
 
@@ -14,7 +14,7 @@ r"""
 2. **扩展名覆盖**：`configs/formats.py` 声明的每个扩展名，在 `step4_extract.dispatch()` 里都有落点。
 3. **`__init__.py` 里不放逻辑**（只有模块 docstring 与 import）。
 4. **上界的值只在注册表里写一次**：散落常量不得与 `limits.py` 撞车。
-5. **前端契约镜像不缺字段**：`frontend/src/types.ts` 与后端 schema 对齐。
+5. **前端字段约定镜像不缺字段**：`frontend/src/types.ts` 与后端 schema 对齐。
 
 `backend/scripts/` 与 `backend/tests/` 不是生产模块，不参与判据 1、3：
 前者是一次性生成脚本，后者是测试自身。
@@ -31,7 +31,7 @@ BACKEND = Path(__file__).resolve().parent.parent
 # 不排除的话判据 1 会拿它当「data 层」去查依赖白名单，直接 KeyError（2026-10-04 踩到）。
 NON_PRODUCTION = {"scripts", "tests", "data"}
 
-# 能力域见 AGENTS.md「测试用例怎么写」；按域跑：python -m pytest tests -m capability_structure
+# 能力类别见 AGENTS.md「测试用例怎么写」；按类别跑：python -m pytest tests -m capability_structure
 pytestmark = pytest.mark.capability_structure
 
 # 层 → 允许被它 import 的项目内层（ADR-0007）
@@ -48,7 +48,7 @@ ALLOWED: Dict[str, Set[str]] = {
 # ---------- 读代码 ----------
 
 def production_modules() -> List[Path]:
-    """backend/ 下参与结构判据的全部 .py。"""
+    """backend/ 下参与结构检查规则的全部 .py。"""
     found = []
     for path in sorted(BACKEND.rglob("*.py")):
         if "__pycache__" in path.parts:
@@ -109,7 +109,7 @@ def test_dependencies_point_one_way():
     """
     行为：每层只 import 它下方的层，叶子模块例外（任何层都能用）。
 
-    来源：ADR-0007「契约跟着它的主人走且都做成叶子模块」+ `architecture.md` 第 4 节的依赖图。
+    来源：ADR-0007「字段约定跟着它的主人走且都做成叶子模块」+ `architecture.md` 第 4 节的依赖图。
     """
     modules = production_modules()
     leaves = leaf_modules(modules)
@@ -222,14 +222,14 @@ def test_limit_values_live_only_in_the_registry():
     assert not problems, "上界的值只能在 configs/limits.py 里写：\n" + "\n".join(problems)
 
 
-# ---------- 判据 5：前端契约镜像不缺字段 ----------
+# ---------- 判据 5：前端字段约定镜像不缺字段 ----------
 
 FRONTEND_TYPES = BACKEND.parent / "frontend" / "src" / "types.ts"
 
 
 def ts_interface_fields(source: str, name: str) -> Set[str]:
     """从 TS 源里取 `export interface <name> { … }` 的字段名（只处理平铺字段）。"""
-    # 非贪婪匹配到第一个行首的 `}`：契约里的这几个 interface 都是平铺字段，没有嵌套大括号
+    # 非贪婪匹配到第一个行首的 `}`：字段约定里的这几个 interface 都是平铺字段，没有嵌套大括号
     match = re.search(rf"export interface {name} \{{(.*?)^\}}", source, re.S | re.M)
     if not match:
         return set()
@@ -239,9 +239,9 @@ def ts_interface_fields(source: str, name: str) -> Set[str]:
 def test_frontend_meta_mirror_has_every_contract_field():
     """
     行为：`frontend/src/types.ts` 的 `Meta` 与后端 `routers/convert/schema.py` 的 `Meta`
-    字段**一一对应**——少一个就是契约漂移，多一个就是前端凭空造字段。
+    字段**一一对应**——少一个就是字段约定漂移，多一个就是前端凭空造字段。
 
-    来源：`docs/architecture.md`「改 `meta` 是跨前后端的：`frontend/src/types.ts` 是契约镜像」。
+    来源：`docs/architecture.md`「改 `meta` 是跨前后端的：`frontend/src/types.ts` 是字段镜像」。
     为什么需要这条门禁：这一层没有编译器兜底，漏字段不会报错，只会在界面上悄悄少显示一项——
     2026-10-04 这一轮就发现后端已落、镜像没跟的两个（`degrade_code` / `limits_hit`）。
     """
@@ -263,7 +263,7 @@ def test_frontend_meta_mirror_has_every_contract_field():
 
 def test_the_rules_are_looking_at_real_modules():
     """
-    行为：结构判据确实扫到了预期的模块量。
+    行为：结构检查规则确实扫到了预期的模块量。
 
     没有这条，`production_modules()` 一旦因为路径写错返回空列表，上面各判据会全绿——那是假绿。
     """
@@ -280,12 +280,12 @@ def test_the_rules_are_looking_at_real_modules():
         "utils.textfile",
         "extensions.deepseek",
     ):
-        assert expected in names, f"结构判据没扫到 {expected}"
+        assert expected in names, f"结构检查规则没扫到 {expected}"
 
 
 def test_leaf_modules_include_the_contracts():
     """
-    行为：契约文件是叶子模块——它们不 import 实现层，所以任何层都能拿它当数据结构用。
+    行为：字段约定文件是叶子模块——它们不 import 实现层，所以任何层都能拿它当数据结构用。
 
     同时把完整清单打出来（pytest 会捕获输出，要加 `-s` 才看得见）：
     加新模块后想知道它算不算叶子、因而能不能被任何层 import，看这一行就够。
