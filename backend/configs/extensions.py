@@ -7,7 +7,7 @@
 不由「是本地的还是云上的」决定。
 
 为什么名单必须落在 `configs/`：提供商的**名字**同时被三处用到——HTTP 字段约定的入参校验（`utils/`）、
-健康检查与选择（`extensions/`）、能力清单接口（`routers/` 经 `pipelines/`）。而分层规则（ADR-0010）
+健康检查与选择（`extensions/`）、能力清单接口（`routers/` 经 `pipelines/`）。而分层规则（ADR-0007）
 只允许它们各自 import 到 `configs`，所以名单在这里写一次，其余两处都从这里取。
 """
 from typing import Dict, NamedTuple, Optional, Tuple, Union

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-处理器层的输入与产出字段约定（ADR-0010：落在 `utils/`，与路由字段约定 `routers/convert/schema.py` 区分开）。
+处理器层的输入与产出字段约定（ADR-0007：落在 `utils/`，与路由字段约定 `routers/convert/schema.py` 区分开）。
 
 也放 Detector / ImageMeta / AudioMeta / ErrorInfo：它们既是 HTTP meta 碎片，也被处理器产出引用；
 放在 utils 才能让本文件不依赖 routers（依赖单向：routers → utils，不是反过来）。
@@ -10,7 +10,7 @@
 
 - `ExtractResult.content` 是**唯一来源**：不调模型、也不感知调用方是不是 understand
   （ADR 0002/0007：同一格式的确定性产出只有这一份实现）。
-- `EnhanceOutcome` 供 understand 模型阶段使用；并进响应 `content` 由 `merge_understand_delivery()` 在组装前完成（ADR-0011）。
+- `EnhanceOutcome` 供 understand 模型阶段使用；并进响应 `content` 由 `merge_understand_delivery()` 在组装前完成（ADR-0002）。
 """
 from dataclasses import dataclass, field
 from enum import Enum

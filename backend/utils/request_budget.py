@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""单请求全链路与下载分段的单调时钟截止点（ADR-0011 / 用户裁决 #1）。"""
+"""单请求全链路与下载分段的单调时钟截止点。"""
 from __future__ import annotations
 
 import time

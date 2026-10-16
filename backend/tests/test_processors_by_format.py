@@ -6,7 +6,7 @@ A 组：按文件类型的确定性抽取。
 决定「这个文件交给哪个处理器、产出什么」。不调模型、不联网、不起服务。
 
 为什么选它：项目按「一种格式一个处理器」组织，`dispatch()` 是这张表唯一的入口，
-也是 `docs/EXTENDING.md` 让加格式时改的那个函数。类型识别的行为在 `test_detect.py` 里验，
+加格式时改的就是这个函数。类型识别的行为在 `test_detect.py` 里验，
 响应字段约定与状态码在 `test_extract_contract.py`（HTTP 接口测试）里验，这里只管处理器产出。
 
 预期值来源（都不是「跑一遍看输出」）：
@@ -563,7 +563,7 @@ def test_table_header_rows_come_from_the_source_markup(ctx, fixture_copy, work_d
           各一条：标的（1）、没标的（0）、表不止一张（null）。
 
     来源：`routers/convert/schema.py` 的 `table_header_rows` 字段说明（null 与 0 的区别就写在那里）
-          + ADR-0001（字段约定只有一个事实源）。
+          + ADR-0002（字段约定只有一个事实源）。
     预期值来源：`page.html` 的表首行是 `<th>`（1 行表头）；本用例另写两张页：一张全 `<td>`、一张两张表。
     """
     marked, _ = fixture_copy("page.html")
@@ -1375,7 +1375,7 @@ def test_repeated_image_is_saved_once_and_does_not_starve_others(name, asset_ctx
     行为：同一张图被引 N 次只落一次盘，`MAX_EMBEDDED_IMAGES` 记在**不同的图**上——
            重复引用既不留下内容相同的多份素材，也不把后面的图挤到上限之外。
 
-    来源：`docs/PIPELINES.md`「内嵌图：一次请求带上全部图（受 MAX_EMBEDDED_IMAGES 限制）」
+    来源：`docs/pipelines.md`「内嵌图：一次请求带上全部图（受 MAX_EMBEDDED_IMAGES 限制）」
     + 样例生成参数（阶段 14：4 处引用、2 张不同的图，上限 3）。
     实测（2026-10-04）：修前三个格式都按「出现次序」占张数上限——前 3 处引用全是同一张 photo.png，
     于是落下 3 份内容完全相同的文件，而 screenshot.png 一次都没被读到。
@@ -1425,7 +1425,7 @@ def test_odt_table_keeps_columns_instead_of_one_paragraph_per_line(ctx, fixture_
     """
     行为：ODT 表格按行列渲成制表符分隔的行，合并区文本只出现一次。
 
-    来源：`docs/PIPELINES.md` 的 odt 行（ODF 表格格位接入）
+    来源：`docs/pipelines.md` 的 odt 行（ODF 表格格位接入）
     （跨度 → `place(span)`、`covered-table-cell` → `covered()`、
     `number-columns-repeated` → 循环落位并记账）。
     实测（2026-10-04）：原来全局 `root.iter()` 收 `text:p`，每个单元格各自成一行、不含制表符，
@@ -1740,7 +1740,7 @@ def test_csv_delimiter_is_sniffed_instead_of_assumed_comma(delimiter, label, ctx
     行为：分号 / 制表符 / 竖线分隔的 CSV 也按列渲成制表符表格，而不是被读成一列。
 
     来源：`excel.py` 模块 docstring「按列位置输出制表符，空列留空；列一错位整张表就读不出
-    对应关系」+ `docs/PIPELINES.md` 的嗅探规则。
+    对应关系」+ `docs/pipelines.md` 的嗅探规则。
     预期值来源：本用例自己写入的三行两列内容，与实现无关。
     """
     path = work_dir / "dialect.csv"
@@ -1755,7 +1755,7 @@ def test_a_comma_csv_keeps_its_exact_old_output(ctx, work_dir):
     行为：逗号 CSV 的产出逐字节不变——平局时逗号优先，且字段里出现的制表符 / 分号 / 竖线
           不会把列重新切开（它们就是普通字符）。
 
-    来源：`docs/PIPELINES.md` 的嗅探规则「列数 > 1 且各行列数最一致，平局逗号优先」。
+    来源：`docs/pipelines.md` 的嗅探规则「列数 > 1 且各行列数最一致，平局逗号优先」。
     预期值来源：本用例自己写入的三行内容（字段故意塞进另外三个候选分隔符）。
     """
     path = work_dir / "comma.csv"
@@ -1825,7 +1825,7 @@ def test_tsv_is_split_by_tab_not_by_a_lookalike_delimiter(ctx, fixture_copy):
     """
     行为：`.tsv` 按制表符分列——每行都是 3 列，含逗号与分号的那一格不被切开。
 
-    来源：本仓「只有一套表格方言」（`docs/PIPELINES.md` §3.4）+ `excel._sniff_delimiter` 的候选顺序。
+    来源：本仓「只有一套表格方言」（`docs/pipelines.md` §3.4）+ `excel._sniff_delimiter` 的候选顺序。
     预期值来源：样例生成参数（阶段 19 写死 3 列，并在备注列放了逗号与分号）。
     实测：嗅探若挑成逗号或分号，含它们的那一行会多出列，第二条断言立刻失败。
     """
@@ -1845,7 +1845,7 @@ def test_docx_hyperlinks_land_in_content_with_text_and_url(ctx, fixture_copy):
     行为：docx 里的超链接按「文字 -> URL」进末尾的 `## 链接` 段，按地址去重，
           没有文字的那条只给 URL。
 
-    来源：`docs/PIPELINES.md` 的 docx 段 + `processors/html.py` 的链接段写法（同一种输出格式）。
+    来源：`docs/pipelines.md` 的 docx 段 + `processors/html.py` 的链接段写法（同一种输出格式）。
     预期值来源：样例生成参数（`make_fixtures.py` 阶段 16：同一地址写两次、再一条只有地址的链接）。
     """
     content = run("hyperlink.docx", ctx, fixture_copy).content
@@ -1878,7 +1878,7 @@ def test_documents_without_hyperlinks_are_not_touched(ctx, fixture_copy):
     """
     行为：没有超链接的文档产出一字不加——`## 链接` 段只在真有链接时出现。
 
-    来源：ADR-0002「两条路逐字节一致」的前提是 `content` 只由抽取决定；给无链接文档
+    来源：确定性抽取的 `content` 只由抽取决定；给无链接文档
     塞一个空链接段就等于改了所有 docx 的产出。
     预期值来源：这两个样例都不含超链接（阶段 2 与阶段 13 的生成参数里没有链接）。
     """
@@ -1908,7 +1908,7 @@ def test_limits_hit_reaches_meta_with_the_templated_note(ctx, work_dir):
     """
     行为：处理器报的名字经步骤 6 进 `meta.limits_hit`，`meta.notes` 里那句说明取自同一份模板。
 
-    来源：ADR-0001「响应形状只有一份定义」+ `configs/limits.py` 的 note 模板。
+    来源：ADR-0002「响应形状只有一份定义」+ `configs/limits.py` 的 note 模板。
     实测（2026-10-04）：这条链以前不通——上界命中只有处理器自己写的一句自由文案，
     既没有结构化名字，也没有统一模板，改说法要动十几个文件。
     """
@@ -2005,7 +2005,7 @@ def test_epub_chapters_follow_the_spine_order(ctx, fixture_copy):
     """
     行为：章节按 OPF 的 spine 顺序拼接——manifest 的声明顺序与 zip 的写入顺序都说了不算。
 
-    来源：本仓 EPUB 约定「spine 是阅读顺序的唯一依据」（`docs/PIPELINES.md` 的 EPUB 段）
+    来源：本仓 EPUB 约定「spine 是阅读顺序的唯一依据」（`docs/pipelines.md` 的 EPUB 段）
     + ADR-0003（容器要往里看一层，读对了才算完整解析）。
     预期值来源：样例生成参数（阶段 17 的 manifest 与 zip 写入顺序都反着 spine）。
     实测：按 manifest 或 zip 顺序拼会把 ch3 排到最前，三个独有特征串的先后立刻对不上。
@@ -2037,7 +2037,7 @@ def test_epub_internal_links_are_promoted_to_document_level_targets(ctx, fixture
     行为：章内锚点与相对引用都提升成带章路径的文档级目标——拼成一整篇后每个目标唯一。
 
     来源：EPUB 的 `#frag` 只在**单章内**有意义，跨章拼接后不带上章路径「指向哪儿」就是歧义
-    （本格式最大的难点）；决定记在 `docs/PIPELINES.md` 的 EPUB 段。
+    （本格式最大的难点）；决定记在 `docs/pipelines.md` 的 EPUB 段。
     预期值来源：样例生成参数（阶段 17 的三处内部引用 + 一处外部地址 + 一条应被跳过的 mailto）；
     章路径用它在容器里的完整路径（`OEBPS/ch2.xhtml`），与 zip 成员名同一命名空间。
     """
@@ -2057,7 +2057,7 @@ def test_epub_styles_never_reach_the_delivered_text(ctx, fixture_copy):
     """
     行为：`<link rel="stylesheet">` 与内联 `<style>` 的内容都不进交付文本。
 
-    来源：样式不是这份文档的内容；这条决定记在 `docs/PIPELINES.md` 的 EPUB 段。
+    来源：样式不是这份文档的内容；这条决定记在 `docs/pipelines.md` 的 EPUB 段。
     预期值来源：样例生成参数（阶段 17 把 CSS 特征串只写进 style.css 与 ch2 的内联 `<style>`）。
     实测：不丢 `<style>` 时这一串会作为正文出现在 ch2 里。
     """
@@ -2069,7 +2069,7 @@ def test_epub_extraction_is_byte_identical_on_repeat(ctx, fixture_copy):
     """
     行为：同一个文件两次抽取逐字节相同——不依赖 dict 顺序，也不依赖 zip 内的文件顺序。
 
-    来源：ADR-0002「两条路逐字节可对比」以「抽取本身是确定的」为前提。
+    来源：抽取本身是确定的——同一文件两次抽取应付出相同交付文本。
     预期值来源：同一个源抽取两次。
     """
     path, _ = fixture_copy(EPUB_FIXTURE)
@@ -2081,7 +2081,7 @@ def test_epub_content_is_identical_on_both_paths(ctx, asset_ctx, fixture_copy):
     """
     行为：`prepare_assets` 两种取值下 `content` 逐字节相同——两个接口共用同一份抽取。
 
-    来源：ADR-0002「understand 复用 extract 的抽取内核，只做增量」。
+    来源：ADR-0001「扩展只做增量，复用同一份抽取内核」。
     预期值来源：同一个源的两次抽取；本格式没有模型素材，差异只可能来自「感知调用方是谁」。
     做法：A 组 里各跑一次 `dispatch` + `build_response`——`tests/test_extract_contract.py`
     只覆盖 extract 那一口，epub 没有 HTTP 双路用例（understand 那一路要真模型，属要花钱的模型测试）。
@@ -2234,7 +2234,7 @@ def test_ofd_pages_follow_the_document_root_order(ctx, fixture_copy):
     行为：页序取自文档根的 `Pages/Page` 声明——zip 的写入顺序说了不算；同一 `TextObject` 里的多个
           `TextCode` 片段拼成一行。
 
-    来源：本仓 OFD 约定「文档根是页序的唯一依据」（`docs/PIPELINES.md` 的 OFD 段）
+    来源：本仓 OFD 约定「文档根是页序的唯一依据」（`docs/pipelines.md` 的 OFD 段）
      + ADR-0003（容器要往里看一层，读对了才算完整解析）。
     预期值来源：样例生成参数（阶段 18 的 zip 写入顺序反着页序；第 1 页正文拆成两个片段）。
     实测：按容器里的条目顺序拼会把第 2 页排到最前，两个页标记的先后立刻对不上。

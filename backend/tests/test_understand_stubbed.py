@@ -3,7 +3,7 @@ r"""
 A2 组：进程内转换处理流程（**模拟的模型客户端，免费**）。
 
 测的是：`ConvertPipeline.run_from_upload()` —— 真实处理流程，模型客户端换成脚本化替身。
-能力选择见 docs/API.md §1.1 与 ADR-0015：看图只要 `llm`；`ocr` 是**独立文字图转写**的提供商单选。
+能力选择见 ADR-0004：看图只要 `llm`；`ocr` 是**独立文字图转写**的提供商单选。
 """
 import json
 import tempfile
@@ -25,7 +25,7 @@ STUB_IMAGE_TEXT = "假模型读出的图里的字"
 STUB_USAGE = {"prompt_tokens": 120, "prompt_cache_hit_tokens": 20, "completion_tokens": 30}
 
 # 「纯代码」= 不含内嵌图素材：仅开 llm 时正文只该多出摘要，不该多出图像转写。
-# deck.pptx 不在此列——它带一张内嵌图，而看图只看 llm（ADR-0015），所以它归 VISION_MERGE_FIXTURES。
+# deck.pptx 不在此列——它带一张内嵌图，而看图只看 llm（ADR-0004），所以它归 VISION_MERGE_FIXTURES。
 CODE_ONLY_FIXTURES = (
     "plain.txt",
     "table.csv",
@@ -151,7 +151,7 @@ def test_query_only_changes_the_summary(stub_client, fixture_copy):
 
 
 def test_llm_off_skips_vision_with_note(stub_client, fixture_copy):
-    """没开 llm 时看图支路跳过——选不选 ocr 都改变不了这一条（ADR-0015 把开关条件拆开了）。"""
+    """没开 llm 时看图支路跳过——选不选 ocr 都改变不了这一条（ADR-0004 把开关条件拆开了）。"""
     path, _ = fixture_copy("report.docx")
     only_ocr = upload(path, "report.docx", ocr=True, llm=False)
     assert stub_client.calls == 0

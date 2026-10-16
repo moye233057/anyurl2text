@@ -4,7 +4,7 @@
 
 - `run_extraction()`：两条路共用的确定性抽取，产出 `content`（纯代码交付文本）与素材清单。
 
-扩展增强分派在 `pipelines/convert.py`（ADR-0011 / 0014）。
+扩展增强分派在 `pipelines/convert.py`（ADR-0001 / ADR-0002）。
 `extract_*` 不调模型、也不感知调用方是哪个接口（ADR 0002/0007）。认不出的扩展名与缺依赖的类型
 走 `extract_file_info()` 的降级产出——那是正常结果，不是错误（ADR 0003）。
 """

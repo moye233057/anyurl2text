@@ -65,7 +65,7 @@ def _ensure_uv_env() -> None:
 
     uv = _find_uv()
     if uv is None:
-        print("本仓用 uv 管 Python 环境（见 ADR-0013）。")
+        print("本仓用 uv 管 Python 环境（见 ADR-0009）。")
         print("请先安装 uv：https://docs.astral.sh/uv/getting-started/installation/")
         print(f"然后在项目根执行：uv sync && uv run python {Path(__file__).name}")
         raise SystemExit(1)

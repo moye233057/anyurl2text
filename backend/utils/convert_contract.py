@@ -2,7 +2,7 @@
 """
 转换接口的 HTTP 字段约定主体（ConvertResponse / Meta / Usage 等）。
 
-落在 `utils/` 是为了让 `pipelines/` 组装响应时不必 import `routers`（依赖单向，ADR-0010）。
+落在 `utils/` 是为了让 `pipelines/` 组装响应时不必 import `routers`（依赖单向，ADR-0007）。
 `routers/convert/schema.py` 再导出本模块，OpenAPI 与旧 import 路径仍可用。
 """
 from enum import Enum
@@ -107,11 +107,11 @@ class Meta(BaseModel):
     ocr_text: Optional[str] = Field(
         None,
         description="从图像读出的文字（独立图片、文档内嵌图、扫描件页面）；"
-        "llm=true 时并进 content（ADR-0011/0014）。文字转写用哪个提供商由请求的 ocr 决定。",
+        "llm=true 时并进 content（ADR-0002）。文字转写用哪个提供商由请求的 ocr 决定。",
     )
     asr_text: Optional[str] = Field(
         None,
-        description="本机 ASR 从音轨转写的文字；asr=true 且跑过时有值，并进 content（ADR-0011/0014）。",
+        description="本机 ASR 从音轨转写的文字；asr=true 且跑过时有值，并进 content（ADR-0002）。",
     )
 
     engine: List[str] = Field(default_factory=list, description="实际用到的解析器或模型")

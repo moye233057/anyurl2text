@@ -68,7 +68,7 @@ app = FastAPI(
     description=(
         "任意 URL 或本地文件转文本。\n\n"
         "- `POST /convert` / `/convert/file`：确定性抽取 + 可选扩展（`ocr` / `asr` / `llm`，默认 false）。\n"
-        "- 看图支路需要同时 `ocr` 与 `llm`；摘要需要 `llm`；音视频转写需要 `asr`（ADR-0014）。\n"
+        "- 看图只要 LLM；独立文字图转写由 OCR 提供商单选；摘要要 LLM；音视频转写要 ASR（ADR-0001 / ADR-0004）。\n"
     ),
     lifespan=lifespan,
 )

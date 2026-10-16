@@ -2,7 +2,7 @@
 
 本仓（anyurl2text）的例外与禁令。这里只放**本仓特有、且从代码与文档里查不到**的部分。
 
-事实源指针：跑法 [docs/RUNBOOK.md](docs/RUNBOOK.md) ｜ 叫法 [CONTEXT.md](CONTEXT.md) ｜ 目标设计 [docs/architecture.md](docs/architecture.md) ｜ 为什么 [docs/adr.md](docs/adr.md)
+事实源指针：跑法 [README.md](README.md) ｜ 叫法 [CONTEXT.md](CONTEXT.md) ｜ 目标设计 [docs/architecture.md](docs/architecture.md) ｜ 为什么 [docs/adr.md](docs/adr.md) ｜ 主流程实现 [docs/pipelines.md](docs/pipelines.md)
 
 ## 环境：用 uv，不用随便哪个 conda/pip
 
@@ -16,7 +16,7 @@
 Invoke-WebRequest http://127.0.0.1:8020/probe/health -TimeoutSec 5 -UseBasicParsing   # 200 = 在跑
 ```
 
-没在听就停下来说明，请维护者启动。`RELOAD` 默认 `false`（2026-10-12 起）：改完后端 `.py` 不会自己生效，要等维护者重启；端口唯一、HTTP 用例要写仓内临时目录等边界见 RUNBOOK 第 5–6 节。
+没在听就停下来说明，请维护者启动。`RELOAD` 默认 `false`：改完后端 `.py` 不会自己生效，要等维护者重启。HTTP 用例的临时文件写 `backend/tests/_workdir/`，不要写系统 Temp。
 
 ## 验收：可跑进程内自检
 
@@ -54,13 +54,13 @@ uv run python -m pytest tests -q    # 需要后端在跑
 4. **同一能力只在最靠近它的测试入口验一次**：HTTP 接口测试只抽查代表格式，不重复进程内的格式矩阵。
 5. **状态码只是附加断言**，主断言必须是业务事实（正文内容、字段值、降级码、命中的上界名）。
 6. 每条用例的 docstring 第一行会被 `tests/conftest.py` 收进留痕文件（`backend/data/debug/last_test_run.txt`）——写成一句人能读懂的话。
-7. **能力类别标记**：每条用例打一个 `@pytest.mark.capability_*`，并同步登记进 `backend/pytest.ini` 的 `markers`。按类别跑：`pytest tests -m capability_epub`；清单见 `docs/RUNBOOK.md` 第 5 节。写 docstring 时用「测试入口 / 能力类别 / 覆盖点」，不要写「缝 / 能力域」。
+7. **能力类别标记**：每条用例打一个 `@pytest.mark.capability_*`，并同步登记进 `backend/pytest.ini` 的 `markers`。按类别跑：`pytest tests -m capability_epub`。写 docstring 时用「测试入口 / 能力类别 / 覆盖点」，不要写「缝 / 能力域」。
 
 ## 改代码时的三条硬约束
 
-1. **`processors/` 一类格式一个文件**（ADR-0010 / ADR-0007）：不为过单文件行数限制再拆碎片文件；表格公共进 `utils/excel/`，字段约定进 `utils/processor_schema.py`，扩展调用公共进 `extensions/`。
+1. **`processors/` 一类格式一个文件**（ADR-0007）：不为过单文件行数限制再拆碎片文件；表格公共进 `utils/excel/`，字段约定进 `utils/processor_schema.py`，扩展调用公共进 `extensions/`。
 2. **上界与错误码各只有一个定义处**：`backend/configs/limits.py`、`backend/configs/errors.py`。
-3. **`content` 跟能力开关走**（ADR-0014 / 0011）：确定性段只来自 `extract_*`；OCR/ASR/视觉转写仅在对应扩展实际启用时并进 `content`，并同时写入 `meta.*`。不要恢复双路对比产品身份；不要把权重提交进 git。
+3. **`content` 跟能力开关走**（ADR-0001 / ADR-0002）：确定性段只来自 `extract_*`；OCR/ASR/视觉转写仅在对应扩展实际启用时并进 `content`，并同时写入 `meta.*`。不要恢复双路对比产品身份；不要把权重提交进 git。
 
 ## Git
 

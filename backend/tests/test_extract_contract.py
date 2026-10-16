@@ -6,7 +6,7 @@ convert 接口测试（扩展全关）的接口约定测试：只打 HTTP，不 
 扩展开启见要花钱的模型测试 `test_understand_contract.py`。同一能力只在一个测试入口里验一次。
 
 预期值不来自「跑一遍代码看它输出什么」，而来自：
-- `docs/RUNBOOK.md` 的验收清单
+- `README.md` 的快速开始与接口用法
 - `README.md` 的「支持哪些输入」表与「几个关键取舍」
 - `CONTEXT.md` 的术语定义
 - 样例生成参数（`scripts/make_fixtures.py` 各阶段写死的页数 / 内嵌图数）
@@ -34,7 +34,7 @@ BASE_URL = os.environ.get("ANYURL2TEXT_BASE_URL", "http://127.0.0.1:8020")
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 # 本地服务的单次请求上限：本文件打的都是 127.0.0.1 的上传口，正常 1 秒内返回。
 # **别**照搬「下载大文件」那类 120 秒——服务卡住时那就是十几分钟只换来一行行 F，
-# 而人只看到 `F` 与最后那个数字（踩过这个坑，见 docs/RUNBOOK.md「怎么看测试结果」）。
+# 而人只看到 `F` 与最后那个数字。
 TIMEOUT = 20.0
 
 # 能力类别见 AGENTS.md「测试用例怎么写」；按类别跑：python -m pytest tests -m capability_http
@@ -58,7 +58,7 @@ def service_is_answerable():
     """
     前置：后端在 8020 上**真的应答**。不在就当场说清，不要等十几条用例各超时一次。
 
-    来源：`docs/RUNBOOK.md` 第 5 节「怎么看测试结果」——后端由人在自己终端起，AI 不自起
+    来源：AGENTS.md——后端由人在自己终端起，AI 不自起
     （端口唯一；uvicorn 的 reloader 在沙箱里建不了命名管道）。卡住的服务比不存在的服务更难查：
     TCP 连着却不回话时，每条用例都要等满 `TIMEOUT`。
     """
@@ -67,10 +67,10 @@ def service_is_answerable():
     except Exception as exc:
         pytest.fail(
             f"后端没在 {BASE_URL} 应答（{exc.__class__.__name__}）。本文件每条用例都要它："
-            "先起/重启后端，或先跑 --ignore=tests/test_extract_contract.py（RUNBOOK 第 5/6 节）"
+            "先起/重启后端，或先跑 --ignore=tests/test_extract_contract.py"
         )
     if response.status_code != 200:
-        pytest.fail(f"{BASE_URL}/probe/health 返回 {response.status_code}，后端状态不对（RUNBOOK 第 6 节）")
+        pytest.fail(f"{BASE_URL}/probe/health 返回 {response.status_code}，后端状态不对")
 
 
 def extract(file_name, raw=None, query=None):
@@ -115,7 +115,7 @@ def test_failures_carry_a_structured_error_with_a_stable_code():
     """
     行为：入口阶段失败时 `error` 是 `{code, message, param}`，`code` 是稳定机器名。
 
-    来源：`configs/errors.py` 的码表 + ADR-0001「error 恒存在」。
+    来源：`configs/errors.py` 的码表 + ADR-0002「error 恒存在」。
     实测（2026-10-04）：修前 `error` 只是一句中文，前端只能靠字符串匹配分组，改一个字就断。
     这里用回环地址触发——`ALLOW_PRIVATE_HOSTS` 默认关，422 在发起连接之前就返回，不联网也不花钱。
     """
@@ -144,7 +144,7 @@ def test_meta_carries_every_channel_for_a_small_input():
     行为：四条通道在正常响应里形状齐全且**不谎报**——`limits_hit` 与 `unprocessed_pages`
           是空列表，`degrade_code` 与 `model_error` 为 null。
 
-    来源：ADR-0001「响应形状只有一份」（字段恒存在，调用方不必判两种形状）
+    来源：ADR-0002「响应形状只有一份」（字段恒存在，调用方不必判两种形状）
     + ADR-0003（降级 / 边界各走自己的通道，不挤进 `error`）。
     """
     status, body = extract("plain.txt")

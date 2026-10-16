@@ -2,11 +2,11 @@
 """
 转换接口：POST /convert 与 /convert/file。
 
-能力选择 ocr / asr / llm（默认都不用）控制扩展；确定性抽取始终跑（ADR-0014）。
-`ocr` 是**提供商单选**：false / true / deepseek / paddle，只决定文字转写交给谁（ADR-0015）；
+能力选择 ocr / asr / llm（默认都不用）控制扩展；确定性抽取始终跑（ADR-0001）。
+`ocr` 是**提供商单选**：false / true / deepseek / paddle，只决定文字转写交给谁（ADR-0004）；
 看图支路（判型、语义描述、扫描页、内嵌图）只要 llm。
 路由写成同步 def：下载、解析、模型调用都是阻塞式，交给 FastAPI 线程池；
-并发按扩展名分快/慢池（ADR-0011）。
+并发按扩展名分快/慢池。
 """
 from typing import Optional
 

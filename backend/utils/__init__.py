@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""通用工具与跨格式公共件（ADR-0010）。
+"""通用工具与跨格式公共件（ADR-0007）。
 
 - 原有：`textfile` / `errors` / `ffmpeg` / `egress`
 - DeepSeek 计价与单次请求费用上限：`extensions/deepseek.py`（不在 utils）

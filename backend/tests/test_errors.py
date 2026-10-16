@@ -12,7 +12,7 @@ C 组：稳定错误码。
 本文件全部**不联网**：用的都是发起连接之前就该拒掉的地址（空、非 http、缺主机、内网/回环），
 422 判定发生在 DNS 与连接之前，所以不需要网络也不需要后端服务。
 
-预期值来源：`configs/errors.py` 的码表与注释里写明的触发点、ADR-0001（`error` 恒存在）、
+预期值来源：`configs/errors.py` 的码表与注释里写明的触发点、ADR-0002（`error` 恒存在）、
 ADR-0003（降级是能力边界而不是故障——所以那些走 `meta`，不进 `error`）。
 """
 import ast
@@ -133,7 +133,7 @@ def test_http_source_can_be_switched_off(monkeypatch):
           文案里说清怎么放回来；这个码在硬失败白名单里。
 
     来源：`configs/errors.py` 里该码注明的触发点（`step1_download._assert_safe_url`）
-    + `docs/RUNBOOK.md` 配置项全表的语义。
+    + 根目录 `.env.example` 里该项的注释。
     做法：置开关为 false 后直接调 `download()`——判定发生在 DNS 与连接之前，全程不联网。
     预期值来源：配置项本身的语义与码表，不是跑一遍看输出。
     """
@@ -275,7 +275,7 @@ def test_unexpected_failure_after_preparation_becomes_internal(fixture_copy, mon
     行为：抽取阶段冒出没预料到的异常时返回 500 + `error.code == "internal"`，而不是让异常冒到框架
           （冒上去的默认 500 body 不是 ConvertResponse 形状，调用方得判两种形状）。
 
-    来源：`configs/errors.py` 的 `internal` + ADR-0001「error 恒存在」。异常文本**不回显**：
+    来源：`configs/errors.py` 的 `internal` + ADR-0002「error 恒存在」。异常文本**不回显**：
     它是内部细节，回显等于把路径与依赖版本塞进对外约定。
     """
     from pipelines import convert
@@ -301,7 +301,7 @@ def test_unexpected_failure_before_preparation_becomes_internal(monkeypatch):
     """
     行为：准备工作（下载 / 识别 / 建临时目录）这一段出未预期异常时同样兜成 `internal` 的 500。
 
-    来源：ADR-0001。这一段原本只接 `FetchError`，其它异常会整条冒到框架。
+    来源：ADR-0002。这一段原本只接 `FetchError`，其它异常会整条冒到框架。
     """
     from pipelines import convert
 

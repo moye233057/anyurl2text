@@ -8,7 +8,7 @@ B 组：类型识别与静态格式清单。
 为什么选它：
 - 它是「这个文件交给哪个处理器」的唯一决策点，判错就等于整条链走错分支。
 - 容器格式（OLE / ZIP）要靠往里看一层才能定家族，这条逻辑最容易被改坏。
-- 判型顺序在文档里写反过（`docs/PIPELINES.md` 与 `step2_detect.py` 自己的 docstring 都写成
+- 判型顺序在文档里写反过（`docs/pipelines.md` 与 `step2_detect.py` 自己的 docstring 都写成
   「文件头 → Content-Type → 扩展名」，实现是「文件头 → 名字扩展名 → Content-Type」），
   本文件把**实际顺序**钉住，避免再被改回去。
 
@@ -197,7 +197,7 @@ def test_epub_fingerprint_does_not_swallow_the_archive_family(work_dir):
           走压缩包那一路——哪怕它的名字是 `.epub`。
 
     来源：ADR-0003「容器格式必须往里看一层」的反面约束——往里看一层不等于把归档族吃掉；
-    `docs/PIPELINES.md` §2.2 的 ZIP 行「以上都不命中或容器读不出 → 维持 zip」。
+    `docs/pipelines.md` §2.2 的 ZIP 行「以上都不命中或容器读不出 → 维持 zip」。
     预期值来源：指纹本身（EPUB 规范强制每个 EPUB 都带 container.xml，普通 ZIP 不会有这个路径）。
     """
     make_zip(work_dir, "plain.zip", ["readme.txt", "data/table.csv"])

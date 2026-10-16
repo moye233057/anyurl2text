@@ -3,7 +3,7 @@
 ODF 表格的**行收集**：把 `table:table-row` 从各层容器里按文档顺序取出来。
 
 ODF 表格行收集：`table:table-row` 不只挂在 `table:table` 下——表头行组与行组容器都会再包一层。
-`odf.py` 渲正文、`excel.py` 的 ODS 合并区/可见性都要用同一份定义（ADR-0010：跨族共用进 `utils/excel`）。
+`odf.py` 渲正文、`excel.py` 的 ODS 合并区/可见性都要用同一份定义（ADR-0007：跨族共用进 `utils/excel`）。
 
 本模块不 import 项目内任何东西，是叶子模块（ADR-0007）。
 """

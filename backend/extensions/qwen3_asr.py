@@ -10,8 +10,7 @@
 请求 `{"audio_base64": "..."}`，响应 `{"code": "200", "data": "文本", "language": "Chinese", "cost": 1.2}`，
 其中 `cost` 是服务端耗时秒数，`language` 是模型判定的语种；`code` 不是 "200" 一律当失败。
 
-音频一律由本服务自己抽出来再传 base64（本机独立服务只提供 `/asr-b64`）：本项目不把 URL 交给上游代下载
-（鉴权、防盗链、内网、慢跳转都会让上游拿不到文件，EXTENDING 第 5 节）。
+音频一律由本服务自己抽出来再传 base64（本机独立服务只提供 `/asr-b64`）：本项目不把 URL 交给上游代下载。
 """
 import base64
 from pathlib import Path

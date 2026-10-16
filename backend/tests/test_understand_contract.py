@@ -2,7 +2,7 @@
 r"""
 E2 组：扩展开启时的 HTTP 字段约定（**要花钱的模型测试，默认不跑**）。
 
-开关矩阵见 docs/API.md §1.1。
+开关：看图只要 `llm`；`ocr` 是独立文字图的提供商单选；摘要要 `llm`；音视频转写要 `asr`。
 """
 import os
 from pathlib import Path

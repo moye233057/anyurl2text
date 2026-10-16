@@ -3,7 +3,7 @@
 understand 路的交付正文组装。
 
 extract 只返回纯代码抽取的 `result.content`；understand 在此基础上把模型/OCR/ASR
-转写出的文本并进 `content`，同时仍写入 `meta.ocr_text` / `meta.asr_text`（ADR-0011）。
+转写出的文本并进 `content`，同时仍写入 `meta.ocr_text` / `meta.asr_text`（ADR-0002）。
 """
 from typing import Optional
 

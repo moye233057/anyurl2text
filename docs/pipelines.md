@@ -1,46 +1,21 @@
 # 各类型的处理链路
 
-> **用途**：按输入类型查这条源走了哪几步、关键判定与上限在哪、产出落到哪个字段。调试某一种格式先读这份。
-> **关联**：[architecture.md](./architecture.md)（模块落点） · [adr.md](./adr.md)（为什么这样拆） · [API.md](./API.md)（字段约定） · [CONTEXT.md](../CONTEXT.md)（术语表）
-> **基线**：2026-10-02
-> **代码基准**：`backend/pipelines/`（steps 六步 + processors 一个格式一个文件）
-
----
+按输入类型查：走了哪几步、关键判定、上限卡在哪、字段落到哪。层与目录见 `architecture.md`。
 
 ## 1. 总链路
 
-一份源从入口到响应只有一条主干；**能力开关**决定是否多走扩展步（ADR-0014）。  
-**代码迁移完成前**入口可能仍是旧的 `/extract`·`/understand`，语义以目标设计为准。
+`POST /convert` 与 `/convert/file` 进同一条主干。`routers/convert/` 只收参加状态码；`pipelines/convert.py` 按序调步骤。
 
 ```text
-POST /convert | /convert/file          （见 API.md；迁移完成前代码可能仍为旧双路）
-  │
-  ▼ routers/convert/                   收参与能力开关；写 HTTP 状态码
-  │
-  ▼ pipelines/（统一调度）              按序号调步骤
-  │
-  ├─ 步骤 1+2+3   prepare_from_url / prepare_from_upload
-  │                 └ step1 取字节 → step2 判型 → 组装 PreparedSource
-  │
-  ├─ 步骤 4       run_extraction
-  │                 └ extract_*() → 确定性 content + assets
-  │
-  ├─ 步骤 4′      enhance              ← 对应 OCR/ASR/视觉开关开且扩展可用
-  │
-  ├─ 步骤 5       summarize            ← LLM 开关开且可用
-  │
-  └─ 步骤 6       build_response → ConvertResponse
-  │
-  ▼ finally       cleanup 临时目录
+step1 取字节 → step2 判型 → step3 组装 PreparedSource
+  → step4 extract_*() 确定性 content + assets
+  → enhance（对应开关开且扩展可用）
+  → summarize（llm 开且可用）
+  → step6 组装响应
+  → finally 清临时目录
 ```
 
-| | 扩展全关 | 对应扩展开 |
-|---|---|---|
-| 文档类 `content` | 确定性段 | 确定性段 + 已跑过的转写 |
-| 图片 / 音视频 `content` | 常为空（基础信息在 meta） | OCR / ASR / 描述并入 |
-| `summary` | `null` | 仅 LLM 开时可能有 |
-
-失败不抛给调用方：入口失败走 `error_response`；步骤 4 之后的扩展失败进 `meta.notes` / `model_error`，HTTP 仍可为 200。
+入口失败走 `error_response`。步骤 4 之后的扩展失败进 `meta.notes` / `model_error`，HTTP 仍可为 200。
 
 ## 2. 通用模块
 
@@ -104,7 +79,7 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 所有 `extract_*` 的共同约定：
 
 - 返回 `ExtractResult`：`content`（交付文本）、`engines`（用到的解析库）、`notes`（过程说明）、`assets`（素材清单）、计数与元信息字段、降级标记。
-- 不调模型，也不感知调用方是哪个接口。`content` 只有这一份实现（ADR 0002/0007）。
+- 不调模型，也不感知开关。`content` 的确定性段只有这一份实现。
 - `ExtractContext.prepare_assets` 是**能力开关**，不是调用方身份：为真时才落盘可供模型读的素材（内嵌图、扫描页、音轨），为假时省掉渲染与转码开销。开关不影响 `content`。
 - 自己吞异常：打开或解析失败时返回 `degraded=True` 的结果并写 `degrade_reason`，不让整条请求 500。
 
@@ -116,7 +91,7 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 
 | 分支 | 条件 | 实现 |
 |---|---|---|
-| 独立图片 | 源本身是图片且没有素材清单 | `image.enhance_image()`：一次调用判型 + 语义描述 + 文字转写；转写给谁由 `ocr` 的提供商决定（ADR-0015） |
+| 独立图片 | 源本身是图片且没有素材清单 | `image.enhance_image()`：一次调用判型 + 语义描述 + 文字转写；转写给谁由 `ocr` 的提供商决定 |
 | 音频与视频 | 源是音视频 | `media.enhance_media()`：拿步骤 4 抽好的音轨送本机 ASR |
 | 其余 | 有素材清单的文档与网页 | `reading.enhance_assets()`：`kind="page"` 逐页识别，`kind="image"` 批量识读 |
 
@@ -143,7 +118,7 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 3. 拼出的文本超过 `MAX_MODEL_INPUT_CHARS`（12 万字符）就截断，并由调用方在 `notes` 里声明。
 4. 带 query 用 `answer.txt`，不带用 `summarize.txt`；思考模式按 `THINKING_ENABLED`（默认关）。
 
-`understand` 只在有活可干时才进模型阶段（`_has_model_work()`）：扩展名不是 svg，且满足「交付文本非空 / 有素材 / 源本身是图片或音视频」之一。否则写一条 `notes` 说明跳过。模型阶段抛 `LlmError` 时只把原因写进 `notes`，请求仍成功。
+只在有活可干时才进模型阶段（`_has_model_work()`）：扩展名不是 svg，且满足「交付文本非空 / 有素材 / 源本身是图片或音视频」之一。否则写一条 `notes` 说明跳过。模型阶段抛 `LlmError` 时只把原因写进 `notes`，请求仍成功。
 
 ### 2.5 组装（`step6_assemble.py`）
 
@@ -157,7 +132,7 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 
 先看速查表，再看下面各类型的细节。
 
-| 类型 | `content` 是什么 | `extract` 路线 | `understand` 额外做什么 |
+| 类型 | `content` 是什么 | 确定性 | 扩展增强 |
 |---|---|---|---|
 | pdf | 逐页文本块（含页标记） | 文字层抽取；无文字层时渲染页面为素材 | 扫描页逐页识别 / 内嵌图批量识读 → `ocr_text` |
 | docx | 段落 + 制表符表格 + 文本框节 + 链接段 | `iter_inner_content()` 按块级顺序 | 内嵌图批量识读 → `ocr_text` |
@@ -174,22 +149,22 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 
 ### 3.1 PDF（`pdf.py`）
 
-`extract` 关键步骤：
+确定性：
 
 1. `pymupdf.open()`；打不开返回降级。`needs_pass` 且空密码认证失败 → 降级「PDF 受密码保护」。
 2. 总页数超过 `MAX_PDF_PAGES`（200）只处理前 N 页，并记 `max_pdf_pages`；逐页 `get_text("blocks")`，丢掉空块，按 **(y, x)** 排序后拼成一页；每页前加 `=== 第N页 ===`，页间空行。
 3. 累加 `get_images(full=True)` 得到图片总数（进 `meta.images`；只扫已处理页）。
 4. 文字层判定：已处理页文本合计少于 `TEXT_LAYER_MIN_CHARS`（30 字）即视为「没有文字层（疑似扫描件）」。
-5. `prepare_assets=False`（extract 路）：只加一条说明 `notes`，不做任何渲染。
-6. `prepare_assets=True`（understand 路）分两种互斥情况：
+5. `prepare_assets=False`：只加一条说明 `notes`，不做任何渲染。
+6. `prepare_assets=True` 分两种互斥情况：
    - **扫描件**（无文字层且 `RENDERED_PAGE_OCR_ENABLED`）：渲染前 `min(已处理页数, RENDERED_PAGE_MAX)` 页为 PNG（`RENDERED_PAGE_DPI`，默认 150）；单页估算或实际 pixmap 超 `MAX_PDF_PAGE_PIXELS` 则跳过该页并记 `max_pdf_page_pixels`。**不再抽内嵌图**。
    - **有文字层**：按 xref 去重后取前 `MAX_EMBEDDED_IMAGES` 张**不同的**内嵌图；pixmap 超像素预算同样跳过并记命中。
 
-`understand`：走 `reading.enhance_assets()`，页面图逐页识别（含空白页预检与切半重试）、内嵌图一次性批量识读，两者按素材顺序拼进 `meta.ocr_text`。
+扩展增强：走 `reading.enhance_assets()`，页面图逐页识别（含空白页预检与切半重试）、内嵌图一次性批量识读，两者按素材顺序拼进 `meta.ocr_text`。
 
 ### 3.2 DOCX（`docx.py`）
 
-`extract` 关键步骤：
+确定性：
 
 1. `Document()`；失败降级。
 2. `iter_inner_content()` 按 body **块级顺序**遍历：表格走 `_render_table()`——按 `w:tc` 收成格位规格（**不用 `row.cells`**：合并区会被返回多次、文本因此重复），交给 `processors/grid.py` 的表格逻辑格子渲染（制表符分隔、合并区文本只出现一次、覆盖位占列位、超 `MAX_TABLE_ROWS=2000` 行截断并说明），并数出**源自己标出的**表头行数（`w:trPr/w:tblHeader`，Word 用它声明「跨页重复的表头行」）；段落取文本，段落里含 `a:blip` 时在文本末追加中性占位符 `[图片 N]`。**取行与取格文字都走 XML**：`_row_elements` 会把 `w:sdt/w:sdtContent` 里的行也收进来（python-docx 的 `table.rows` 只看直属 `w:tr`，Word 的「重复表行内容控件」因此整行消失），`_cell_text` 拆 `w:sdt` 并把**格内嵌套表**按 `a / b` 行、行间空格收进这一格（旧实现按 `tc.p_lst` 取不到它们）。`w:rPr/w:vanish` 的隐藏文字照抽，处数与字数写进 `notes`。
@@ -198,11 +173,11 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 5. 内嵌图总数由 `a:blip` 计数得到（记的是**引用次数**：同一张图被引 N 次算 N）；`prepare_assets=True` 时按来源关系 id（`r:embed` / `r:link`）去重，把前 `MAX_EMBEDDED_IMAGES` 张**不同的**图经 `related_parts` 取出、转 PNG 落盘成素材。
 6. 超链接：走 `w:hyperlink`（表格与文本框里的也在 body 里，一起收），地址取自 `r:id` 指向的**外部**关系——正文里只留链接文字的话，「这段文字指向哪儿」就丢了；内部跳转（只有 `w:anchor`、没有地址）跳过，与网页那一路跳过 `#` 锚点同一条规矩。按地址去重后截到 `MAX_LINKS`（**复用网页那一条上界**），命中时把 `max_links` 报进 `limits_hit`；输出成末尾的 `## 链接` 段，每行 `文字 -> URL`，没有文字时只给 URL（与 `html.py` 同形）。无链接的文档因此产出一字不变。
 
-`understand`：`reading.enhance_assets()` 批量识读内嵌图 → `meta.ocr_text`。
+扩展增强：`reading.enhance_assets()` 批量识读内嵌图 → `meta.ocr_text`。
 
 ### 3.3 PPTX（`pptx.py`）
 
-`extract` 关键步骤：
+确定性：
 
 1. `Presentation()`；失败降级。
 2. 逐张幻灯片，`_walk_shapes()` **递归展开组合形状**（不递归会漏掉成组排版的正文）。
@@ -212,16 +187,16 @@ OLE 那一行是**读容器内部**得出、不是猜：`pipelines/steps/ole_dir
 
 **不做无效图过滤**（小于 100x100、近似纯色这类）：跳过判断只能靠猜，而漏掉的往往正是流程图或截图；代价由 `MAX_EMBEDDED_IMAGES` 上限兜住。
 
-`understand`：`reading.enhance_assets()` 批量识读页内图片 → `meta.ocr_text`。
+扩展增强：`reading.enhance_assets()` 批量识读页内图片 → `meta.ocr_text`。
 
 ### 3.4 表格族 xlsx / xlsm / xls / ods / csv / tsv（`excel.py`）
 
-`extract` 关键步骤：
+确定性：
 
 1. 按扩展名选解析器：`xlsx/xlsm` → openpyxl（先 `read_only=True, data_only=True`，失败退回常规模式）；`xls` → xlrd；`ods` → `pyexcel_ods.get_data`；`csv` → 先 `read_text_file` 探测编码解码，再嗅探分隔符后交给 `csv.reader`。解析异常直接降级。
 2. **隐藏工作表照读**——`sheet_state` 只管界面显示，不是「没有内容」（用户 2026-10-04 拍板：隐藏内容一律照抽，例外只有「会把系统打爆」与「解析超过 60 秒」）。逐行**边读边停**，读到 `MAX_ROWS_TO_READ=5001` 行即止（多读一行是为了让渲染层能区分「还有后续行」与「这就是最后一行」）。
 3. `_render_rows()` 统一渲染，四种格式只有这一套方言：`=== SHEET: 名 ===` 加制表符分隔的行；列宽从表格逻辑格子读（**合并区覆盖的空列也算列宽**，不会再被当空尾列裁掉）；跳过整行全空的行；单表超 `MAX_ROWS_PER_SHEET=5000` 行截断并说明。**行尾缺格补空**（OOXML 允许一行提前结束、pptx 生产者也常省略尾部续格，不补的话这一行的制表符个数与同表其他行不同、后面所有列位都错开）；**CSV / TSV 除外**——锯齿行是源文件里的真实形状，传 `pad_short_rows=False` 保真。表格逻辑格子另有**三条预算**——跨度展开 `max_grid_expansion`、逻辑格子数 `max_grid_slots`、文字量 `max_grid_text_chars`：命中时**不落该格**并把名字交回 `limits_hit`；四条表格路径（docx / odf / excel / pptx）都会上报（2026-10-04 修掉了 excel / pptx「只交网格、不交命中的名字」的静默）。
-4. 合并区按容器分家、都归到同一份表格逻辑格子：`xlsx / xlsm` 由 `excel.read_merge_rects` 从包内 XML 读（`read_only=True` 的 worksheet 没有 `merged_cells`，只在常规模式读会让两条读取路径对同一文件给出不同 `content`，违反 ADR-0002）；`xls` 取 xlrd 的 `merged_cells`——**它只在 `formatting_info=True` 时才有值**，且坐标是开区间且行在前，要过 `grid.merge_rect` 换算；`ods` 由 `excel.read_ods_merge_rects` 从 `content.xml` 读（`pyexcel-ods` 丢跨度），并把「不给覆盖位留位置」的值行按覆盖位对齐（该库对 `covered-table-cell` 不产出值，不对齐则后面的值整体左移）。ODF 行收集走 `utils/excel/odf_table_rows`，docx 走直属 `w:tr`；**行组（表头行组、`table:table-rows`、`table:table-row-group`）会往里走一层**——只取直属行会让整组内容消失。
+4. 合并区按容器分家、都归到同一份表格逻辑格子：`xlsx / xlsm` 由 `excel.read_merge_rects` 从包内 XML 读（`read_only=True` 的 worksheet 没有 `merged_cells`，只在常规模式读会让两条读取路径对同一文件给出不同 `content`）；`xls` 取 xlrd 的 `merged_cells`——**它只在 `formatting_info=True` 时才有值**，且坐标是开区间且行在前，要过 `grid.merge_rect` 换算；`ods` 由 `excel.read_ods_merge_rects` 从 `content.xml` 读（`pyexcel-ods` 丢跨度），并把「不给覆盖位留位置」的值行按覆盖位对齐（该库对 `covered-table-cell` 不产出值，不对齐则后面的值整体左移）。ODF 行收集走 `utils/excel/odf_table_rows`，docx 走直属 `w:tr`；**行组（表头行组、`table:table-rows`、`table:table-row-group`）会往里走一层**——只取直属行会让整组内容消失。
 5. **表类型**（`meta.table_kind`）：交付文本只有一张表时给 `data` / `layout`，口径照 anydoc 的 `TableKind`——1×1 单格表算 `layout`（排版壳）。判据是**渲染好的行**（`table_kind.classify`），所以四条表格路径口径一致。
 6. 空单元格输出空串（openpyxl 的空单元格是 `None`，直接 `str()` 会写出字面量 `None` 污染整列）；**浮点**单元格按 15 位有效数字写（`f"{value:.15g}"`）——`str(0.1 + 0.2)` 会写出 `0.30000000000000004` 这种二进制误差长尾，而整数与字符串一律原样不动（整数因此不会平白多出小数点）。
 7. `pages / pages_used` 记工作表数（含隐藏表）；没有内容时写一条 `notes`。
@@ -239,11 +214,11 @@ CSV 的分隔符嗅探规则（确定性，实现只在 `excel._sniff_delimiter`
 - **孤儿覆盖位**：`covered()` 认领不到合并起点时（产出方把合并块首行删了 / 部分复制粘贴 / 导出器怪癖，或我们自己的预算裁掉了起点格的跨度），该位置退化成空格位并计数 → `有 N 个覆盖位没有对应的合并起点，已按空格处理（列位不受影响）`。它把「文件本来就没内容」与「我们没解析对」分开，是合并解析缺口的症状指标。
 - **续格文字并回**：续格（docx 的 `vMerge` 继续格、pptx 的 `is_spanned`、ODF 的 `covered-table-cell`）自带文字时并进 origin 的文本末尾（已出现在 origin 里的不重复并）→ `覆盖格里的残留文字已并入合并单元格（N 处）`。anydoc 直接丢这类文字，本仓取向是尽量抽出来。
 
-`understand`：本类不产生素材，`_has_model_work()` 靠非空 `content` 放行，直接进步骤 5 摘要。
+扩展增强：本类不产生素材，`_has_model_work()` 靠非空 `content` 放行，直接进步骤 5 摘要。
 
 ### 3.5 ODF 文本族 odt / odp（`odf.py`）
 
-`extract` 关键步骤：
+确定性：
 
 1. `zipfile` 经 `utils/zip_read.read_member` 取出容器内的 `content.xml`（计入解压总量预算）；容器损坏、条目缺失或超 `MAX_ZIP_UNCOMPRESSED_BYTES` → 降级。
 2. 标准库 `ElementTree` 从 `office:body` **按文档结构递归**——不用全局 `root.iter()`，那个会把所有 `text:p` 拉平，表格因此坍成「一段一行」（列对应关系丢失）、嵌套列表的层级也没了。遇到 `table:table` 与 `text:list` 交给各自的渲染并**不再往下走**（否则单元格与列表项里的段落会被再收一遍），其余容器继续递归。
@@ -253,7 +228,7 @@ CSV 的分隔符嗅探规则（确定性，实现只在 `excel._sniff_delimiter`
 
 已知边界：只还原文字，不还原样式、分栏与列宽；`number-*-repeated` 的重复次数有上限 `MAX_REPEATED_SLOTS=100`，防的是 ODF 拿它把一行补到上千列时把网格撑爆（尾部空格既不占可见列宽也不带内容，钳掉不影响渲染）。（`ods` 不在这里——表格必须按行列位置还原，走 `excel.py`。）
 
-`understand`：无素材，直接进摘要。
+扩展增强：无素材，直接进摘要。
 
 ### 3.6 纯文本族 txt / md / json / xml / rtf（`plaintext.py`）
 
@@ -266,11 +241,11 @@ CSV 的分隔符嗅探规则（确定性，实现只在 `excel._sniff_delimiter`
 | xml | `ET.fromstring` + `ET.indent` + `tostring` 缩进输出并**保留属性**；解析失败原样返回 |
 | rtf | `rtf.py` 逐字符解析控制字：处理 `\uN`（含负值 UTF-16 码位）——**按 `\ucN` 声明跳过 fallback 字符**（默认 1 个；问号、`\'hh` 转义、普通字符都算一个单位，只认 `?` 会让 `\uc1` 的参数漏成正文）——与 `\'hh` 十六进制转义（按 utf-8 → gbk → cp1252 → latin-1 解码），**整组跳过** `fonttbl` / `colortbl` / `stylesheet` / `pict` 等可忽略目的地（否则字体名会混进正文），`\par` / `\line` 还原成换行，最后折叠连续空行。**表格走同文件内的 `build_lines`**：`\trowd` / `\cellx` / `\cell` / `\row` 按 anydoc 的边界聚类还原成网格列——右边界先归一化成严格递增，再把**全部行的右边界**贪心聚类成列（容差 10 twips，**与簇的种子比**，否则 `\cellx` 的 1-2 twips 抖动会把整行并成一簇），横向合并折成列跨度（文本首尾直拼）、纵向链按**精确列区间**相等匹配、无主的续格变回可见格；`\trhdr` 是源自己标的表头行（进 `meta.table_header_rows`）。列位由 `grid.py` 渲染，与 docx 同一份；`plaintext.py` 在读盘之前把 rtf 交给 `extract_rtf(path)`（表头行数与行数上限要随结果带回） |
 
-`understand`：无素材，直接进摘要。
+扩展增强：无素材，直接进摘要。
 
 ### 3.7 网页 html / htm（`html.py`）
 
-`extract` 关键步骤：
+确定性：
 
 1. `read_text_file()` 解码 → `BeautifulSoup(html.parser)`。
 2. 先 `decompose()` 掉 `script` / `style` / `noscript` / `iframe` / `svg`。
@@ -284,27 +259,27 @@ CSV 的分隔符嗅探规则（确定性，实现只在 `excel._sniff_delimiter`
 
 表格的**表头行数**取自源自己标出的标记（行在 `<thead>` 里、或该行单元格全是 `<th>`），交付文本里**唯一一张表**时进 `meta.table_header_rows`；多张表时不猜、给 `null` 并在 `notes` 里说明张数。不做「首行即表头」这类启发式——猜错会吃掉一行数据。EPUB 章节走同一条路、同样规则。
 
-`understand`：无素材，直接进摘要。
+扩展增强：无素材，直接进摘要。
 
 ### 3.8 图片（`image.py`）
 
-`extract` 关键步骤（只给结构信息，不给文字，ADR 0004）：
+确定性（只给结构信息，不给文字）：
 
 - **SVG** 走独立分支：`ElementTree` 解析 `width/height`（缺则退回 `viewBox` 的第 3、4 个值），统计元素总数，产出 `ImageMeta(format="SVG", mode="vector")` 与一条说明——矢量图不需要光栅化就能报结构。
 - **位图**：经 `open_image` 打开（读前宽×高超过 `MAX_IMAGE_PIXELS` 直接拒并记 `max_image_pixels`），再 `load()`，取宽高、色彩模式、格式、帧数（>1 才填）、DPI，以及白名单里的 10 项 EXIF（**不整包倒出**）。附加说明：HEIC 无 `pillow-heif` 时提示解码可能不完整；ICO 列出内含尺寸；多帧图提示只报首帧。解码失败 → 降级。
 - `content` 恒为空串：纯代码对一张图拿不到文字。
 
-`understand` 走 `enhance_image()`：
+扩展增强走 `enhance_image()`：
 
 1. `encode_image()` 编码后调视觉模型，提示词 `classify_image.txt`，`json_mode=True`，**一次调用同时拿到判型和描述**。
 2. `kind == "semantic"` → 直接用这次调用给出的 `description`（`EnhanceOutcome.description`），不再 OCR。
-3. 其余情况（判为文字图片，或**判型输出解析不出来**）→ 交本机 Paddle OCR 读字进 `ocr_text`。拿不准就 OCR：本机服务不花 token，漏掉整页文字代价更大。
-4. 本机 OCR 出口对纵向超长图（高宽比 ≥ 2.5）按 1400 高切段、留 120 重叠、最多 `MAX_OCR_SLICES` 片、4 路并发识别后按序拼回（超片数截断并记 `max_ocr_slices`；任一切片失败即整图失败）；其余图整图原字节发送。
+3. 其余情况（判为文字图片，或**判型输出解析不出来**）→ 交给 `ocr` 所选提供商读字进 `ocr_text`。拿不准也走转写：漏掉整页文字代价更大。
+4. 选本机 OCR 时，纵向超长图（高宽比 ≥ 2.5）按 1400 高切段、留 120 重叠、最多 `MAX_OCR_SLICES` 片、4 路并发后按序拼回（超片数截断并记 `max_ocr_slices`；任一切片失败即整图失败）；其余图整图发送。
 5. 步骤 5：没有 query 且已有 `description` 时直接复用为 `summary`。
 
 ### 3.9 音频与视频（`media.py`）
 
-`extract` 关键步骤：
+确定性：
 
 1. `soundfile` 未安装 → 降级（缺的只是这一类的结构信息，不影响其他格式）。
 2. 取音轨：`mp3 / wav / flac / ogg` 直接用源文件；**视频全部**与 `m4a / aac / wma` 这几个 libsndfile 不认的容器先用 `utils/ffmpeg.py` 抽成 16kHz 单声道 wav（`imageio-ffmpeg` 自带的静态 ffmpeg，不要求系统安装；失败或超时抛 `FfmpegError` → 降级）。抽之前先 `probe_duration_seconds`：已超 `ASR_MAX_AUDIO_SECONDS` 则**跳过转码**，只报探测时长并记 `asr_max_audio_seconds`；仍抽取时带 ffmpeg `-t` 封顶，避免探不出时长时先写满临时 wav。
@@ -312,7 +287,7 @@ CSV 的分隔符嗅探规则（确定性，实现只在 `excel._sniff_delimiter`
 4. `content` 恒为空：视频容器里没有可确定性抽取的文本，语音是模型产出。
 5. `prepare_assets=True` 且未因超限跳过时，把音轨登记成 `assets` 里的 `kind="audio_track"`——**一次请求只转码一次**，`enhance_media()` 直接复用它。
 
-`understand` 走 `enhance_media()`：
+扩展增强走 `enhance_media()`：
 
 1. 从 `assets` 取音轨；没有（降级）→ 只写 `notes`，不发请求。
 2. 时长超过 `ASR_MAX_AUDIO_SECONDS`（600 秒）→ 不转写（抽取阶段多半已跳过转码 / 未登记 assets）；在 `notes` / `limits_hit` 说明（ASR 单次输出有 token 上限，长音轨尾部会被静默丢掉，本项目不静默截断送转写）。
@@ -332,7 +307,7 @@ CSV 的分隔符嗅探规则（确定性，实现只在 `excel._sniff_delimiter`
 
 条目渲染统一走 `entries_to_content()`：表头 `# <KIND> 条目清单（共 N 条）`，最多列 `MAX_ENTRIES=500` 条，超出只报数量；条目总数进 `meta.entry_count`。
 
-`understand`：无素材，直接进摘要。
+扩展增强：无素材，直接进摘要。
 
 ### 3.11 安装包 apk / ipa / exe（`install_package.py`）
 
@@ -345,13 +320,13 @@ CSV 的分隔符嗅探规则（确定性，实现只在 `excel._sniff_delimiter`
    - ipa：找 `Payload/*.app/Info.plist`，命中即「识别为 iOS IPA」并报出主 plist 路径。
 4. 最终 `content` = 指纹行 + 空行 + 条目清单（复用 `archive.entries_to_content()`）。
 
-`understand`：无素材，直接进摘要。
+扩展增强：无素材，直接进摘要。
 
 ### 3.12 EPUB（`epub.py`）
 
 EPUB 也是 ZIP 容器，真实身份写在容器里：识别那一步读 `META-INF/container.xml`（`configs/formats.py` 的 `ZIP_ENTRY_FLAVORS` 最后一条）判到 `epub`，优先于普通 `zip`。
 
-`extract` 关键步骤：
+确定性：
 
 1. 打开 ZIP → 读 `META-INF/container.xml` 取 rootfile 的 `full-path`（OPF）；缺这个文件、容器损坏或受保护（DRM）→ 降级 `epub_parse_failed`。
 2. 解析 OPF：`manifest` 只用来建 `id → href` 表，**章节按 `spine` 的 `itemref` 顺序**取——manifest 的声明顺序与 zip 的写入顺序都不代表阅读顺序，按它们拼会把章节排错；不在 spine 里的项（封面、样式、目录页）一概不产出。href 相对 **OPF 所在目录**解析，所以 `OEBPS/content.opf` 里的 `ch1.xhtml` 指的是 `OEBPS/ch1.xhtml`。
@@ -362,13 +337,13 @@ EPUB 也是 ZIP 容器，真实身份写在容器里：识别那一步读 `META-
 
 已知边界：只还原文字与链接，不还原样式与版式；`pages` 这一族不适用（为 `null`）。
 
-`understand`：本类不产生素材，`_has_model_work()` 靠非空 `content` 放行，直接进步骤 5 摘要。
+扩展增强：本类不产生素材，`_has_model_work()` 靠非空 `content` 放行，直接进步骤 5 摘要。
 
 ### 3.13 OFD（`ofd.py`）
 
 OFD 也是 ZIP 容器，真实身份写在容器里：识别那一步读**根级 `OFD.xml`**（`configs/formats.py` 的 `ZIP_ENTRY_FLAVORS` 最后一条）判到 `ofd`，优先于普通 `zip`。
 
-`extract` 关键步骤：
+确定性：
 
 1. 打开 ZIP → 读 `OFD.xml` 取 `DocRoot`（通常是 `Doc_0/Document.xml`）；容器损坏、缺 `OFD.xml` 或缺 `DocRoot` → 降级 `ofd_parse_failed`。
 2. 解析文档根取 `Pages/Page` 序列：**页序以这份声明为准**，`BaseLoc` 给出该页 `Content.xml` 的路径。规范说它相对文档根，但导出件也有按容器根写的，两种都认；一个都没写、或写出来的路径在容器里全不存在时，退回「容器里所有以 `Content.xml` 结尾的条目」，按名字里的数字升序（`Page_2` 排在 `Page_10` 前）。
@@ -376,9 +351,9 @@ OFD 也是 ZIP 容器，真实身份写在容器里：识别那一步读**根级
 4. 页块形如 `=== 第N页 ===`（与 PDF 同形），页间空行分隔；`pages` 是声明的页数、`pages_used` 是真读到的页数。
 5. 单页 XML 非法**只跳过那一页**并在 `notes` 里点名原因，其余页照常交付；一页都读不出才整份降级（`ofd_content_failed`）。元素按 local-name 匹配：规范里前缀是 `ofd:`，各厂商导出时的前缀与命名空间声明并不统一。成员读取同 EPUB，走 `utils/zip_read`；解压总量超限时停读后续页并报 `max_zip_uncompressed_bytes`，`OFD.xml` / 文档根超限则整份降级。
 
-已知边界：只还原文字与页序，不还原版面坐标、字形与矢量图形；图像对象只计数（在 `notes` 里说明），图像内容不进交付文本——认字是 understand 的事（ADR-0004）。
+已知边界：只还原文字与页序，不还原版面坐标、字形与矢量图形；图像对象只计数（在 `notes` 里说明），图像内容不进交付文本——认字走扩展。
 
-`understand`：本类不产生素材，`_has_model_work()` 靠非空 `content` 放行，直接进步骤 5 摘要。
+扩展增强：本类不产生素材，`_has_model_work()` 靠非空 `content` 放行，直接进步骤 5 摘要。
 
 ### 3.14 降级（`extract_file_info()`）
 
@@ -386,7 +361,7 @@ OFD 也是 ZIP 容器，真实身份写在容器里：识别那一步读**根级
 
 产出：`content=""`、`engines=["基础文件信息"]`、`degraded=True`、`degrade_reason` 用中文说清缺的是什么（调用方要能区分「能力边界」与「故障」），文件头十六进制进 `notes`；`type` 为 `file`（只有入口阶段失败才是 `error`），HTTP 200。不写「这是一个…文件」这类模板句进 `content`——机器没法解析，事实全部进 `meta`。
 
-`understand`：`content` 空、无素材、源也不是图片或音视频 → `_has_model_work()` 判否，写一条 `notes` 说明跳过模型，`summary` 为 `null`。
+扩展增强：`content` 空、无素材、源也不是图片或音视频 → `_has_model_work()` 判否，写一条 `notes` 说明跳过模型，`summary` 为 `null`。
 
 ## 4. 相关上限一览
 
@@ -401,7 +376,7 @@ OFD 也是 ZIP 容器，真实身份写在容器里：识别那一步读**根级
 
 ### 4.1 资源防护公共件 · ZIP 解压预算（`utils/zip_read.py`）
 
-这是 [CONTEXT.md](../CONTEXT.md) 里说的**资源防护公共件**：不解析 EPUB/OFD/ODF 本身，只保证「解压进进程的字节」有上界。值登记为 `max_zip_uncompressed_bytes`（默认 20MB）；强制逻辑只在这一处，`epub.py` / `ofd.py` / `odf.py` 共用。
+不解析 EPUB / OFD / ODF 本身，只保证解压进进程的字节有上界。值登记为 `max_zip_uncompressed_bytes`（默认 20MB）；强制逻辑只在这一处，`epub.py` / `ofd.py` / `odf.py` 共用。
 
 **为什么要单独一层**：这三族格式本质是 ZIP。原先 `ZipFile.read(name)` 会把某个成员整份解压进内存，且多次 `read` 互不记账。下载层的 `MAX_DOWNLOAD_BYTES` 只限**外壳**体积，挡不住「壳不大、里面解出来巨大」。压缩炸弹常见两种套路——声明巨大、压后很小；或声明很小、实际膨胀——都必须在解压路径上挡。
 
@@ -418,54 +393,17 @@ OFD 也是 ZIP 容器，真实身份写在容器里：识别那一步读**根级
 | 必要成员超限（`container.xml` / OPF / `OFD.xml` / 文档根 / `content.xml`） | 整份**降级**——残缺 XML 不能截断着用 |
 | 已有章节/页再超限 | **截断**后续，名字进 `limits_hit`（`max_zip_uncompressed_bytes`） |
 
-**优点（新人读模块时对照）**：内存峰值可预期；比只限下载更贴威胁模型；比整份 `read()` 更安全；与 `limits.py` 报告链路一致；尽量保住已读产出；三族格式不复制三份预检逻辑。
-
-**刻意不做**：普通 zip/tar「只列目录」的路径本来就不解压成员，不走这里；Excel 等其它 ZIP 容器若要对齐，接同一工具即可，不要另写一套。
+普通 zip / tar 只列目录、不解压成员，不走这里。Excel 等其它 ZIP 容器要对齐同一套闸，接这个工具，不要另写一份。
 
 ### 4.2 资源防护公共件 · 请求体早拒（`utils/body_limit.py`）
 
-与下载层同一形状，挡的是**上传入口**：
+挡的是上传入口：有 `Content-Length` 且已超限 → 一字节不收；否则边收边数。中间件在 `app.py`；额度 = `MAX_DOWNLOAD_BYTES` + 约 1MB multipart 余量。业务落盘仍按文件实字节再挡一道。
 
-| 原来 | 现在 |
-|---|---|
-| 只看「声明有多大」；没声明就整包先接下来 | 声明超限 → 直接拒；否则边收边数，到上限就停 |
-| 超大请求可能先写满系统临时目录再 413 | 413 发生在框架写满临时目录之前 |
-
-中间件在 `app.py`；额度 = `MAX_DOWNLOAD_BYTES` + 约 1MB multipart 余量。业务落盘（`prepare_from_upload`）仍按文件实字节再挡一道。生产再在反代设请求体上限（RUNBOOK「请求返回 413」）。
-
-### 4.3 配置与写死上界表
-
-| 配置项 | 默认 | 作用点 |
-|---|---|---|
-| `MAX_DOWNLOAD_BYTES` | 200MB | 下载与上传边写边校验；请求体早拒同用此量级（另加 multipart 余量） |
-| `REQUEST_BUDGET_SEC` / `CONNECT_TIMEOUT_SEC` / `READ_TIMEOUT_SEC` | 120 / 10 / 30 秒 | 下载层预算与超时 |
-| `MAX_REDIRECTS` | 5 | 逐跳重校验的最大跳数 |
-| `MAX_CONTENT_CHARS` | 20 万字符 | 步骤 6 的 `content` 截断 |
-| `MAX_MODEL_INPUT_CHARS` | 12 万字符 | 步骤 5 送模型的输入截断 |
-| `MAX_EMBEDDED_IMAGES` | 3 张 | **不同的**内嵌图落盘与批量识读上限（同一张图被引多次只算一张） |
-| `RENDERED_PAGE_MAX` / `RENDERED_PAGE_DPI` | 10 页 / 150 | 扫描件页面渲染 |
-| `RENDERED_PAGE_RETRY_MIN_CHARS` | 20 字 | 整页识别失败的切半重试**阈值**（不是上界，见 `NON_LIMIT_THRESHOLDS`） |
-| `ASR_MAX_AUDIO_SECONDS` / `FFMPEG_TIMEOUT_SEC` | 600 秒 / 120 秒 | 转写与抽音轨 |
-| `MAX_ENTRIES` | 500 条 | 压缩包条目清单 |
-| `MAX_ROWS_PER_SHEET` / `MAX_ROWS_TO_READ` | 5000 / 5001 行 | 表格读取上限；后者比前者多一行，用来区分「还有后续行」与「这是最后一行」 |
-| `MAX_TABLE_ROWS` | 2000 行 | docx 与 odf 的表格渲染上限（**共用一处**，不再各写一份） |
-| `MAX_GRID_EXPANSION` | 200000 | 表格跨度展开的逻辑格子总量上限 |
-| `MAX_REPEATED_SLOTS` | 100 | odf：`number-*-repeated` 的重复次数上限，防尾部补位把网格撑爆 |
-| `MAX_LINKS` | 100 条 | 网页与 docx 的链接清单 |
-| `TEXT_LAYER_MIN_CHARS` | 30 字 | PDF 文字层判定**阈值**（不是上界） |
-| `MAX_TEXT_BYTES` | 20MB | 文本类读取上限 |
-| `MAX_ZIP_UNCOMPRESSED_BYTES` | 20MB | EPUB / OFD / ODT·ODP 的 ZIP 解压字节总量（`utils/zip_read.py`） |
-| `MAX_LONG_EDGE` | 1600 | 送模型前图片长边缩放目标 |
-| `MAX_PDF_PAGES` / `MAX_PDF_PAGE_PIXELS` | 200 页 / 3.6e7 像素 | PDF 页数与单页渲染预算 |
-| `MAX_IMAGE_PIXELS` / `MAX_OCR_SLICES` | 4e7 像素 / 40 片 | 读图像素预算与长图 OCR 切片上限 |
-
-**哪些会出现在 `meta.limits_hit` 里**（按行为逐条，不要一刀切）：
+**哪些会出现在 `meta.limits_hit` 里**（按行为，不要一刀切）：
 
 - **`error`**：下载体积、跳转数等——失败响应本身就说清楚了，不必再进 `limits_hit`。
 - **`truncate`**：少读了字节 / 行 / 页 / 张的，应上报（含 `max_text_bytes`、`llm_max_tokens` 等已接好的）。
 - **`clamp` 且上报**：`max_visibility_ranges`（只压住登记段数，正文不少）；`max_long_edge`（送模型前长边缩放，`encode_image` 回传命中名，经 `EnhanceOutcome.limits_hit` 并进 meta）。
 - **`clamp` 且当前不上报**：`max_repeated_slots`（ODF 补位次数，登记在表里备查）。
 
-加新上界时：登记进 `LIMITS` 的同时接上报告链路（或在本名单里写明「故意不报告」）。
-
-`.env` 变量与全部取值见 [RUNBOOK.md](./RUNBOOK.md) 的配置项全表，写死的上界见紧随其后的模块内常量表，判定见 [adr.md](./adr.md)。
+加新上界时：登记进 `LIMITS` 的同时接上报告链路（或在本名单里写明「故意不报告」）。可配置项见 `.env.example`。

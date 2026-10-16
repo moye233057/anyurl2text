@@ -77,7 +77,7 @@ DEGRADE_CODES = frozenset({
 })
 
 # 第 3 组：模型阶段失败（进 meta.model_error.code，HTTP 200）。全部由 LlmError 抛出，
-# 在 understand 里一处接住——确定性抽取产出仍然交付（ADR-0002/0007 的直接推论）。
+# 在 understand 里一处接住——确定性抽取产出仍然交付（ADR-0001 / ADR-0007 的直接推论）。
 MODEL_FAILURE_CODES = frozenset({
     "llm_api_key_missing",                 # deepseek.DeepSeekClient：未配置 DEEPSEEK_API_KEY
     "llm_call_failed",                     # deepseek.chat：重试后仍失败
